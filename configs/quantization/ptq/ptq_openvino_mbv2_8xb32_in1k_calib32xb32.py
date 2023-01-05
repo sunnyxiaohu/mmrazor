@@ -1,5 +1,7 @@
 _base_ = ['mmcls::mobilenet_v2/mobilenet-v2_8xb32_in1k.py']
 
+float_ckpt = 'https://download.openmmlab.com/mmclassification/v0/mobilenet_v2/mobilenet_v2_batch256_imagenet_20200708-3b2dc3af.pth'  # noqa: E501
+
 test_cfg = dict(
     type='mmrazor.PTQLoop',
     calibrate_dataloader=_base_.train_dataloader,
@@ -21,8 +23,7 @@ model = dict(
     _delete_=True,
     type='mmrazor.MMArchitectureQuant',
     architecture=_base_.model,
-    float_checkpoint='/tmp/humu/mobilenet_v2_batch256_imagenet' +
-    '_20200708-3b2dc3af.pth',
+    float_checkpoint=float_ckpt,
     quantizer=dict(
         type='mmrazor.OpenVINOQuantizer',
         global_qconfig=global_qconfig,

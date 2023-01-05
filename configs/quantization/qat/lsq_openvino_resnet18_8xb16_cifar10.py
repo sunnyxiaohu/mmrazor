@@ -10,7 +10,7 @@ model = dict(
     architecture=resnet,
     float_checkpoint=float_ckpt,
     quantizer=dict(
-        type='OpenvinoQuantizer',
+        type='OpenVINOQuantizer',
         skipped_methods=[
             'mmcls.models.heads.ClsHead._get_loss',
             'mmcls.models.heads.ClsHead._get_predictions'

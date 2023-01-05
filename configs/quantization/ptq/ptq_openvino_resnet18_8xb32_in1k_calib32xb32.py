@@ -1,5 +1,7 @@
 _base_ = ['mmcls::resnet/resnet18_8xb32_in1k.py']
 
+float_ckpt = 'https://download.openmmlab.com/mmclassification/v0/resnet/resnet18_8xb32_in1k_20210831-fbbb1da6.pth'  # noqa: E501
+
 train_dataloader = dict(batch_size=32)
 
 test_cfg = dict(
@@ -23,7 +25,7 @@ model = dict(
     _delete_=True,
     type='mmrazor.MMArchitectureQuant',
     architecture=_base_.model,
-    float_checkpoint='/tmp/humu/resnet18_8xb32_in1k_20210831-fbbb1da6.pth',
+    float_checkpoint=float_ckpt,
     quantizer=dict(
         type='mmrazor.OpenVINOQuantizer',
         global_qconfig=global_qconfig,

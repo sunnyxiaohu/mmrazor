@@ -59,7 +59,7 @@ def main():
         cfg.work_dir = osp.join('./work_dirs',
                                 osp.splitext(osp.basename(args.config))[0])
 
-    cfg.load_from = args.checkpoint
+    cfg.load_from = None if args.checkpoint == 'none' else args.checkpoint
 
     # build the runner from config
     runner = Runner.from_cfg(cfg)
