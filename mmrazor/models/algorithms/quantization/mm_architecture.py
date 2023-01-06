@@ -54,7 +54,8 @@ class MMArchitectureQuant(BaseAlgorithm):
         data_preprocessor.setdefault('type', 'mmcls.ClsDataPreprocessor')
         super().__init__(architecture, data_preprocessor, init_cfg)
         if float_checkpoint:
-            _ = load_checkpoint(self.architecture, float_checkpoint, strict=True)
+            _ = load_checkpoint(
+                self.architecture, float_checkpoint, strict=True)
             self.architecture._is_init = True
 
         self.quantizer = MODELS.build(quantizer)

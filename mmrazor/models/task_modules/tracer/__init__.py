@@ -1,8 +1,8 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from .backward_tracer import BackwardTracer
+from .channel_analyzer import ChannelAnalyzer
 from .fx import (CustomTracer, UntracedMethodRegistry, build_graphmodule,
                  custom_symbolic_trace)
-from .channel_analyzer import ChannelAnalyzer
 # from .razor_tracer import RazorFxTracer
 from .loss_calculator import *  # noqa: F401,F403
 from .parsers import *  # noqa: F401,F403

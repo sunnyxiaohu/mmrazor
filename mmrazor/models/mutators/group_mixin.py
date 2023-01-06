@@ -214,7 +214,6 @@ class GroupMixin():
     def _check_valid_groups(self, alias2mutable_names: Dict[str, List[str]],
                             name2mutable: Dict[str, BaseMutable],
                             custom_group: List[List[str]]) -> None:
-
         """Check if all keys are legal."""
         aliases = [*alias2mutable_names.keys()]
         module_names = [*name2mutable.keys()]

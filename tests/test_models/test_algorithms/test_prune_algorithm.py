@@ -287,4 +287,3 @@ class TestItePruneAlgorithm(unittest.TestCase):
         print(algorithm2.mutator.current_choices)
         self.assertDictEqual(algorithm.mutator.current_choices,
                              algorithm2.mutator.current_choices)
->>>>>>> dev-1.x
