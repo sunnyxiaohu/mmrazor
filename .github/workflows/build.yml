@@ -38,6 +38,13 @@ jobs:
             torch_version: 1.12
             torchvision: 0.13.0
             python-version: 3.8
+          - torch: 1.13.0
+            torch_version: 1.13
+            torchvision: 0.14.0
+          - torch: 1.13.0
+            torch_version: 1.13
+            torchvision: 0.14.0
+            python-version: 3.8
 
     steps:
       - uses: actions/checkout@v2
