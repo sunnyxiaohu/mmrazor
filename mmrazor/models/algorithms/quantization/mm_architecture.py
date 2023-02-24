@@ -44,6 +44,7 @@ class MMArchitectureQuant(BaseAlgorithm):
                  quantizer,
                  data_preprocessor=None,
                  forward_modes=('tensor', 'predict', 'loss'),
+                 calibrate_mode='predict',
                  float_checkpoint: Optional[str] = None,
                  input_shapes=(1, 3, 224, 224),
                  init_cfg=None):
@@ -61,10 +62,11 @@ class MMArchitectureQuant(BaseAlgorithm):
         self.quantizer = MODELS.build(quantizer)
         self.input_shapes = input_shapes
         self.forward_modes = forward_modes
-
+        assert calibrate_mode in forward_modes
+        self.calibrate_mode = calibrate_mode
         self.qmodels = self._build_qmodels(self.architecture)
 
-        self.sync_qparams('predict')
+        self.sync_qparams(self.calibrate_mode)
 
     def sync_qparams(self, src_mode):
 
@@ -135,7 +137,7 @@ class MMArchitectureQuant(BaseAlgorithm):
 
     def calibrate_step(self, data):
         data = self.data_preprocessor(data, False)
-        return self._run_forward(data, mode='predict')
+        return self._run_forward(data, mode=self.calibrate_mode)
 
 
 @MODEL_WRAPPERS.register_module()
