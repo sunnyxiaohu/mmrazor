@@ -1,11 +1,11 @@
 _base_ = [
-    './ptq_fp32_nats_8xb16_cifar10.py'
+    './ptq_fp32_nats_8xb16_imagenet16.py'
 ]
 
 test_cfg = dict(
     type='mmrazor.PTQLoop',
     calibrate_dataloader=_base_.train_dataloader,
-    calibrate_steps=128,
+    calibrate_steps=32,
 )
 
 global_qconfig = dict(

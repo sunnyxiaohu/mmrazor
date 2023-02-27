@@ -23,7 +23,7 @@ model = dict(
             search_space='tss',
             fast_mode=True,
             verbose=True),
-        arch_index=1017,  #  1017, 1452, 1990
+        arch_index=1452,  #  1017, 1452, 1990
         dataset='cifar10',
         seed=111,
         hp='12',
@@ -32,3 +32,4 @@ model = dict(
         type='mmcls.ClsHead'
     ))
 
+_base_.val_dataloader.batch_size=64

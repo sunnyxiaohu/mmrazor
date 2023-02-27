@@ -6,7 +6,7 @@ import os.path as osp
 import torch
 
 from mmengine.config import Config, DictAction
-from mmengine.runner import Runner, get_dist_info
+from mmengine.runner import Runner
 
 from mmrazor.utils import register_all_modules
 
@@ -16,6 +16,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description='MMRazor test (and eval) a model')
     parser.add_argument('config', help='test config file path')
+    parser.add_argument('xrange', type=str, help='xrange for arch_index')
     # parser.add_argument('checkpoint', help='checkpoint file')
     parser.add_argument(
         '--work-dir',
@@ -30,11 +31,11 @@ def parse_args():
         'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
         'Note that the quotation marks are necessary and that no white space '
         'is allowed.')
-    parser.add_argument(
-        '--launcher',
-        choices=['none', 'pytorch', 'slurm', 'mpi'],
-        default='none',
-        help='job launcher')
+    # parser.add_argument(
+    #     '--launcher',
+    #     choices=['none', 'pytorch', 'slurm', 'mpi'],
+    #     default='none',
+    #     help='job launcher')
     parser.add_argument('--local_rank', type=int, default=0)
     args = parser.parse_args()
     if 'LOCAL_RANK' not in os.environ:
@@ -48,7 +49,7 @@ def main():
 
     # load config
     cfg = Config.fromfile(args.config)
-    cfg.launcher = args.launcher
+    cfg.launcher = 'none'
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
 
@@ -63,27 +64,27 @@ def main():
 
     # cfg.load_from = None if args.checkpoint == 'none' else args.checkpoint
 
-    rank, world_size = get_dist_info()
-
     from nats_bench import create
 
     # Create the API instance for the size search space in NATS
-    benchmark_api = create(**cfg.model.architcture.backbone.benchmark_api)
+    benchmark_api = create(**cfg.model.architecture.backbone.benchmark_api)
 
     total_archs = len(benchmark_api)
-    index = 0
-    import pdb; pdb.set_trace()
-    while(index < total_archs):
-        rank_index = index + rank
-        backbone_config = api.get_net_config(rank_index, dataset)
-        cfg.model.architcture.backbone.arch_index = rank_index
-        cfg.model.architcture.backbone.benchmark_api = benchmark_api
+    start, end = args.xrange.split('-')
+    start, end = int(start), int(end)
+    assert start >= 0 and end < total_archs and start <= end
+    index = start
+    cfg.work_dir = cfg.work_dir + f'_xrange{start}-{end}_seed{cfg.randomness.get("seed")}'
+
+    while(index < end):
+        backbone_config = benchmark_api.get_net_config(index, cfg.model.architecture.backbone.dataset)
+        cfg.model.architecture.backbone.arch_index = index
+        # cfg.model.architecture.backbone.benchmark_api = benchmark_api
         # build the runner from config
         runner = Runner.from_cfg(cfg)
         # start testing
         runner.test()
-        torch.distributed.barrier()
-        index += world_size
+        index += 1
 
 
 if __name__ == '__main__':

@@ -32,3 +32,4 @@ model = dict(
         type='mmcls.ClsHead'
     ))
 
+_base_.val_dataloader.batch_size=64

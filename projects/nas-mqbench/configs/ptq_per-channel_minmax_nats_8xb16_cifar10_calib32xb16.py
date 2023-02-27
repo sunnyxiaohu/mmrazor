@@ -1,5 +1,5 @@
 _base_ = [
-    './ptq_fp32_nats_8xb16_cifar100.py'
+    './ptq_fp32_nats_8xb16_cifar10.py'
 ]
 
 test_cfg = dict(
@@ -27,7 +27,7 @@ model = dict(
     forward_modes={'predict'},
     calibrate_mode='predict',
     quantizer=dict(
-        type='mmrazor.OpenVINOQuantizer',
+        type='mmrazor.NativeQuantizer',
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
