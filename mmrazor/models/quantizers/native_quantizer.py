@@ -42,6 +42,8 @@ class NativeQuantizer(BaseQuantizer):
     def __init__(self,
                  global_qconfig,
                  no_observer_modules=None,
+                 no_observer_names=None,
+                 no_observer_names_regex=None,
                  tracer=dict(type='CustomTracer')):
         super().__init__(tracer)
         self.qconfig = QConfigHander(global_qconfig)
@@ -64,6 +66,14 @@ class NativeQuantizer(BaseQuantizer):
                 self.qconfig_mapping.set_object_type(mod, None)
         else:
             self.no_observer_modules = no_observer_modules
+        self.no_observer_names = no_observer_names
+        if no_observer_names:
+            for mod in self.no_observer_names:
+                self.qconfig_mapping.set_module_name(mod, None)
+        self.no_observer_names_regex = no_observer_names_regex
+        if no_observer_names_regex:
+            for mod in self.no_observer_names_regex:
+                self.qconfig_mapping.set_module_name_regex(mod, None)
         self.backend_config = BackendConfigs[self.backend]
         self.example_inputs = (torch.randn(1, 3, 224, 224), )
 

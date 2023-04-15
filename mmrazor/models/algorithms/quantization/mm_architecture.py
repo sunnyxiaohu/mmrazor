@@ -105,7 +105,6 @@ class MMArchitectureQuant(BaseAlgorithm):
             traverse(self.qmodels[mode], '')
 
     def _build_qmodels(self, model):
-
         qmodels = nn.ModuleDict()
 
         self.quantizer.swap_ff_with_fxff(model)
@@ -133,6 +132,7 @@ class MMArchitectureQuant(BaseAlgorithm):
             qmodel = self.qmodels[mode]
             return qmodel(inputs, data_samples, mode)
         else:
+            mode = mode.split('architecture_')[-1]
             return self.architecture(inputs, data_samples, mode)
 
     def calibrate_step(self, data):

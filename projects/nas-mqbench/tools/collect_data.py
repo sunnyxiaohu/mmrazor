@@ -1,26 +1,41 @@
 import argparse
 from copy import deepcopy
 import os
-import os.path as osp
-
+from collections import OrderedDict
+from pathlib import Path
 import re
+
+import torch
 
 from mmengine.config import Config
 from mmengine.runner import Runner
 
 from mmrazor.utils import register_all_modules
 
+from analysis import graphwise_analysis
+
 
 # TODO: support fuse_conv_bn, visualization, and format_only
 def parse_args():
     parser = argparse.ArgumentParser(
         description='NAS-MQBench collect data')
-    parser.add_argument('config', help='test config file path')        
-    parser.add_argument('xrange', type=str, help='xrange for arch_index')
+    parser.add_argument('config', help='test config file path')
+    # parser.add_argument('xrange', type=str, help='xrange for arch_index')
     parser.add_argument('data_root', type=str)
     parser.add_argument(
         '--work-dir',
         help='the directory to save the file containing evaluation metrics')
+    parser.add_argument(
+        '--store',
+        action='store_true',
+        default=False,
+        help='enable collect and store data')
+    parser.add_argument(
+        '--analysis',
+        action='store_true',
+        default=False,
+        help='analysis the collapse results')
+    # the margin between quant results and dequant results is very large (> 10 points.)
     args = parser.parse_args()
     return args
 
@@ -38,12 +53,14 @@ def main():
     dataset = cfg.model.architecture.backbone.dataset
     hp = cfg.model.architecture.backbone.hp
     is_random = cfg.model.architecture.backbone.seed
-    this_seed = 120
 
     total_archs = len(benchmark_api)
-    start, end = args.xrange.split('-')
+    match = re.search('(.+)_8xb16_.+_xrange([0-9]+)-([0-9]+)_seed([0-9]+)', args.data_root.split('/')[-1])
+    setname = match.group(1)
+    start, end = match.group(2), match.group(3)
     start, end = int(start), int(end)
-    assert start >= 0 and end < total_archs and start <= end
+    assert start >= 0 and end < total_archs and start <= end    
+    this_seed = int(match.group(4))
 
     filenames = os.listdir(args.data_root)
     filenames = list(
@@ -70,135 +87,46 @@ def main():
         # backbone_config = benchmark_api.get_net_config(arch_index, cfg.model.architecture.backbone.dataset)
         info = benchmark_api.get_more_info(arch_index, dataset, hp=hp,is_random=is_random)
         print(arch_index, info['test-accuracy'], accuracy)
-        benchmark_api.clear_params(arch_index, hp=cfg.model.architecture.backbone.hp)
-        # import pdb; pdb.set_trace()
-        archresult = benchmark_api.query_meta_info_by_index(arch_index)
-        xresult = deepcopy(archresult.query(dataset, seed=is_random))
 
-        # update results
-        setname = 'per-tensor_histogram'
-        new_dataset = f'{dataset}_{setname}'
-        xresult.seed = this_seed
-        xresult.name = new_dataset
-        accs, losses, times = {}, {}, {}
-        for iepoch in range(xresult.epochs):
-            accs[f'{setname}@{iepoch}'] = 0
-            losses[f'{setname}@{iepoch}'] = 0
-            times[f'{setname}@{iepoch}'] = 0
-        accs[f'{setname}@{iepoch}'] = accuracy
-        xresult.update_eval(accs, losses, times)
-        archresult.update(new_dataset, this_seed, xresult)
-        archresult.get_metrics(new_dataset, setname, is_random=this_seed)
+        if args.store:
+            # collect and store data.
+            benchmark_api.clear_params(arch_index, hp=cfg.model.architecture.backbone.hp)
+            import pdb; pdb.set_trace()
+            archresult = benchmark_api.query_meta_info_by_index(arch_index, hp=hp)
+            xresult = deepcopy(archresult.query(dataset, seed=is_random))
 
+            # update results
+            new_dataset = f'{dataset}_{setname}'
+            xresult.seed = this_seed
+            xresult.name = new_dataset
+            accs, losses, times = {}, {}, {}
+            for iepoch in range(xresult.epochs):
+                accs[f'{setname}@{iepoch}'] = 0
+                losses[f'{setname}@{iepoch}'] = 0
+                times[f'{setname}@{iepoch}'] = 0
+            accs[f'{setname}@{iepoch}'] = accuracy
+            xresult.update_eval(accs, losses, times)
+            archresult.update(new_dataset, this_seed, xresult)
+            to_save_data = OrderedDict({hp: archresult.state_dict()})
+            nas_mqbench = 'NASMQ_' + cfg.model.architecture.backbone.benchmark_api.file_path_or_dict.split('/')[-1]
+            full_save_dir = Path(args.work_dir) / nas_mqbench
+            full_save_dir.mkdir(parents=True, exist_ok=True)
+            pickle_save(to_save_data, str(full_save_dir / f'{arch_index:06d}.pickle'))
+            # archresult.get_metrics(new_dataset, setname, is_random=this_seed)
+            # archresult.get_metrics(dataset, 'ori-test', is_random=is_random)
 
-        from typing import Any
-        import torch
-        import ppq.lib as PFL
-        from ppq import TargetPlatform, TorchExecutor, graphwise_error_analyse
-        from ppq.api import ENABLE_CUDA_KERNEL, dump_torch_to_onnx, load_onnx_graph
-        from ppq.quantization.optim import (ParameterQuantizePass,
-                                            RuntimeCalibrationPass)
-
-        from Quantizers import MyFP8Quantizer, MyInt8Quantizer
-
-        # 1. build pytorch module.
-        import xautodl
-        arch_cfg = benchmark_api.get_net_config(arch_index, dataset)
-        from xautodl.models import get_cell_based_tiny_net
-        model = get_cell_based_tiny_net(arch_cfg)
-        import pdb; pdb.set_trace()
-        # 2. convert pytorch module to onnx with a sample input.
-        ONNX_FILE_NAME = 'Tmp.onnx'
-        sample_input = torch.rand(size=[1, 3, 32, 32])  #.cuda()
-        dump_torch_to_onnx(
-            model=model, onnx_export_file=ONNX_FILE_NAME, 
-            inputs=sample_input, input_shape=None)
-
-        # 3. create quantizer.
-        PerChannel  = True
-        Symmetrical = True
-        PowerOf2    = False
-        FP8         = False
-        import ppq
-        ppq.core.common.FORMATTER_REPLACE_BN_TO_CONV = False
-        graph = load_onnx_graph(onnx_import_file=ONNX_FILE_NAME)
-        if not FP8:
-            quantizer = MyInt8Quantizer(
-                graph=graph, 
-                per_channel=PerChannel, 
-                sym=Symmetrical, 
-                power_of_2=PowerOf2)
-        else:
-            quantizer = MyFP8Quantizer()
-
-
-        # 4. quantize operations, only conv and gemm will be quantized by this script.
-        for op in graph.operations.values():
-            if op.type in {'Conv', 'Gemm'}:
-                platform = TargetPlatform.INT8 if not FP8 else TargetPlatform.FP8
-            else: platform = TargetPlatform.FP32
-
-            quantizer.quantize_operation(
-                op_name = op.name, platform=platform)
-
-
-        # 5. build quantization pipeline
-        pipeline = PFL.Pipeline([
-            ParameterQuantizePass(),
-            RuntimeCalibrationPass(),
-
-            # LearnedStepSizePass is a network retraining procedure.
-            # LearnedStepSizePass(steps=500)
-        ])
-
-
-        # 6. run quantization, measure quantization loss.
-        # rewrite the definition of dataloader with real data first!
-        dataloader = [torch.rand(size=[1, 3, 32, 32]) for _ in range(32)]
-
-        def collate_fn(batch: Any):
-            return batch  #.cuda()
-
-        # with ENABLE_CUDA_KERNEL():
-        executor = TorchExecutor(graph=graph, device='cpu')
-        executor.tracing_operation_meta(inputs=sample_input)
-
-        pipeline.optimize(
-            graph=graph, dataloader=dataloader, verbose=True, 
-            calib_steps=32, collate_fn=collate_fn, executor=executor)
-
-        error_dict = graphwise_error_analyse(
-            graph=graph, running_device='cpu', 
-            dataloader=dataloader, collate_fn=collate_fn)
-
-            # quantization error are stored in error_dict
-            # error_dict = {op name(str): error(float)}        
-
-
-        # if info['test-accuracy'] - accuracy > 10:
-        data_batch = {'inputs': torch.rand(size=[1, 3, 32, 32])}
-        fp32_cfg = Config.fromfile('/home/GML/mmrazor/projects/nas-mqbench/configs/ptq_fp32_nats_8xb16_cifar10.py')
-        fp32_cfg.model.backbone.arch_index = arch_index
-        fp32_cfg.launcher = 'none'
-        fp32_cfg.work_dir = 'work_dirs/fp32'
-        fp32_runner = Runner.from_cfg(fp32_cfg)
-        fp32_runner.model.eval()
-        data_batch = next(iter(fp32_runner.test_dataloader))
-        data_batch1 = deepcopy(data_batch)
-        import pdb; pdb.set_trace()
-        fp32_outputs = fp32_runner.model.test_step(data_batch1)
-        # fp32_runner.test()
-
-        int8_cfg = Config.fromfile('/home/GML/mmrazor/projects/nas-mqbench/configs/ptq_per-tensor_minmax_nats_8xb16_cifar10_calib32xb16.py')
-        int8_cfg.model.architecture.backbone.arch_index = arch_index
-        int8_cfg.launcher = 'none'
-        int8_cfg.work_dir = 'work_dirs/int8'
-        int8_runner = Runner.from_cfg(int8_cfg)
-        int8_runner.test()  # for calibrate
-        data_batch2 = deepcopy(data_batch)
-        int8_outputs = int8_runner.model.test_step(data_batch2)
-        import pdb; pdb.set_trace()
-        print()                 
+        if args.analysis and info['test-accuracy'] - accuracy > 10:
+            int8_cfg = cfg = Config.fromfile(args.config)
+            int8_cfg.model.architecture.backbone.arch_index = arch_index
+            int8_cfg.work_dir = os.path.join(args.work_dir, 'analysis')
+            method = 'snr'  # 'cosine'
+            # int8_cfg.val_dataloader.batch_size=4
+            int8_runner = Runner.from_cfg(int8_cfg)
+            int8_runner.test()
+            results = graphwise_analysis(
+                int8_runner.model, int8_runner.val_dataloader, method, step=1, verbose=True, topk=1)
+            import pdb; pdb.set_trace()
+            print()
 
 
 if __name__ == '__main__':
