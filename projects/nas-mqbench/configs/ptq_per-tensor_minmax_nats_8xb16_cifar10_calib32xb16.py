@@ -30,30 +30,8 @@ model = dict(
         type='mmrazor.NativeQuantizer',
         global_qconfig=global_qconfig,
         # no_observer_modules=['xautodl.models.cell_operations.ResNetBasicblock'],
-        no_observer_names=[
-            'backbone.nats_model.classifier',
-            # 'backbone.nats_model.cells.11.conv_a.op.1',
-            # 'backbone.nats_model.cells.11.conv_b.op.1',
-            # 'backbone.nats_model.cells.11.downsample.0',
-            # 'backbone.nats_model.cells.11.downsample.1'
-            # 'backbone.nats_model.cells.5.conv_a.op.1',
-            # 'backbone.nats_model.cells.5.conv_b.op.1',
-            # 'backbone.nats_model.cells.5.downsample.0',
-            # 'backbone.nats_model.cells.5.downsample.1'            
-        ],
-        no_observer_names_regex=[
-            # 'backbone.nats_model.cells.4',
-            # 'backbone.nats_model.cells.5',
-            # 'backbone.nats_model.cells.6',
-            # 'backbone.nats_model.cells.7',
-            # 'backbone.nats_model.cells.8',
-            # 'backbone.nats_model.cells.9',
-            # 'backbone.nats_model.cells.10',
-            # 'backbone.nats_model.cells.11',
-            # 'backbone.nats_model.cells.14',
-            'backbone.nats_model.cells.15',
-            'backbone.nats_model.cells.16'
-        ],
+        # no_observer_names=['backbone.nats_model.classifier'],
+        # no_observer_names_regex=['backbone.nats_model.cells.16'],
         tracer=dict(
             type='mmrazor.CustomTracer',
             skipped_methods=[
