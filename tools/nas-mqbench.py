@@ -17,6 +17,7 @@ def parse_args():
         description='MMRazor test (and eval) a model')
     parser.add_argument('config', help='test config file path')
     parser.add_argument('xrange', type=str, help='xrange for arch_index')
+    parser.add_argument('--resume-index', type=int, help='resume index')
     # parser.add_argument('checkpoint', help='checkpoint file')
     parser.add_argument(
         '--work-dir',
@@ -73,7 +74,8 @@ def main():
     start, end = args.xrange.split('-')
     start, end = int(start), int(end)
     assert start >= 0 and end < total_archs and start <= end
-    index = start
+    index = args.resume_index if args.resume_index else start
+    assert index >= start and index <= end
     cfg.work_dir = cfg.work_dir + f'_xrange{start}-{end}_seed{cfg.randomness.get("seed")}'
 
     while(index < end):
