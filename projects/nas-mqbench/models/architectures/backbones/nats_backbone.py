@@ -60,6 +60,7 @@ class NATSBackbone(BaseBackbone):
         params = self.benchmark_api.get_net_param(
             self.arch_index, self.dataset, seed=self.seed, hp=self.hp)
         self.nats_model.load_state_dict(params, strict=True)
+        self.benchmark_api.clear_params(self.arch_index, hp=self.hp)
 
     def forward(self, x):
         outs = self.nats_model(x)

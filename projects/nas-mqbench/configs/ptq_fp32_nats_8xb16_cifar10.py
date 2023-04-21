@@ -27,7 +27,7 @@ model = dict(
         arch_index=1452,  #  1017, 1452, 1990
         dataset='cifar10',
         # (hp, seed) -> (12, 111), (200, 777|888|999)
-        seed=777,
+        seed=888,
         hp='200',  # 12, 200
     ),
     head=dict(
@@ -35,3 +35,7 @@ model = dict(
     ))
 
 _base_.val_dataloader.batch_size=64
+# For memory saving.
+_base_.train_dataloader.num_workers=1
+_base_.val_dataloader.num_workers=1
+_base_.test_dataloader.num_workers=1
