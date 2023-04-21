@@ -20,7 +20,7 @@ class TensorRTQuantizer(NativeQuantizer):
                  global_qconfig,
                  no_observer_modules=None,
                  tracer=dict(type='CustomTracer')):
-        super().__init__(global_qconfig, no_observer_modules, tracer)
+        super().__init__(global_qconfig, no_observer_modules, tracer=tracer)
 
     @property
     def backend(self):

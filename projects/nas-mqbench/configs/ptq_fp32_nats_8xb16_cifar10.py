@@ -20,13 +20,14 @@ model = dict(
         type='mmrazor.NATSBackbone',
         benchmark_api=dict(    
             file_path_or_dict='/alg-data/ftp-upload/private/wangshiguang/datasets/NATS/NATS-tss-v1_0-3ffb9-full',
-            # file_path_or_dict='work_dirs/NASMQBench/NASMQ_NATS-tss-v1_0-3ffb9-full-min',
+            # file_path_or_dict='/alg-data/ftp-upload/private/wangshiguang/datasets/NATS/NATS-sss-v1_0-50262-full',
             search_space='tss',
             fast_mode=True,
             verbose=True),
         arch_index=1452,  #  1017, 1452, 1990
         dataset='cifar10',
-        # (hp, seed) -> (12, 111), (200, 777|888|999)
+        # NATS-tss: (hp, seed) -> (12, 111), (200, 777|888|999)
+        # NATS-sss: (hp, seed) -> (01|12|90, 777)
         seed=888,
         hp='200',  # 12, 200
     ),

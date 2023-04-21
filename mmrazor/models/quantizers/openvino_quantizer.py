@@ -31,7 +31,7 @@ class OpenVINOQuantizer(NativeQuantizer):
                      module_next=('torch.nn.MaxPool2d', ),
                      target_prev=('output', ),
                      target_next=('flatten', ))):
-        super().__init__(global_qconfig, no_observer_modules, tracer)
+        super().__init__(global_qconfig, no_observer_modules, tracer=tracer)
         self.remove_fakequants = remove_fakequants
 
     @property
