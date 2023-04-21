@@ -9,6 +9,7 @@ custom_imports = dict(
         'projects.face-recognition.models.heads.partialfc_head',
         'projects.face-recognition.models.backbones.mobilefacenet',
         'projects.face-recognition.datasets.mx_face_dataset',
+        'projects.face-recognition.evaluation.match_rank',
     ],
     allow_failed_imports=False
 )
@@ -60,18 +61,9 @@ train_pipeline = [
     dict(type='RandomFlip', prob=0.5, direction='horizontal'),
     dict(type='PackClsInputs'),
 ]
-# TODO(shiguang): handle data_processor in deploy pipeline.
-test_pipeline = [
-    dict(type='LoadImageFromFile'),
-    dict(type='ResizeEdge', scale=256, edge='short', backend='pillow'),
-    dict(type='CenterCrop', crop_size=224),
-    dict(type='PackClsInputs'),
-]
-
 train_dataloader = dict(
     batch_size=512,
     num_workers=3,
-    # prefetch_factor=1,
     drop_last=True,
     pin_memory=True,
     dataset=dict(
@@ -80,10 +72,28 @@ train_dataloader = dict(
         pipeline=train_pipeline),
     sampler=dict(type='DefaultSampler', shuffle=True),
 )
+# TODO(shiguang): handle data_processor in deploy pipeline.
+mdataset_type = 'mmrazor.MatchFaceDataset'
+test_pipeline = [
+    dict(type='LoadImageFromFile'),
+    # dict(type='ResizeEdge', scale=256, edge='short', backend='pillow'),
+    # dict(type='CenterCrop', crop_size=224),
+    dict(type='PackClsInputs', meta_keys=('identical_idx', 'sample_idx')),
+]
+val_dataloader = dict(
+    batch_size=32,
+    num_workers=0,
+    pin_memory=True,
+    dataset=dict(
+        type=mdataset_type,
+        data_root='/alg-data/ftp-upload/datasets/face_data/OV_test/face_recognition/xm14',
+        key_file='xm14.key',
+        data_prefix=dict(img_path='norm_112'),
+        pipeline=test_pipeline),
+    sampler=dict(type='DefaultSampler', shuffle=False),
+)
 
-# TODO(shiguang): handle validation.
-val_dataloader = None
-val_evaluator = None  # dict(type='Accuracy', topk=(1, 5))
+val_evaluator = dict(type='mmrazor.Rank1')
 
 # If you want standard test, please manually configure the test dataset
 test_dataloader = val_dataloader
@@ -120,8 +130,8 @@ param_scheduler = [
 
 # train, val, test setting
 train_cfg = dict(by_epoch=True, max_epochs=10, val_interval=1)
-val_cfg = None  # dict()
-test_cfg = None  # dict()
+val_cfg = dict()
+test_cfg = dict()
 
 # NOTE: `auto_scale_lr` is for automatically scaling LR,
 # based on the actual training batch size.

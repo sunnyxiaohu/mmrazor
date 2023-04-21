@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional, Union
+import os
 
 import torch
 from mmengine.logging import MessageHub
@@ -24,7 +25,7 @@ class SPOSPartialFC(SPOS):
         # TODO(shiguang): More common realize.
         if cur_iter == 0:
             assert len(optim_wrapper.param_groups[-1]['params'][-1]) == 0
-        
+
         parsed_losses, log_vars = self.parse_losses(losses)  # type: ignore
 
         optim_wrapper.optimizer.state.pop(optim_wrapper.param_groups[-1]['params'][-1], None)
@@ -57,7 +58,7 @@ class SPOSPartialFCDDP(MMDistributedDataParallel):
         # TODO(shiguang): More common realize.
         if cur_iter == 0:
             assert len(optim_wrapper.param_groups[-1]['params'][-1]) == 0
-        
+
         parsed_losses, log_vars = self.module.parse_losses(losses)  # type: ignore
 
         optim_wrapper.optimizer.state.pop(optim_wrapper.param_groups[-1]['params'][-1], None)

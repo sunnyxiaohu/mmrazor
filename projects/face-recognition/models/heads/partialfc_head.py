@@ -1,21 +1,17 @@
-# Copyright (c) OpenMMLab. All rights reserved.
 from typing import List, Optional, Tuple, Union
 
 import torch
 from torch import distributed
 import torch.nn as nn
 from torch.nn.functional import linear, normalize
-import torch.nn.functional as F
 
 from mmrazor.registry import MODELS
 
 try:
-    from mmcls.evaluation.metrics import Accuracy
     from mmcls.structures import ClsDataSample
     from mmcls.models.heads.base_head import BaseHead
 except ImportError:
     from mmrazor.utils import get_placeholder
-    Accuracy = get_placeholder('mmcls')
     ClsDataSample = get_placeholder('mmcls')
     BaseHead = get_placeholder('mmcls')
 
@@ -44,7 +40,6 @@ class PartialFCHead(BaseHead):
         ), "must initialize distributed before create this"
         self.rank = distributed.get_rank()
         self.world_size = distributed.get_world_size()
-
 
         self.embedding_size = embedding_size
         self.sample_rate: float = sample_rate
@@ -97,10 +92,10 @@ class PartialFCHead(BaseHead):
         self.weight_index = index
 
         labels[index_positive] = torch.searchsorted(index, labels[index_positive])
-        
+
         self.weight_activated = torch.nn.Parameter(self.weight[self.weight_index])
         self.weight_activated_mom = self.weight_mom[self.weight_index]
-        
+
         # if isinstance(optimizer, torch.optim.SGD):
         #     # TODO the params of partial fc must be last in the params list
         #     optimizer.state.pop(optimizer.param_groups[-1]["params"][0], None)
@@ -226,7 +221,6 @@ class PartialFCHead(BaseHead):
 
         return losses
 
-
     def predict(
         self,
         feats: Tuple[torch.Tensor],
@@ -247,15 +241,33 @@ class PartialFCHead(BaseHead):
             List[ClsDataSample]: A list of data samples which contains the
             predicted results.
         """
-        raise NotImplementedError()
-        # # The part can be traced by torch.fx
-        # cls_score = self(feats)
-
-        # # The part can not be traced by torch.fx
-        # predictions = self._get_predictions(cls_score, data_samples)
-        # return predictions
+        # The part can be traced by torch.fx
+        cls_score = self(feats)
+        # The part can not be traced by torch.fx
+        predictions = self._get_predictions(cls_score, data_samples)
+        return predictions
 
     # TODO(shiguang): check state_dict and load_state_dict.
+
+    def _get_predictions(self, cls_score, data_samples):
+        """Post-process the output of head.
+
+        Including softmax and set ``pred_label`` of data samples.
+        """
+        pred_scores = cls_score
+        # pred_labels = pred_scores.argmax(dim=1, keepdim=True).detach()
+
+        out_data_samples = []
+        if data_samples is None:
+            data_samples = [None for _ in range(pred_scores.size(0))]
+
+        for data_sample, score in zip(data_samples, pred_scores):
+            if data_sample is None:
+                data_sample = ClsDataSample()
+
+            data_sample.set_pred_score(score)
+            out_data_samples.append(data_sample)
+        return out_data_samples
 
 
 class AllGatherFunc(torch.autograd.Function):
