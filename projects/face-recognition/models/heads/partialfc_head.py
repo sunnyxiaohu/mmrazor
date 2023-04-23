@@ -1,4 +1,5 @@
 from typing import List, Optional, Tuple, Union
+import collections
 
 import torch
 from torch import distributed
@@ -117,6 +118,31 @@ class PartialFCHead(BaseHead):
         if self.sample_rate < 1:
             self.weight[self.weight_index] = self.weight_activated
             self.weight_mom[self.weight_index] = self.weight_activated_mom
+
+    def _save_to_state_dict(self, destination=None, prefix="", keep_vars=False):
+        if destination is None:
+            destination = collections.OrderedDict()
+            destination._metadata = collections.OrderedDict()
+
+        for name, module in self._modules.items():
+            if module is not None:
+                module._save_to_state_dict(destination, prefix + name + ".", keep_vars=keep_vars)
+        if self.sample_rate < 1:
+            destination["weight"] = self.weight.detach()
+        else:
+            destination["weight"] = self.weight_activated.data.detach()
+        return destination
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata,
+                              *args, **kwargs):
+        if self.sample_rate < 1:
+            self.weight = state_dict["weight"].to(self.weight.device)
+            self.weight_mom.zero_()
+            self.weight_activated.data.zero_()
+            self.weight_activated_mom.zero_()
+            self.weight_index.zero_()
+        else:
+            self.weight_activated.data = state_dict["weight"].to(self.weight_activated.data.device)
 
     def pre_logits(self, feats: Tuple[torch.Tensor]) -> torch.Tensor:
         """The process before the final classification head.
