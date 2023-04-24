@@ -116,6 +116,7 @@ class Rank1(BaseMetric):
         """
 
         pred = to_tensor(pred)
+        pred = pred / torch.linalg.norm(pred)
         target = to_tensor(target).to(torch.int64)
         cos_matrix = torch.matmul(pred, pred.t())
         num = pred.size(0)
