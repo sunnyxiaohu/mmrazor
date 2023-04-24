@@ -88,9 +88,9 @@ class DataLoaderX:
 
     def preload(self):
         self.batch = next(self.iter, None)
-        assert 'inputs' in self.batch
         if self.batch is None:
             return None
+        assert 'inputs' in self.batch        
         with torch.cuda.stream(self.stream):
             for k in range(len(self.batch['inputs'])):
                 self.batch['inputs'][k] = self.batch['inputs'][k].to(
