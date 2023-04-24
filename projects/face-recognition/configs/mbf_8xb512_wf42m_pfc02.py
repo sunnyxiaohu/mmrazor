@@ -10,6 +10,7 @@ custom_imports = dict(
         'projects.face-recognition.models.backbones.mobilefacenet',
         'projects.face-recognition.datasets.mx_face_dataset',
         'projects.face-recognition.evaluation.match_rank',
+        'projects.face-recognition.engine.runner.loopx',
     ],
     allow_failed_imports=False
 )
@@ -56,8 +57,6 @@ model_wrapper_cfg = dict(
 # dataset settings
 dataset_type = 'mmrazor.MXFaceDataset'
 train_pipeline = [
-    # dict(type='LoadImageFromFile'),
-    # dict(type='RandomResizedCrop', scale=224, backend='pillow'),
     dict(type='RandomFlip', prob=0.5, direction='horizontal'),
     dict(type='PackClsInputs'),
 ]
@@ -76,8 +75,6 @@ train_dataloader = dict(
 mdataset_type = 'mmrazor.MatchFaceDataset'
 test_pipeline = [
     dict(type='LoadImageFromFile'),
-    # dict(type='ResizeEdge', scale=256, edge='short', backend='pillow'),
-    # dict(type='CenterCrop', crop_size=224),
     dict(type='PackClsInputs',
          meta_keys=('sample_idx_identical_mapping', 'dataset_name')),
 ]
@@ -161,7 +158,9 @@ param_scheduler = [
 ]
 
 # train, val, test setting
-train_cfg = dict(by_epoch=True, max_epochs=10, val_interval=1)
+# Note that: Use LoopX is a little faster than EpochBasedTrainLoop
+train_cfg = dict(type='mmrazor.EpochBasedTrainLoopX',  # by_epoch=True
+                 max_epochs=10, val_interval=1)
 val_cfg = dict()
 test_cfg = dict()
 
