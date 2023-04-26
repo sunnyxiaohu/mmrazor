@@ -343,7 +343,7 @@ test_pipeline = [
 
 train_dataloader = dict(
     batch_size=64,
-    num_workers=16,
+    num_workers=4,
     dataset=dict(
         type=dataset_type,
         data_root='data/imagenet',
@@ -356,7 +356,7 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     batch_size=64,
-    num_workers=16,
+    num_workers=4,
     dataset=dict(
         type=dataset_type,
         data_root='data/imagenet',
