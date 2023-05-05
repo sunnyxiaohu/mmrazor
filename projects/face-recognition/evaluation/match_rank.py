@@ -116,18 +116,20 @@ class Rank1(BaseMetric):
         """
 
         pred = to_tensor(pred)
-        pred = pred / torch.linalg.norm(pred)
-        target = to_tensor(target).to(torch.int64)
-        cos_matrix = torch.matmul(pred, pred.t())
         num = pred.size(0)
+
         assert pred.size(0) == target.size(0), \
             f"The size of pred ({pred.size(0)}) doesn't match "\
             f'the target ({target.size(0)}).'
+        pred = pred / torch.linalg.norm(pred.view(num, -1), dim=-1).unsqueeze(-1).expand_as(pred)
+        target = to_tensor(target).to(torch.int64)
+        cos_matrix = torch.matmul(pred, pred.t())
 
         all_nums = 0.0
         correct_nums = 0.0
         for idx in range(num):
-            cosi = cos_matrix[idx] - 0.5
+            cosi = cos_matrix[idx]
+            cosi[idx] -= 0.5
             identical_idxs = sample_idx_identical_mapping[idx]
             pred_idxs = cosi.argsort(descending=True)[:len(identical_idxs)]
             pred_idxs = pred_idxs.numpy().tolist()

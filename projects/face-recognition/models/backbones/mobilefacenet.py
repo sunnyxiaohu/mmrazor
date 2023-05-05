@@ -98,7 +98,7 @@ class GDC(BaseModule):
         self.layers = nn.Sequential(
             PoolBlock(512, 512, kernel=(7, 7), stride=(1, 1)),
             Flatten(),
-            Linear(512, embedding_size, bias=False),
+            Linear(512, embedding_size, bias=True),
             BatchNorm1d(embedding_size))
 
     def forward(self, x):
@@ -106,8 +106,8 @@ class GDC(BaseModule):
 
 @MODELS.register_module()
 class MobileFaceNet(BaseBackbone):
-    def __init__(self, fp16=False, num_features=512, blocks=(1, 4, 6, 2), scale=2):
-        super(MobileFaceNet, self).__init__()
+    def __init__(self, fp16=False, num_features=512, blocks=(1, 4, 6, 2), scale=2, init_cfg=None):
+        super(MobileFaceNet, self).__init__(init_cfg)
         self.frozen_stages=-1
         self.norm_eval=False
         self.scale = scale
@@ -137,9 +137,16 @@ class MobileFaceNet(BaseBackbone):
 
         self.conv_sep = ConvBlock(128 * self.scale, 512, kernel=(1, 1), stride=(1, 1), padding=(0, 0))
         self.features = GDC(num_features)
-        # self._initialize_weights()
 
     def init_weights(self):
+        super().init_weights()
+        if (isinstance(self.init_cfg, dict)
+                and self.init_cfg['type'] == 'Pretrained'):
+            # Suppress default init if use pretrained model.
+            return
+        self._init_weights()
+
+    def _init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -160,7 +167,7 @@ class MobileFaceNet(BaseBackbone):
         x = self.conv_sep(x.float() if self.fp16 else x)
         x = self.features(x)
         return (x, )
-    
+
     def _freeze_stages(self):
         if self.frozen_stages >= 0:
             for param in self.conv1.parameters():

@@ -90,7 +90,7 @@ class DataLoaderX:
         self.batch = next(self.iter, None)
         if self.batch is None:
             return None
-        assert 'inputs' in self.batch        
+        assert 'inputs' in self.batch
         with torch.cuda.stream(self.stream):
             for k in range(len(self.batch['inputs'])):
                 self.batch['inputs'][k] = self.batch['inputs'][k].to(

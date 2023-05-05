@@ -22,7 +22,7 @@ architecture = dict(
     data_preprocessor=dict(
         # num_classes=1000,
         # RGB format normalization parameters
-        mean=[128, 128, 128],
+        mean=[127.5, 127.5, 127.5],
         std=[128, 128, 128],
         # convert image from BGR to RGB
         to_rgb=True,
@@ -30,15 +30,18 @@ architecture = dict(
     # TODO: replace model config
     backbone=dict(
         type='mmrazor.MobileFaceNet',
-        fp16=True,
-        num_features=512),
+        # init_cfg=dict(type='Pretrained', checkpoint='/home/wangshiguang/Archface/arcface_torch/out_dir_256/model.pt'),
+        num_features=256,
+        fp16=False,
+        scale=1,
+        blocks=(2, 4, 6, 2)),
     # neck=dict(type='GlobalAveragePooling'),
     head=dict(
         type='mmrazor.PartialFCHead',
-        embedding_size=512,
+        embedding_size=256,
         num_classes=2059906,
         sample_rate=0.2,
-        fp16=True,
+        fp16=False,
         loss=dict(type='mmrazor.CombinedMarginLoss', s=64, m1=1.0, m2=0.0, m3=0.4, interclass_filtering_threshold=0.0),
     )
 )
@@ -61,7 +64,7 @@ train_pipeline = [
     dict(type='PackClsInputs'),
 ]
 train_dataloader = dict(
-    batch_size=512,
+    batch_size=256,
     num_workers=3,
     drop_last=True,
     pin_memory=True,
@@ -80,7 +83,7 @@ test_pipeline = [
 ]
 val_dataloader = dict(
     batch_size=128,
-    num_workers=1,
+    num_workers=2,
     dataset=dict(type='ConcatDataset', datasets=[
         dict(type=mdataset_type,
              dataset_name='120P',
@@ -131,7 +134,10 @@ test_evaluator = val_evaluator
 # TODO(shiguang): handle fp16 properly.
 # optimizer
 optim_wrapper = dict(
-    optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4))
+    # type='AmpOptimWrapper',
+    # loss_scale='dynamic',  # loss_scale=dict(growth_interval=100),
+    optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4),
+    clip_grad=dict(type='value', clip_value=5))
 
 # learning policy
 param_scheduler = [
@@ -159,8 +165,7 @@ param_scheduler = [
 
 # train, val, test setting
 # Note that: Use LoopX is a little faster than EpochBasedTrainLoop
-train_cfg = dict(type='mmrazor.EpochBasedTrainLoopX',  # by_epoch=True
-                 max_epochs=10, val_interval=1)
+train_cfg = dict(by_epoch=True, max_epochs=10, val_interval=1)
 val_cfg = dict()
 test_cfg = dict()
 
