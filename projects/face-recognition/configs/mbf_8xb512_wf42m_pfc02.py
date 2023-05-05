@@ -22,7 +22,7 @@ architecture = dict(
     data_preprocessor=dict(
         # num_classes=1000,
         # RGB format normalization parameters
-        mean=[127.5, 127.5, 127.5],
+        mean=[128, 128, 128],
         std=[128, 128, 128],
         # convert image from BGR to RGB
         to_rgb=True,
@@ -83,7 +83,7 @@ test_pipeline = [
 ]
 val_dataloader = dict(
     batch_size=128,
-    num_workers=2,
+    num_workers=1,
     dataset=dict(type='ConcatDataset', datasets=[
         dict(type=mdataset_type,
              dataset_name='120P',
