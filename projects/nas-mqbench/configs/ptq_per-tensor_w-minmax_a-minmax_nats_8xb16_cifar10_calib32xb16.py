@@ -1,12 +1,12 @@
 _base_ = [
-    './ptq_fp32_nats_8xb16_imagenet16.py'
+    './ptq_fp32_nats_8xb16_cifar10.py'
 ]
 
 calibrate_dataloader = dict(
     batch_size=16,
     num_workers=1,
     dataset=_base_.val_dataloader.dataset,
-    sampler=_base_.val_dataloader.sampler,
+    sampler=dict(type='DefaultSampler', shuffle=True),
 )
 
 test_cfg = dict(
@@ -16,14 +16,14 @@ test_cfg = dict(
 )
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.HistogramObserver'),
+    w_observer=dict(type='mmrazor.MinMaxObserver'),
     a_observer=dict(type='mmrazor.MovingAverageMinMaxObserver'),
     w_fake_quant=dict(type='mmrazor.FakeQuantize'),
     a_fake_quant=dict(type='mmrazor.FakeQuantize'),
     w_qscheme=dict(
-        qdtype='qint8', bit=8, is_symmetry=True, is_symmetric_range=True),
+        qdtype='qint8', bit=8, is_symmetry=True),
     a_qscheme=dict(
-        qdtype='quint8', bit=8, is_symmetry=True, averaging_constant=0.1),
+        qdtype='qint8', bit=8, is_symmetry=True, averaging_constant=0.1),
 )
 
 model = dict(
@@ -34,7 +34,7 @@ model = dict(
     float_checkpoint=None,
     forward_modes=('tensor', 'predict'),
     quantizer=dict(
-        type='mmrazor.TorchNativeQuantizer',
+        type='mmrazor.TensorRTQuantizer',
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
@@ -42,3 +42,5 @@ model = dict(
                 'mmcls.models.heads.ClsHead._get_loss',
                 'mmcls.models.heads.ClsHead._get_predictions'
             ])))
+
+model_wrapper_cfg = dict(type='mmrazor.MMArchitectureQuantDDP', )

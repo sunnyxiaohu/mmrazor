@@ -4,10 +4,11 @@ import os
 from collections import OrderedDict
 from pathlib import Path
 import re
+import glob
 from nats_bench import create, pickle_save, pickle_load, ArchResults, ResultsCount
 import torch
 
-from mmengine.config import Config
+from mmengine.config import Config, DictAction
 from mmengine.runner import Runner
 from mmrazor.utils import register_all_modules
 
@@ -24,6 +25,9 @@ def parse_args():
     parser.add_argument(
         '--work-dir',
         help='the directory to save the file containing evaluation metrics')
+    parser.add_argument(
+        '--xrange',
+        help='If specified, it will only collect data in xrange.')
     parser.add_argument(
         '--store',
         action='store_true',
@@ -59,11 +63,12 @@ def main():
 
     # Create the API instance for the size search space in NATS
     benchmark_api = create(**cfg.model.architecture.backbone.benchmark_api)
-    subnet_root_list = os.listdir(args.data_root)
-    for subnet_root in subnet_root_list:
-        print(f'Handle subnet: {subnet_root}')
-        collect_subset(cfg, benchmark_api, os.path.join(args.data_root, subnet_root),
-                       store=args.store, analysis=args.analysis, work_dir=args.work_dir)
+    subset_root_list = os.listdir(args.data_root)
+    for subset_root in subset_root_list:
+        print(f'Handle subset: {subset_root}')
+        collect_subset(cfg, benchmark_api, os.path.join(args.data_root, subset_root),
+                       store=args.store, analysis=args.analysis, work_dir=args.work_dir,
+                       xran=args.xrange)
 
 def valid_check():
     pass
@@ -84,6 +89,8 @@ def get_quantize_result(filename_dir_list, start, end, root_dir=''):
     regex2 = 'accuracy/top1: ([0-9]+.[0-9]+)'    
     for filename in filename_dir_list:
         path = os.path.join(root_dir, filename, filename + '.log')
+        if not os.path.exists(path):
+            path = glob.glob(os.path.join(root_dir, filename, '*.log'))[0]
         arch_index = None
         accuracy = None
         with open(path) as f:
@@ -94,45 +101,67 @@ def get_quantize_result(filename_dir_list, start, end, root_dir=''):
                 match = re.search(regex2, line)
                 if match and accuracy is None:
                     accuracy = float(match.group(1))
-        
+
         if arch_index is None or accuracy is None or arch_index < start or arch_index >= end or arch_index in results:
             print(f'{path}, arch_index: {arch_index}, accuracy: {accuracy}, xrange: [{start}, {end}]')
             import pdb; pdb.set_trace()
             continue
         results[arch_index] = accuracy
+
+    diff1 = set(range(start, end)) - set(list(results))
+    diff2 = set(list(results)) - set(range(start, end))
+    if len(diff1) != 0 or len(diff2) != 0:
+        print(f'Difference: {diff1}, {diff2}')
+        import pdb; pdb.set_trace()
     assert len(results) == (end - start)        
     return results
 
-def collect_subset(cfg, benchmark_api, subnet_root, store=False, analysis=False, work_dir=''):
+def collect_subset(cfg, benchmark_api, subset_root,
+                   store=False, analysis=False, work_dir='', xran=None):
     dataset = cfg.model.architecture.backbone.dataset
     hp = cfg.model.architecture.backbone.hp
     is_random = cfg.model.architecture.backbone.seed
 
     total_archs = len(benchmark_api)
-    setname, start, end, this_seed = _get_setname_xrange_seed(subnet_root.split('/')[-1])
-    assert start >= 0 and end < total_archs and start <= end
+    setname, start, end, this_seed = _get_setname_xrange_seed(subset_root.split('/')[-1])
+    assert start >= 0 and end <= total_archs and start < end
 
-    filenames = os.listdir(subnet_root)
+    filenames = os.listdir(subset_root)
     filenames = list(
         filter(lambda x: os.path.isdir(
-            os.path.join(subnet_root, x)), filenames))
+            os.path.join(subset_root, x)), filenames))
 
     filenames.sort()
-    quantize_result = get_quantize_result(filenames, start, end, root_dir=subnet_root)
+    quantize_result = get_quantize_result(filenames, start, end, root_dir=subset_root)
 
     if not store and not analysis:
         return
 
+    if xran is not None:
+        xran = [int(x) for x in xran.split('-')]
+        xran = range(xran[0], xran[1])
+
     for arch_index, accuracy in quantize_result.items():
+        if xran is not None and arch_index not in xran:
+            continue
         # backbone_config = benchmark_api.get_net_config(arch_index, cfg.model.architecture.backbone.dataset)
-        info = benchmark_api.get_more_info(arch_index, dataset, hp=hp,is_random=is_random)
+        info = benchmark_api.get_more_info(arch_index, dataset, hp=hp, is_random=is_random)
         benchmark_api.clear_params(arch_index, hp=hp)
         print(arch_index, info['test-accuracy'], accuracy)
 
         if store:
             # collect and store data.
             # import pdb; pdb.set_trace()
-            archresult = benchmark_api.query_meta_info_by_index(arch_index, hp=hp)
+            arch2infos_dict = benchmark_api.arch2infos_dict[arch_index]
+            # cfg.model.architecture.backbone.benchmark_api.file_path_or_dict = work_dir
+            # benchmark_apixxx = create(**cfg.model.architecture.backbone.benchmark_api)
+            # benchmark_apixxx._prepare_info(arch_index)
+            # arch2infos_dict = benchmark_apixxx.arch2infos_dict[arch_index]
+            to_save_data = OrderedDict(
+                {hp: arch2infos_dict[hp].state_dict() for hp in benchmark_api._avaliable_hps})
+
+            # archresult = benchmark_api.query_meta_info_by_index(arch_index, hp=hp)
+            archresult = arch2infos_dict[hp]
             xresult = deepcopy(archresult.query(dataset, seed=is_random))
 
             # update results
@@ -147,13 +176,12 @@ def collect_subset(cfg, benchmark_api, subnet_root, store=False, analysis=False,
             accs[f'{setname}@{iepoch}'] = accuracy
             xresult.update_eval(accs, losses, times)
             archresult.update(new_dataset, this_seed, xresult)
-            to_save_data = OrderedDict({hp: archresult.state_dict()})
+
+            to_save_data[hp] = archresult.state_dict()
             # nas_mqbench = 'NASMQ_' + cfg.model.architecture.backbone.benchmark_api.file_path_or_dict.split('/')[-1]
             full_save_dir = Path(work_dir)  #  / nas_mqbench
             full_save_dir.mkdir(parents=True, exist_ok=True)
             pickle_save(to_save_data, str(full_save_dir / f'{arch_index:06d}.pickle'))
-            # archresult.get_metrics(new_dataset, setname, is_random=this_seed)
-            # archresult.get_metrics(dataset, 'ori-test', is_random=is_random)
 
         if analysis and info['test-accuracy'] - accuracy > 10:
             int8_cfg = cfg

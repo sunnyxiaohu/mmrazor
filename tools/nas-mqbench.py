@@ -71,22 +71,28 @@ def main():
     benchmark_api = create(**cfg.model.architecture.backbone.benchmark_api)
 
     total_archs = len(benchmark_api)
-    start, end = args.xrange.split('-')
-    start, end = int(start), int(end)
-    assert start >= 0 and end < total_archs and start <= end
+    tockens = args.xrange.split('-')
+    assert len(tockens) in [1, 2]
+    start = int(tockens[0])
+    # accept one number as xrange
+    end = start + 1 if len(tockens) == 1 else int(tockens[1])
+    assert start >= 0 and end <= total_archs and start <= end
     index = args.resume_index if args.resume_index else start
-    assert index >= start and index <= end
-    cfg.work_dir = cfg.work_dir + f'_xrange{start}-{end}_seed{cfg.randomness.get("seed")}'
+    assert index >= start and index < end
+    hp = cfg.model.architecture.backbone.hp
+    work_dir = cfg.work_dir + f'_hp{hp}_seed{cfg.randomness.get("seed")}'
 
     while(index < end):
         backbone_config = benchmark_api.get_net_config(index, cfg.model.architecture.backbone.dataset)
         cfg.model.architecture.backbone.arch_index = index
+        cfg.work_dir = work_dir + f'/{index:06d}'
         # cfg.model.architecture.backbone.benchmark_api = benchmark_api
         # build the runner from config
         runner = Runner.from_cfg(cfg)
         # start testing
         runner.test()
         index += 1
+        del runner
 
 
 if __name__ == '__main__':

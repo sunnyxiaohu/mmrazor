@@ -36,8 +36,8 @@ model = dict(
         type='mmcls.ClsHead'
     ))
 
-_base_.val_dataloader.batch_size = 64
+_base_.val_dataloader.batch_size = 128
 # For memory saving.
-_base_.train_dataloader.num_workers = 1
-_base_.val_dataloader.num_workers = 1
-_base_.test_dataloader.num_workers = 1
+_base_.train_dataloader.num_workers = 2
+_base_.val_dataloader.num_workers = 2
+_base_.test_dataloader.num_workers = 2

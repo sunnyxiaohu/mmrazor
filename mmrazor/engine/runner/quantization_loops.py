@@ -331,7 +331,7 @@ class PTQLoop(TestLoop):
             diff_rank_seed = runner._randomness_cfg.get(
                 'diff_rank_seed', False)
             self.dataloader = runner.build_dataloader(
-                dataloader, seed=runner.seed, diff_rank_seed=diff_rank_seed)
+                calibrate_dataloader, seed=runner.seed, diff_rank_seed=diff_rank_seed)
         else:
             self.dataloader = dataloader
 
