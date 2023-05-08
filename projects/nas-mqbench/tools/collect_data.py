@@ -8,6 +8,7 @@ import glob
 from nats_bench import create, pickle_save, pickle_load, ArchResults, ResultsCount
 import torch
 
+import mmengine
 from mmengine.config import Config, DictAction
 from mmengine.runner import Runner
 from mmrazor.utils import register_all_modules
@@ -59,61 +60,36 @@ def main():
     # load config
     cfg = Config.fromfile(args.config, import_custom_modules=False)
     if args.cfg_options is not None:
-        cfg.merge_from_dict(args.cfg_options)    
+        cfg.merge_from_dict(args.cfg_options)
 
     # Create the API instance for the size search space in NATS
     benchmark_api = create(**cfg.model.architecture.backbone.benchmark_api)
-    subset_root_list = os.listdir(args.data_root)
-    for subset_root in subset_root_list:
-        print(f'Handle subset: {subset_root}')
-        collect_subset(cfg, benchmark_api, os.path.join(args.data_root, subset_root),
-                       store=args.store, analysis=args.analysis, work_dir=args.work_dir,
-                       xran=args.xrange)
+    collect_subset(cfg, benchmark_api, args.data_root,
+                   store=args.store, analysis=args.analysis, work_dir=args.work_dir,
+                   xran=args.xrange)
 
 def valid_check():
     pass
 
-def _get_setname_xrange_seed(path):
-    match = re.search('(.+)_8xb16_.+_xrange([0-9]+)-([0-9]+)_seed([0-9]+)', path)
+def _get_exp_args(path):
+    match = re.search('(.+)_8xb16_(.+)_calib.+_hp([0-9]+)_seed([0-9]+)', path)
     setname = match.group(1)
-    start, end = int(match.group(2)), int(match.group(3))
+    this_dataset = match.group(2)
+    this_hp = match.group(3)
     this_seed = int(match.group(4))
-    return setname, start, end, this_seed
+    return setname, this_dataset, this_hp, this_seed
 
-def get_quantize_result(filename_dir_list, start, end, root_dir=''):
-    if len(filename_dir_list) != (end - start):
-        print(f'Missmatch filenames and xrange: {len(filename_dir_list)} vs [{start}, {end}]')
-        import pdb; pdb.set_trace()
+def get_quantize_result(index_list, root_dir=''):
     results = {}
-    regex1 = 'arch_index=([0-9]+),'
-    regex2 = 'accuracy/top1: ([0-9]+.[0-9]+)'    
-    for filename in filename_dir_list:
-        path = os.path.join(root_dir, filename, filename + '.log')
-        if not os.path.exists(path):
-            path = glob.glob(os.path.join(root_dir, filename, '*.log'))[0]
-        arch_index = None
-        accuracy = None
-        with open(path) as f:
-            for line in f:
-                match = re.search(regex1, line)
-                if match and arch_index is None:
-                    arch_index = int(match.group(1))
-                match = re.search(regex2, line)
-                if match and accuracy is None:
-                    accuracy = float(match.group(1))
-
-        if arch_index is None or accuracy is None or arch_index < start or arch_index >= end or arch_index in results:
-            print(f'{path}, arch_index: {arch_index}, accuracy: {accuracy}, xrange: [{start}, {end}]')
-            import pdb; pdb.set_trace()
-            continue
-        results[arch_index] = accuracy
-
-    diff1 = set(range(start, end)) - set(list(results))
-    diff2 = set(list(results)) - set(range(start, end))
-    if len(diff1) != 0 or len(diff2) != 0:
-        print(f'Difference: {diff1}, {diff2}')
-        import pdb; pdb.set_trace()
-    assert len(results) == (end - start)        
+    for index in index_list:
+        index_path = os.path.join(root_dir, index)
+        exps = list(
+                    filter(lambda x: os.path.isdir(
+                        os.path.join(index_path, x)), os.listdir(index_path)))
+        assert len(exps) == 1
+        exp_path = os.path.join(index_path, exps[0], f'{exps[0]}.json')
+        rst = mmengine.load(exp_path)
+        results[int(index)] = rst['accuracy/top1']
     return results
 
 def collect_subset(cfg, benchmark_api, subset_root,
@@ -123,16 +99,15 @@ def collect_subset(cfg, benchmark_api, subset_root,
     is_random = cfg.model.architecture.backbone.seed
 
     total_archs = len(benchmark_api)
-    setname, start, end, this_seed = _get_setname_xrange_seed(subset_root.split('/')[-1])
-    assert start >= 0 and end <= total_archs and start < end
-
+    setname, this_dataset, this_hp, this_seed = _get_exp_args(subset_root.split('/')[-1])
+    assert this_hp == hp and dataset == this_dataset
     filenames = os.listdir(subset_root)
     filenames = list(
         filter(lambda x: os.path.isdir(
             os.path.join(subset_root, x)), filenames))
-
+    assert len(filenames) == total_archs
     filenames.sort()
-    quantize_result = get_quantize_result(filenames, start, end, root_dir=subset_root)
+    quantize_result = get_quantize_result(filenames, root_dir=subset_root)
 
     if not store and not analysis:
         return
