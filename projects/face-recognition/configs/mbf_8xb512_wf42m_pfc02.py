@@ -22,8 +22,8 @@ architecture = dict(
     data_preprocessor=dict(
         # num_classes=1000,
         # RGB format normalization parameters
-        mean=[128, 128, 128],
-        std=[128, 128, 128],
+        mean=[127.5, 127.5, 127.5],
+        std=[127.5, 127.5, 127.5],
         # convert image from BGR to RGB
         to_rgb=True,
     ),
@@ -38,6 +38,7 @@ architecture = dict(
     # neck=dict(type='GlobalAveragePooling'),
     head=dict(
         type='mmrazor.PartialFCHead',
+        # init_cfg=dict(type='Pretrained', checkpoint='/home/wangshiguang/Archface/arcface_torch/out_dir_256/checkpoint'),
         embedding_size=256,
         num_classes=2059906,
         sample_rate=0.2,
@@ -137,7 +138,7 @@ optim_wrapper = dict(
     # type='AmpOptimWrapper',
     # loss_scale='dynamic',  # loss_scale=dict(growth_interval=100),
     optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4),
-    clip_grad=dict(type='value', clip_value=5))
+    clip_grad=dict(type='norm', max_norm=5))
 
 # learning policy
 param_scheduler = [

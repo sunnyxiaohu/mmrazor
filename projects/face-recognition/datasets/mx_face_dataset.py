@@ -38,6 +38,7 @@ class MXFaceDataset(BaseDataset):
         if not isinstance(label, numbers.Number):
             label = label[0]
         sample = mx.image.imdecode(img).asnumpy()
+        sample = sample[..., ::-1]   # rgb to bgr
         info = dict(img=sample, gt_label=int(label))
         return info
 
