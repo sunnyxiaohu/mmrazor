@@ -30,6 +30,10 @@ def parse_args():
         '--xrange',
         help='If specified, it will only collect data in xrange.')
     parser.add_argument(
+        '--force_index',
+        help='If specified, it will force collect data, and set the default value as 0.',
+        default=None)
+    parser.add_argument(
         '--store',
         action='store_true',
         default=False,
@@ -64,9 +68,10 @@ def main():
 
     # Create the API instance for the size search space in NATS
     benchmark_api = create(**cfg.model.architecture.backbone.benchmark_api)
+    force_index = None if args.force_index is None else args.force_index.split(',')
     collect_subset(cfg, benchmark_api, args.data_root,
                    store=args.store, analysis=args.analysis, work_dir=args.work_dir,
-                   xran=args.xrange)
+                   xran=args.xrange, force_index=force_index)
 
 def valid_check():
     pass
@@ -79,7 +84,7 @@ def _get_exp_args(path):
     this_seed = int(match.group(4))
     return setname, this_dataset, this_hp, this_seed
 
-def get_quantize_result(index_list, root_dir=''):
+def get_quantize_result(index_list, root_dir='', force_index=None):
     results = {}
     for index in index_list:
         index_path = os.path.join(root_dir, index)
@@ -87,13 +92,21 @@ def get_quantize_result(index_list, root_dir=''):
                     filter(lambda x: os.path.isdir(
                         os.path.join(index_path, x)), os.listdir(index_path)))
         assert len(exps) == 1
-        exp_path = os.path.join(index_path, exps[0], f'{exps[0]}.json')
-        rst = mmengine.load(exp_path)
+        try:
+            exp_path = os.path.join(index_path, exps[0], f'{exps[0]}.json')
+            rst = mmengine.load(exp_path)
+        except FileNotFoundError:
+            if force_index is not None and index in force_index:
+                rst = {'accuracy/top1': 0.0}
+                print(f'{exp_path} not found, use default value 0')
+            else:
+                raise FileNotFoundError
         results[int(index)] = rst['accuracy/top1']
     return results
 
 def collect_subset(cfg, benchmark_api, subset_root,
-                   store=False, analysis=False, work_dir='', xran=None):
+                   store=False, analysis=False, work_dir='', xran=None,
+                   force_index=None):
     dataset = cfg.model.architecture.backbone.dataset
     hp = cfg.model.architecture.backbone.hp
     is_random = cfg.model.architecture.backbone.seed
@@ -105,9 +118,9 @@ def collect_subset(cfg, benchmark_api, subset_root,
     filenames = list(
         filter(lambda x: os.path.isdir(
             os.path.join(subset_root, x)), filenames))
-    assert len(filenames) == total_archs
+    assert len(filenames) == total_archs, f'{len(filenames)} vs {total_archs}'
     filenames.sort()
-    quantize_result = get_quantize_result(filenames, root_dir=subset_root)
+    quantize_result = get_quantize_result(filenames, root_dir=subset_root, force_index=force_index)
 
     if not store and not analysis:
         return

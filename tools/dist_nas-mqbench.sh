@@ -98,9 +98,9 @@ if [[ $RESUME != "None" ]]; then
         XPORT=$(($PORT + $DEVICE - 1))
         XSTART=$(($XEND + 1))
         if [[ $DEVICE -eq ${GPUS} ]]; then
-            XEND=$RANGE
+            XEND=$(($RANGE - 1))
         else
-            XEND=$(($XSTART + $BIN))
+            XEND=$(($XSTART + $BIN -1))
         fi
         echo $DEVICE $XSTART $XEND $XPORT ${UNVIABLE_FILES[$XSTART]}
         start_rank_jobs $VISIBLE_DEVICES $XPORT $XSTART $XEND "${UNVIABLE_FILES[*]}" ${@:4} > $(date +%s)_nohup_$XSTART-$XEND.log &
@@ -114,11 +114,10 @@ else
     for DEVICE in $(seq 1 ${GPUS}); do
         VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-$(($DEVICE - 1))}
         XPORT=$(($PORT + $DEVICE - 1))
-        XEND=$(($START + $BIN))
         if [[ $DEVICE -eq ${GPUS} ]]; then
-            XEND=$END
+            XEND=$(($END - 1))
         else
-            XEND=$(($XSTART + $BIN))
+            XEND=$(($XSTART + $BIN -1))
         fi
         echo $VISIBLE_DEVICES $XPORT $XSTART $XEND ${@:4}
         start_rank_jobs $VISIBLE_DEVICES $XPORT $XSTART $XEND "None" ${@:4} > $(date +%s)_nohup_$XSTART-$XEND.log &
