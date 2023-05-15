@@ -30,7 +30,7 @@ architecture = dict(
     # TODO: replace model config
     backbone=dict(
         type='mmrazor.MobileFaceNet',
-        # init_cfg=dict(type='Pretrained', checkpoint='/home/wangshiguang/Archface/arcface_torch/out_dir_256/model.pt'),
+        # init_cfg=dict(type='Pretrained', checkpoint='/alg-data/ftp-upload/private/wangshiguang/projects/Epoch_3.pt'),
         num_features=256,
         fp16=False,
         scale=1,
@@ -71,7 +71,7 @@ train_dataloader = dict(
     pin_memory=True,
     dataset=dict(
         type=dataset_type,
-        data_root='/alg-data2/datasets/cv_dirty/fanxiao/fanxiao/webface260m/',
+        data_root='/mnt/data/webface260m/',
         pipeline=train_pipeline),
     sampler=dict(type='DefaultSampler', shuffle=True),
 )
@@ -88,37 +88,37 @@ val_dataloader = dict(
     dataset=dict(type='ConcatDataset', datasets=[
         dict(type=mdataset_type,
              dataset_name='120P',
-             data_root='/alg-data/ftp-upload/datasets/face_data/OV_test/face_recognition/120P',
+             data_root='/mnt/data/face_data/OV_test/face_recognition/120P',
              key_file='120p.key',
              data_prefix=dict(img_path='norm_facex'),
              pipeline=test_pipeline),
         dict(type=mdataset_type,
              dataset_name='baby_500p',
-             data_root='/alg-data/ftp-upload/datasets/face_data/OV_test/face_recognition/baby_500p',
+             data_root='/mnt/data/face_data/OV_test/face_recognition/baby_500p',
              key_file='baby_500p.key',
              data_prefix=dict(img_path='norm_face'),
              pipeline=test_pipeline),
         dict(type=mdataset_type,
              dataset_name='glint1k',
-             data_root='/alg-data/ftp-upload/datasets/face_data/OV_test/face_recognition/glint1k',
+             data_root='/mnt/data/face_data/OV_test/face_recognition/glint1k',
              key_file='glint1k_val.key',
              data_prefix=dict(img_path='images'),
              pipeline=test_pipeline),
         dict(type=mdataset_type,
              dataset_name='mask_369p',
-             data_root='/alg-data/ftp-upload/datasets/face_data/OV_test/face_recognition/mask_369p',
+             data_root='/mnt/data/face_data/OV_test/face_recognition/mask_369p',
              key_file='mask_369p.key',
              data_prefix=dict(img_path='norm_face'),
              pipeline=test_pipeline),
         dict(type=mdataset_type,
              dataset_name='menjin_20p',
-             data_root='/alg-data/ftp-upload/datasets/face_data/OV_test/face_recognition/menjin_20p',
+             data_root='/mnt/data/face_data/OV_test/face_recognition/menjin_20p',
              key_file='menjin_20p.key',
              data_prefix=dict(img_path='norm_face'),
              pipeline=test_pipeline),
         dict(type=mdataset_type,
              dataset_name='xm14',
-             data_root='/alg-data/ftp-upload/datasets/face_data/OV_test/face_recognition/xm14',
+             data_root='/mnt/data/face_data/OV_test/face_recognition/xm14',
              key_file='xm14.key',
              data_prefix=dict(img_path='norm_112'),
              pipeline=test_pipeline),
@@ -134,11 +134,16 @@ test_evaluator = val_evaluator
 
 # TODO(shiguang): handle fp16 properly.
 # optimizer
-optim_wrapper = dict(
+optim_wrapper = {
     # type='AmpOptimWrapper',
     # loss_scale='dynamic',  # loss_scale=dict(growth_interval=100),
-    optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4),
-    clip_grad=dict(type='norm', max_norm=5))
+    'constructor': 'mmrazor.SeparateOptimWrapperConstructor',
+    'architecture.backbone': dict(
+        optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4),
+        clip_grad=dict(type='norm', max_norm=5)),
+    'architecture.head': dict(
+        optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4),
+    )}
 
 # learning policy
 param_scheduler = [
@@ -166,12 +171,12 @@ param_scheduler = [
 
 # train, val, test setting
 # Note that: Use LoopX is a little faster than EpochBasedTrainLoop
-train_cfg = dict(by_epoch=True, max_epochs=10, val_interval=1)
+train_cfg = dict(type='mmrazor.EpochBasedTrainLoopX', max_epochs=10, val_interval=1)
 val_cfg = dict()
 test_cfg = dict()
 
 # NOTE: `auto_scale_lr` is for automatically scaling LR,
 # based on the actual training batch size.
-auto_scale_lr = dict(base_batch_size=512)
+auto_scale_lr = dict(base_batch_size=256)
 
 # _base_.default_hooks.logger.interval = 10

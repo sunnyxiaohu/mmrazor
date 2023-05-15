@@ -66,6 +66,10 @@ class SeparateOptimWrapperConstructor:
         optimizers = {}
         if hasattr(module, 'module'):
             module = module.module
+
         for key, constructor in self.constructors.items():
-            optimizers[key] = constructor(module._modules[key])
+            sub_module = module
+            for sub_key in key.split('.'):
+                sub_module = sub_module._modules[sub_key]
+            optimizers[key] = constructor(sub_module)
         return OptimWrapperDict(**optimizers)
