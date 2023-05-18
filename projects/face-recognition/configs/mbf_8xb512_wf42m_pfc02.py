@@ -30,7 +30,6 @@ architecture = dict(
     # TODO: replace model config
     backbone=dict(
         type='mmrazor.MobileFaceNet',
-        # init_cfg=dict(type='Pretrained', checkpoint='/alg-data/ftp-upload/private/wangshiguang/projects/Epoch_3.pt'),
         num_features=256,
         fp16=False,
         scale=1,
@@ -38,7 +37,6 @@ architecture = dict(
     # neck=dict(type='GlobalAveragePooling'),
     head=dict(
         type='mmrazor.PartialFCHead',
-        # init_cfg=dict(type='Pretrained', checkpoint='/home/wangshiguang/Archface/arcface_torch/out_dir_256/checkpoint'),
         embedding_size=256,
         num_classes=2059906,
         sample_rate=0.2,
@@ -54,6 +52,7 @@ model = dict(
 
 model_wrapper_cfg = dict(
     type='mmrazor.SPOSPartialFCDDP',
+    exclude_module='architecture.head',
     broadcast_buffers=False,
     find_unused_parameters=True)
 
@@ -135,13 +134,17 @@ test_evaluator = val_evaluator
 # TODO(shiguang): handle fp16 properly.
 # optimizer
 optim_wrapper = {
-    # type='AmpOptimWrapper',
-    # loss_scale='dynamic',  # loss_scale=dict(growth_interval=100),
     'constructor': 'mmrazor.SeparateOptimWrapperConstructor',
     'architecture.backbone': dict(
+        # type='AmpOptimWrapper',
+        # # loss_scale='dynamic',
+        # loss_scale=dict(growth_interval=100),
         optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4),
         clip_grad=dict(type='norm', max_norm=5)),
     'architecture.head': dict(
+        # type='AmpOptimWrapper',
+        # # loss_scale='dynamic',
+        # loss_scale=dict(growth_interval=100),
         optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4),
     )}
 
