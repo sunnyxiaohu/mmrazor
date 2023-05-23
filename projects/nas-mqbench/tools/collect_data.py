@@ -109,7 +109,7 @@ def collect_subset(cfg, benchmark_api, subset_root,
                    force_index=None):
     dataset = cfg.model.architecture.backbone.dataset
     hp = cfg.model.architecture.backbone.hp
-    is_random = cfg.model.architecture.backbone.seed
+    fp32_seed = cfg.model.architecture.backbone.seed
 
     total_archs = len(benchmark_api)
     setname, this_dataset, this_hp, this_seed = _get_exp_args(subset_root.split('/')[-1])
@@ -133,8 +133,7 @@ def collect_subset(cfg, benchmark_api, subset_root,
         if xran is not None and arch_index not in xran:
             continue
         # backbone_config = benchmark_api.get_net_config(arch_index, cfg.model.architecture.backbone.dataset)
-        info = benchmark_api.get_more_info(arch_index, dataset, hp=hp, is_random=is_random)
-        benchmark_api.clear_params(arch_index, hp=hp)
+        info = benchmark_api.get_more_info(arch_index, dataset, hp=hp, is_random=fp32_seed)
         print(arch_index, info['test-accuracy'], accuracy)
 
         if store:
@@ -145,12 +144,15 @@ def collect_subset(cfg, benchmark_api, subset_root,
             # benchmark_apixxx = create(**cfg.model.architecture.backbone.benchmark_api)
             # benchmark_apixxx._prepare_info(arch_index)
             # arch2infos_dict = benchmark_apixxx.arch2infos_dict[arch_index]
-            to_save_data = OrderedDict(
-                {hp: arch2infos_dict[hp].state_dict() for hp in benchmark_api._avaliable_hps})
+            to_save_data = {}
+            for xhp in benchmark_api._avaliable_hps:
+                benchmark_api.clear_params(arch_index, hp=xhp)
+                to_save_data[xhp] = arch2infos_dict[xhp].state_dict()
+            to_save_data = OrderedDict(to_save_data)
 
             # archresult = benchmark_api.query_meta_info_by_index(arch_index, hp=hp)
             archresult = arch2infos_dict[hp]
-            xresult = deepcopy(archresult.query(dataset, seed=is_random))
+            xresult = deepcopy(archresult.query(dataset, seed=fp32_seed))
 
             # update results
             new_dataset = f'{dataset}_{setname}'

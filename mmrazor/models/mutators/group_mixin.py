@@ -4,7 +4,7 @@ from typing import Dict, List
 
 from torch.nn import Module
 
-from mmrazor.models.mutables import MutableValue
+from mmrazor.models.mutables import MutableValue, BaseMutableChannel
 from mmrazor.models.mutables.mutable_module import MutableModule
 from .base_mutator import MUTABLE_TYPE
 
@@ -65,7 +65,7 @@ class GroupMixin():
 
     def is_supported_mutable(self, module):
         """Judge whether is a supported mutable."""
-        for mutable_type in [MutableModule, MutableValue]:
+        for mutable_type in [MutableModule, MutableValue, BaseMutableChannel]:
             if isinstance(module, mutable_type):
                 return True
         return False
@@ -78,9 +78,9 @@ class GroupMixin():
             if self.is_supported_mutable(module):
                 name2mutable[name] = module
             elif hasattr(module, 'source_mutables'):
-                for each_mutable in module.source_mutables:
+                for idx, each_mutable in enumerate(sorted(module.source_mutables)):
                     if self.is_supported_mutable(each_mutable):
-                        name2mutable[name] = each_mutable
+                        name2mutable[f'{name}.source_mutable{idx}'] = each_mutable
 
         self._name2mutable = name2mutable
 
@@ -102,11 +102,11 @@ class GroupMixin():
                 if module.alias is not None:
                     _append(module.alias, alias2mutable_names, name)
             elif hasattr(module, 'source_mutables'):
-                for each_mutable in module.source_mutables:
+                for idx, each_mutable in enumerate(sorted(module.source_mutables)):
                     if self.is_supported_mutable(each_mutable):
                         if each_mutable.alias is not None:
                             _append(each_mutable.alias, alias2mutable_names,
-                                    name)
+                                    f'{name}.source_mutable{idx}')
 
         return alias2mutable_names
 
@@ -197,9 +197,9 @@ class GroupMixin():
                     search_groups[group_name] = [module]
                     current_group_nums += 1
             elif hasattr(module, 'source_mutables'):
-                for each_mutable in module.source_mutables:
+                for idx, each_mutable in enumerate(sorted(module.source_mutables)):
                     if self.is_supported_mutable(each_mutable):
-                        if name in grouped_mutable_names:
+                        if f'{name}.source_mutable{idx}' in grouped_mutable_names:
                             continue
                         else:
                             prefix = each_mutable.mutable_prefix

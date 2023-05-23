@@ -91,7 +91,6 @@ if [[ $RESUME != "None" ]]; then
     elif [[ $BIN -eq 0 ]]; then
         GPUS=1
     fi
-    XSTART=0
     XEND=-1
     for DEVICE in $(seq 1 ${GPUS}); do
         VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-$(($DEVICE - 1))}
@@ -115,12 +114,12 @@ else
         VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-$(($DEVICE - 1))}
         XPORT=$(($PORT + $DEVICE - 1))
         if [[ $DEVICE -eq ${GPUS} ]]; then
-            XEND=$(($END - 1))
+            XEND=$END
         else
-            XEND=$(($XSTART + $BIN -1))
+            XEND=$(($XSTART + $BIN))
         fi
         echo $VISIBLE_DEVICES $XPORT $XSTART $XEND ${@:4}
         start_rank_jobs $VISIBLE_DEVICES $XPORT $XSTART $XEND "None" ${@:4} > $(date +%s)_nohup_$XSTART-$XEND.log &
-        XSTART=$(($XEND + 1))
+        XSTART=$XEND
     done
 fi

@@ -1,5 +1,5 @@
 _base_ = [
-    './ptq_fp32_nats_8xb16_cifar10.py'
+    '../prototype_nats-tss_fp32/ptq_fp32_nats_8xb16_cifar10.py'
 ]
 
 calibrate_dataloader = dict(
@@ -16,7 +16,7 @@ test_cfg = dict(
 )
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.MinMaxObserver'),
+    w_observer=dict(type='mmrazor.PerChannelMinMaxObserver'),
     a_observer=dict(type='mmrazor.MovingAverageMinMaxObserver'),
     w_fake_quant=dict(type='mmrazor.FakeQuantize'),
     a_fake_quant=dict(type='mmrazor.FakeQuantize'),

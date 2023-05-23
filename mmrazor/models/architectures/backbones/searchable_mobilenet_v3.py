@@ -248,8 +248,8 @@ class AttentiveMobileNetV3(BaseBackbone):
 
     def register_mutables(self):
         """Mutate the BigNAS-style MobileNetV3."""
-        OneShotMutableChannelUnit._register_channel_container(
-            self, MutableChannelContainer)
+        # OneShotMutableChannelUnit._register_channel_container(
+        #     self, MutableChannelContainer)
 
         self.first_mutable_channels = OneShotMutableChannel(
             alias='backbone.first_channels',
@@ -364,3 +364,8 @@ class AttentiveMobileNetV3(BaseBackbone):
             layer.eval()
             for param in layer.parameters():
                 param.requires_grad = False
+
+    def set_dropout(self, dropout_stages, drop_path_rate):
+        set_dropout(layers=self.layers[:-1], module=MBBlock,
+                    dropout_stages=dropout_stages,
+                    drop_path_rate=drop_path_rate)
