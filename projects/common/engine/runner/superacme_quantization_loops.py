@@ -205,8 +205,8 @@ class SuperAcmeLSQEpochBasedLoop(SuperAcmeQATEpochBasedLoop):
                 # Change back to param learning mode
                 self.is_first_batch = False
                 self.runner.model.apply(enable_param_learning)
-            # if idx >=100:
-            #     break
+            if idx >=100:
+                break
         self.runner.model.sync_qparams(src_mode='loss')
         # Make sure the registered buffer such as `observer_enabled` is
         # correct in the saved checkpoint.
@@ -401,8 +401,9 @@ class SuperAcmePTQLoop(TestLoop):
                 save_optimizer=False,
                 save_param_scheduler=False)
             print_log(f'Quantized model is saved in {save_dir}')
-            # observed_model=self.runner.model.get_deploy_model()
-            # self.runner.model.quantizer.export_onnx(observed_model,self.runner.model.dummy_input.cuda(),os.path.join(self.runner.work_dir,'ptq.onnx'))
+            if self.runner.model.quantizer.backend =='superacme':
+                observed_model=self.runner.model.get_deploy_model()
+                self.runner.model.quantizer.export_onnx(observed_model,self.runner.model.dummy_input.cuda(),os.path.join(self.runner.work_dir,'ptq.onnx'))
 
         print_log('Start Evaluating quantized model...')
         self.runner.model.apply(enable_fake_quant)

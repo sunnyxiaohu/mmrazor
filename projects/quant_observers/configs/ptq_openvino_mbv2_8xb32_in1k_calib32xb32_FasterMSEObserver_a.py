@@ -3,7 +3,7 @@ _base_ = [
 ]
 custom_imports = dict(
     imports=[
-        'projects.quant_observers.engine.runner.superacme_quantization_loops',
+        'projects.common.engine.runner.superacme_quantization_loops',
         'projects.quant_observers.models.observers.fastermse',
     ],
     allow_failed_imports=False)
