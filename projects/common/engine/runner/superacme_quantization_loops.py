@@ -205,8 +205,6 @@ class SuperAcmeLSQEpochBasedLoop(SuperAcmeQATEpochBasedLoop):
                 # Change back to param learning mode
                 self.is_first_batch = False
                 self.runner.model.apply(enable_param_learning)
-            if idx >=100:
-                break
         self.runner.model.sync_qparams(src_mode='loss')
         # Make sure the registered buffer such as `observer_enabled` is
         # correct in the saved checkpoint.
@@ -255,8 +253,6 @@ class SuperAcmeQATValLoop(ValLoop):
         self.runner.model.eval()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch, self.runner.model)
-            # if idx >=2:
-            #     break
         # compute metrics
         metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
         qat_metrics = dict()
@@ -272,8 +268,6 @@ class SuperAcmeQATValLoop(ValLoop):
         self.runner.model.eval()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch, self.architecture)
-            # if idx >=2:
-            #     break
 
         # compute metrics
         metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
