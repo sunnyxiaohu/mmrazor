@@ -74,7 +74,7 @@ train_dataloader = dict(
         pipeline=train_pipeline),
     sampler=dict(type='DefaultSampler', shuffle=True),
 )
-# TODO(shiguang): handle data_processor in deploy pipeline.
+
 mdataset_type = 'mmrazor.MatchFaceDataset'
 test_pipeline = [
     dict(type='LoadImageFromFile'),
@@ -131,19 +131,16 @@ val_evaluator = dict(type='mmrazor.Rank1')
 test_dataloader = val_dataloader
 test_evaluator = val_evaluator
 
-# TODO(shiguang): handle fp16 properly.
 # optimizer
 optim_wrapper = {
     'constructor': 'mmrazor.SeparateOptimWrapperConstructor',
     'architecture.backbone': dict(
         # type='AmpOptimWrapper',
-        # # loss_scale='dynamic',
         # loss_scale=dict(growth_interval=100),
         optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4),
         clip_grad=dict(type='norm', max_norm=5)),
     'architecture.head': dict(
         # type='AmpOptimWrapper',
-        # # loss_scale='dynamic',
         # loss_scale=dict(growth_interval=100),
         optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4),
     )}
