@@ -10,7 +10,6 @@ custom_imports = dict(
         'projects.face-recognition.evaluation.match_rank',
         'projects.face-recognition.engine.runner.loopx',
         'projects.face-recognition.engine.optimizers.optimizer_constructor.py',
-        'projects.person-detection.engine.runner.subnet_test_torch2onnx',
     ],
     allow_failed_imports=False)
 
@@ -193,13 +192,7 @@ param_scheduler = [
 train_cfg = dict(
     type='mmrazor.EpochBasedTrainLoopX', max_epochs=10, val_interval=1)
 val_cfg = dict()
-
-test_cfg=dict(type='mmrazor.Subnet2onnxLoop',
-             dataloader=val_dataloader,
-             evaluator=test_evaluator,
-             input_shape=(1,3,112,112),
-             task_module = 'cls'
-             )
+test_cfg = dict()
 
 # NOTE: `auto_scale_lr` is for automatically scaling LR,
 # based on the actual training batch size.

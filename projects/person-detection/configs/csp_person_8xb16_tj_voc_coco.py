@@ -6,7 +6,6 @@ custom_imports = dict(
     imports=[
         'projects.person-detection.models.backbones.csp_darknet',
         'projects.person-detection.models.necks.yolox_pafpn_qat',
-        'projects.person-detection.engine.runner.subnet_test_torch2onnx',
         'projects.person-detection.engine.hooks.old_sync_norm_hook',
         'projects.person-detection.engine.hooks.spos_yolox_mode_switch_hook'
     ],
@@ -235,11 +234,4 @@ default_hooks = dict(
         type='CheckpointHook',
         interval=10))
 val_cfg = dict()
-
-test_cfg=dict(type='mmrazor.Subnet2onnxLoop',
-             dataloader=val_dataloader,
-             evaluator=test_evaluator,
-             input_shape=(1,3,384,640),
-             task_module = 'det'
-             )
-
+test_cfg = dict()
