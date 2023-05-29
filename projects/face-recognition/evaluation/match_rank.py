@@ -29,7 +29,7 @@ class Rank1(BaseMetric):
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None) -> None:
         super().__init__(collect_device=collect_device, prefix=prefix)
-        self.sample_idx_identical_mapping = {}
+        self.sample_idx_identical_mapping: dict = {}
 
     def process(self, data_batch, data_samples: Sequence[dict]):
         """Process one batch of data samples.
@@ -51,10 +51,15 @@ class Rank1(BaseMetric):
             else:
                 result['pred_label'] = pred_label['label'].cpu()
             result['gt_label'] = gt_label['label'].cpu()
-            if data_sample['dataset_name'] not in self.sample_idx_identical_mapping:
-                self.sample_idx_identical_mapping[data_sample['dataset_name']] = data_sample['sample_idx_identical_mapping']
+            if data_sample[
+                    'dataset_name'] not in self.sample_idx_identical_mapping:
+                self.sample_idx_identical_mapping[
+                    data_sample['dataset_name']] = data_sample[
+                        'sample_idx_identical_mapping']
             else:
-                assert self.sample_idx_identical_mapping[data_sample['dataset_name']] == data_sample['sample_idx_identical_mapping']
+                assert self.sample_idx_identical_mapping[
+                    data_sample['dataset_name']] == data_sample[
+                        'sample_idx_identical_mapping']
             result['dataset_name'] = data_sample['dataset_name']
             # Save the result to `self.results`.
             self.results.append(result)
@@ -84,7 +89,9 @@ class Rank1(BaseMetric):
             pred = torch.stack([res['pred_score'] for res in dataset_results])
 
             try:
-                rank1 = self.calculate(pred, target, self.sample_idx_identical_mapping[dataset_name])
+                rank1 = self.calculate(
+                    pred, target,
+                    self.sample_idx_identical_mapping[dataset_name])
             except ValueError as e:
                 # If the topk is invalid.
                 raise ValueError(
@@ -121,7 +128,8 @@ class Rank1(BaseMetric):
         assert pred.size(0) == target.size(0), \
             f"The size of pred ({pred.size(0)}) doesn't match "\
             f'the target ({target.size(0)}).'
-        pred = pred / torch.linalg.norm(pred.view(num, -1), dim=-1).unsqueeze(-1).expand_as(pred)
+        pred = pred / torch.linalg.norm(
+            pred.view(num, -1), dim=-1).unsqueeze(-1).expand_as(pred)
         target = to_tensor(target).to(torch.int64)
         cos_matrix = torch.matmul(pred, pred.t())
 

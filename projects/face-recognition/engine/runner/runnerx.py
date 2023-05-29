@@ -9,9 +9,11 @@ from mmengine.dist import get_rank
 from mmengine.fileio import FileClient, join_path
 from mmengine.model import is_model_wrapper
 from mmengine.optim import OptimWrapper, OptimWrapperDict, _ParamScheduler
+from mmengine.runner import (Runner, get_state_dict, save_checkpoint,
+                             weights_to_cpu)
+from mmengine.utils import get_git_hash
+
 from mmrazor.registry import RUNNERS
-from mmengine.runner import Runner, get_state_dict, save_checkpoint, weights_to_cpu
-from mmengine.utils import  get_git_hash
 
 ConfigType = Union[Dict, Config, ConfigDict]
 ParamSchedulerType = Union[List[_ParamScheduler], Dict[str,
@@ -22,14 +24,13 @@ OptimWrapperType = Union[OptimWrapper, OptimWrapperDict]
 @RUNNERS.register_module()
 class FaceRunner(Runner):
     """A training helper for FaceRecognition.
+
     Two differences comparing with Runner.
         1. no sync params and buffers after init_weights, especially for `PretrainedInit`
         2. save checkpoints for all the ranks.
     """
 
-    def __init__(
-        self,
-        *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def _init_model_weights(self) -> None:

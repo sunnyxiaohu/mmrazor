@@ -1,16 +1,16 @@
-from typing import List, Optional, Tuple, Union
 import collections
+from typing import List, Optional, Tuple, Union
 
 import torch
-from torch import distributed
 import torch.nn as nn
+from torch import distributed
 from torch.nn.functional import linear, normalize
 
 from mmrazor.registry import MODELS
 
 try:
-    from mmcls.structures import ClsDataSample
     from mmcls.models.heads.base_head import BaseHead
+    from mmcls.structures import ClsDataSample
 except ImportError:
     from mmrazor.utils import get_placeholder
     ClsDataSample = get_placeholder('mmcls')
@@ -33,12 +33,11 @@ class PartialFCHead(BaseHead):
                  num_classes: int,
                  sample_rate: float = 1.0,
                  fp16: bool = False,
-                 loss: dict = dict(type='CrossEntropyLoss', loss_weight=1.0),                 
+                 loss: dict = dict(type='CrossEntropyLoss', loss_weight=1.0),
                  init_cfg: Optional[dict] = None):
         super(PartialFCHead, self).__init__(init_cfg=init_cfg)
-        assert (
-            distributed.is_initialized()
-        ), "must initialize distributed before create this"
+        assert (distributed.is_initialized()
+                ), 'must initialize distributed before create this'
         self.rank = distributed.get_rank()
         self.world_size = distributed.get_world_size()
 
@@ -46,11 +45,9 @@ class PartialFCHead(BaseHead):
         self.sample_rate: float = sample_rate
         self.fp16 = fp16
         self.num_local: int = num_classes // self.world_size + int(
-            self.rank < num_classes % self.world_size
-        )
+            self.rank < num_classes % self.world_size)
         self.class_start: int = num_classes // self.world_size * self.rank + min(
-            self.rank, num_classes % self.world_size
-        )
+            self.rank, num_classes % self.world_size)
         self.num_sample: int = int(self.sample_rate * self.num_local)
         self.last_batch_size: int = 0
         self.weight: torch.Tensor
@@ -61,18 +58,20 @@ class PartialFCHead(BaseHead):
         self.init_weight_update: bool = True
 
         if self.sample_rate < 1:
-            self.register_buffer("weight",
+            self.register_buffer(
+                'weight',
                 tensor=torch.normal(0, 0.01, (self.num_local, embedding_size)))
-            self.register_buffer("weight_mom",
-                tensor=torch.zeros_like(self.weight))
-            self.register_parameter("weight_activated",
+            self.register_buffer(
+                'weight_mom', tensor=torch.zeros_like(self.weight))
+            self.register_parameter(
+                'weight_activated',
                 param=torch.nn.Parameter(torch.empty(0, 0)))
-            self.register_buffer("weight_activated_mom",
-                tensor=torch.empty(0, 0))
-            self.register_buffer("weight_index",
-                tensor=torch.empty(0, 0))
+            self.register_buffer(
+                'weight_activated_mom', tensor=torch.empty(0, 0))
+            self.register_buffer('weight_index', tensor=torch.empty(0, 0))
         else:
-            self.weight_activated = torch.nn.Parameter(torch.normal(0, 0.01, (self.num_local, embedding_size)))
+            self.weight_activated = torch.nn.Parameter(
+                torch.normal(0, 0.01, (self.num_local, embedding_size)))
 
         if not isinstance(loss, nn.Module):
             loss = MODELS.build(loss)
@@ -92,9 +91,11 @@ class PartialFCHead(BaseHead):
             index = positive
         self.weight_index = index
 
-        labels[index_positive] = torch.searchsorted(index, labels[index_positive])
+        labels[index_positive] = torch.searchsorted(index,
+                                                    labels[index_positive])
 
-        self.weight_activated = torch.nn.Parameter(self.weight[self.weight_index])
+        self.weight_activated = torch.nn.Parameter(
+            self.weight[self.weight_index])
         self.weight_activated_mom = self.weight_mom[self.weight_index]
 
         # if isinstance(optimizer, torch.optim.SGD):
@@ -109,8 +110,7 @@ class PartialFCHead(BaseHead):
 
     @torch.no_grad()
     def update(self):
-        """ partial weight to global
-        """
+        """partial weight to global."""
         if self.init_weight_update:
             self.init_weight_update = False
             return
@@ -119,37 +119,42 @@ class PartialFCHead(BaseHead):
             self.weight[self.weight_index] = self.weight_activated
             self.weight_mom[self.weight_index] = self.weight_activated_mom
 
-    def _save_to_state_dict(self, destination=None, prefix="", keep_vars=False):
+    def _save_to_state_dict(self,
+                            destination=None,
+                            prefix='',
+                            keep_vars=False):
         if destination is None:
             destination = collections.OrderedDict()
             destination._metadata = collections.OrderedDict()
 
         for name, module in self._modules.items():
             if module is not None:
-                module._save_to_state_dict(destination, prefix + name + ".", keep_vars=keep_vars)
+                module._save_to_state_dict(
+                    destination, prefix + name + '.', keep_vars=keep_vars)
         if self.sample_rate < 1:
-            destination["weight"] = self.weight.detach()
+            destination['weight'] = self.weight.detach()
         else:
-            destination["weight"] = self.weight_activated.data.detach()
+            destination['weight'] = self.weight_activated.data.detach()
         return destination
 
-    def _load_from_state_dict(self, state_dict, prefix, local_metadata,
-                              *args, **kwargs):
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, *args,
+                              **kwargs):
         if self.sample_rate < 1:
-            self.weight = state_dict["weight"].to(self.weight.device)
+            self.weight = state_dict['weight'].to(self.weight.device)
             self.weight_mom.zero_()
             self.weight_activated.data.zero_()
             self.weight_activated_mom.zero_()
             self.weight_index.zero_()
         else:
-            self.weight_activated.data = state_dict["weight"].to(self.weight_activated.data.device)
+            self.weight_activated.data = state_dict['weight'].to(
+                self.weight_activated.data.device)
 
     def pre_logits(self, feats: Tuple[torch.Tensor]) -> torch.Tensor:
         """The process before the final classification head.
 
         The input ``feats`` is a tuple of tensor, and each tensor is the
-        feature of a backbone stage. In ``PartialFCHead``, we just obtain the feature
-        of the last stage.
+        feature of a backbone stage. In ``PartialFCHead``, we just obtain the
+        feature of the last stage.
         """
         # The PartialFCHead doesn't have other module, just return after unpacking.
         return feats[-1]
@@ -202,15 +207,16 @@ class PartialFCHead(BaseHead):
         if self.last_batch_size == 0:
             self.last_batch_size = batch_size
         assert self.last_batch_size == batch_size, (
-            "last batch size do not equal current batch size: {} vs {}".format(
-            self.last_batch_size, batch_size))
+            'last batch size do not equal current batch size: {} vs {}'.format(
+                self.last_batch_size, batch_size))
 
         _gather_embeddings = [
             torch.zeros((batch_size, self.embedding_size)).cuda()
             for _ in range(self.world_size)
         ]
         _gather_labels = [
-            torch.zeros(batch_size).long().cuda() for _ in range(self.world_size)
+            torch.zeros(batch_size).long().cuda()
+            for _ in range(self.world_size)
         ]
         _list_embeddings = AllGather(cls_score, *_gather_embeddings)
         distributed.all_gather(_gather_labels, target)
@@ -220,8 +226,7 @@ class PartialFCHead(BaseHead):
 
         labels = labels.view(-1, 1)
         index_positive = (self.class_start <= labels) & (
-            labels < self.class_start + self.num_local
-        )
+            labels < self.class_start + self.num_local)
         labels[~index_positive] = -1
         labels[index_positive] -= self.class_start
 
@@ -296,7 +301,7 @@ class PartialFCHead(BaseHead):
 
 
 class AllGatherFunc(torch.autograd.Function):
-    """AllGather op with gradient backward"""
+    """AllGather op with gradient backward."""
 
     @staticmethod
     def forward(ctx, tensor, *gather_list):
@@ -311,11 +316,10 @@ class AllGatherFunc(torch.autograd.Function):
         grad_out = grad_list[rank]
 
         dist_ops = [
-            distributed.reduce(grad_out, rank, distributed.ReduceOp.SUM, async_op=True)
-            if i == rank
-            else distributed.reduce(
-                grad_list[i], i, distributed.ReduceOp.SUM, async_op=True
-            )
+            distributed.reduce(
+                grad_out, rank, distributed.ReduceOp.SUM, async_op=True)
+            if i == rank else distributed.reduce(
+                grad_list[i], i, distributed.ReduceOp.SUM, async_op=True)
             for i in range(distributed.get_world_size())
         ]
         for _op in dist_ops:

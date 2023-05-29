@@ -1,24 +1,25 @@
 import numbers
 import os
-import mxnet as mx
 from typing import Callable, List, Sequence, Union
 
-from mmengine.fileio import get_file_backend
+import mxnet as mx
 from mmengine.dataset import BaseDataset
+from mmengine.fileio import get_file_backend
 from mmengine.logging import print_log
+
 from mmrazor.registry import DATASETS
 
 
 @DATASETS.register_module()
 class MXFaceDataset(BaseDataset):
+
     def __init__(self, data_root, pipeline: List[Union[dict, Callable]] = []):
         path_imgrec = os.path.join(data_root, 'train.rec')
         path_imgidx = os.path.join(data_root, 'train.idx')
-        self.imgrec = mx.recordio.MXIndexedRecordIO(
-            path_imgidx, path_imgrec, 'r')
-        super(MXFaceDataset, self).__init__(data_root=data_root,
-                                            serialize_data=False,
-                                            pipeline=pipeline)
+        self.imgrec = mx.recordio.MXIndexedRecordIO(path_imgidx, path_imgrec,
+                                                    'r')
+        super(MXFaceDataset, self).__init__(
+            data_root=data_root, serialize_data=False, pipeline=pipeline)
 
     def load_data_list(self) -> List[dict]:
         s = self.imgrec.read_idx(0)
@@ -38,14 +39,18 @@ class MXFaceDataset(BaseDataset):
         if not isinstance(label, numbers.Number):
             label = label[0]
         sample = mx.image.imdecode(img).asnumpy()
-        sample = sample[..., ::-1]   # rgb to bgr
+        sample = sample[..., ::-1]  # rgb to bgr
         info = dict(img=sample, gt_label=int(label))
         return info
 
 
 @DATASETS.register_module()
 class MatchFaceDataset(BaseDataset):
-    def __init__(self, dataset_name: str, key_file: str, data_root: str = '',
+
+    def __init__(self,
+                 dataset_name: str,
+                 key_file: str,
+                 data_root: str = '',
                  data_prefix: Union[str, dict] = '',
                  extensions: Sequence[str] = ('.jpg', '.jpeg', '.png', '.ppm',
                                               '.bmp', '.pgm', '.tif'),
@@ -53,11 +58,12 @@ class MatchFaceDataset(BaseDataset):
 
         self.dataset_name = dataset_name
         self.extensions = tuple(set([i.lower() for i in extensions]))
-        super(MatchFaceDataset, self).__init__(ann_file=key_file,
-                                               data_root=data_root,
-                                               data_prefix=data_prefix,
-                                               serialize_data=False,
-                                               pipeline=pipeline)
+        super(MatchFaceDataset, self).__init__(
+            ann_file=key_file,
+            data_root=data_root,
+            data_prefix=data_prefix,
+            serialize_data=False,
+            pipeline=pipeline)
 
     def load_data_list(self) -> List[dict]:
         # Note that there may be images missing in the image forler
@@ -88,17 +94,23 @@ class MatchFaceDataset(BaseDataset):
         all_samples2 = [data.strip().split(' ')[0] for data in mappings]
 
         all_samples = set(all_samples1) & set(all_samples2)
-        if len(all_samples) != len(all_samples1) or len(all_samples) != len(all_samples2):
+        if len(all_samples) != len(all_samples1) or len(all_samples) != len(
+                all_samples2):
             print_log(
                 f'Samples in "{self.dataset_name}" may lost, ' +
-                f'in folder: {len(all_samples1)}, in key_file: {len(all_samples2)}. ' +
-                f'Finally, we adjust to {len(all_samples)}', logger='current')
+                f'in folder: {len(all_samples1)}, in key_file: {len(all_samples2)}. '
+                + f'Finally, we adjust to {len(all_samples)}',
+                logger='current')
         # filter and select samples
-        data_list = list(filter(lambda path: path.split('/')[-1].split('.')[0] in all_samples, data_list))
+        data_list = list(
+            filter(
+                lambda path: path.split('/')[-1].split('.')[0] in all_samples,
+                data_list))
         # align dix with data_list
         all_samples = [path.split('/')[-1].split('.')[0] for path in data_list]
 
-        self.sample_idx_mapping = dict(zip(all_samples, range(len(all_samples))))
+        self.sample_idx_mapping = dict(
+            zip(all_samples, range(len(all_samples))))
         self.sample_label_mapping = {}
         self.sample_idx_identical_mapping = {}
         num_classes = -1
@@ -119,7 +131,8 @@ class MatchFaceDataset(BaseDataset):
                     self.sample_label_mapping[identical_img] = num_classes
                 identical_idxs.append(self.sample_idx_mapping[identical_img])
 
-            self.sample_idx_identical_mapping[self.sample_idx_mapping[tockens[0]]] = identical_idxs
+            self.sample_idx_identical_mapping[self.sample_idx_mapping[
+                tockens[0]]] = identical_idxs
 
         # self._metainfo['num_classes'] = num_classes
         # self._metainfo['sample_idx_mapping'] = self.sample_idx_mapping

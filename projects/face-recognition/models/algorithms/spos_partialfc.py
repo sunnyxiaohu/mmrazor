@@ -1,13 +1,12 @@
-from typing import Dict, List, Optional, Union
-import os
+from typing import Dict, List, Union
 
 import torch
 import torch.nn as nn
-from torch.nn.parallel.distributed import DistributedDataParallel
 from mmengine.device import get_device
 from mmengine.dist import get_rank
-from mmengine.optim import OptimWrapper
 from mmengine.model import MMDistributedDataParallel
+from mmengine.optim import OptimWrapper
+from torch.nn.parallel.distributed import DistributedDataParallel
 
 from mmrazor.models import SPOS
 from mmrazor.registry import MODEL_WRAPPERS, MODELS
@@ -25,12 +24,17 @@ class SPOSPartialFC(SPOS):
         with optim_wrapper['architecture.head'].optim_context(self):
             losses = self.architecture.head.loss(feats, data['data_samples'])
             optimizer_cfg = losses.pop('optimizer')
-            optim_wrapper['architecture.head'].optimizer.state.pop(optim_wrapper['architecture.head'].param_groups[-1]['params'][-1], None)
-            optim_wrapper['architecture.head'].param_groups[-1]['params'][-1] = optimizer_cfg['params']
-            optim_wrapper['architecture.head'].optimizer.state[optimizer_cfg['params']] = optimizer_cfg['state']
+            optim_wrapper['architecture.head'].optimizer.state.pop(
+                optim_wrapper['architecture.head'].param_groups[-1]['params']
+                [-1], None)
+            optim_wrapper['architecture.head'].param_groups[-1]['params'][
+                -1] = optimizer_cfg['params']
+            optim_wrapper['architecture.head'].optimizer.state[
+                optimizer_cfg['params']] = optimizer_cfg['state']
 
         parsed_losses, log_vars = self.parse_losses(losses)  # type: ignore
-        parsed_losses = optim_wrapper['architecture.head'].scale_loss(parsed_losses)
+        parsed_losses = optim_wrapper['architecture.head'].scale_loss(
+            parsed_losses)
         optim_wrapper['architecture.head'].backward(parsed_losses)
         optim_wrapper['architecture.head'].step()
         optim_wrapper['architecture.backbone'].step()
@@ -58,14 +62,18 @@ class SPOSPartialFCDDP(DistributedDataParallel):
         super(DistributedDataParallel, self).__init__()
         self.module = module
         device = get_device()
+
         # Wrap the submodule excluded `exclude_module` with parameters of `self.module` to
         # `MMDistributedDataParallel`
 
         def _wrap_model(module, exclude_module):
-            assert exclude_module.split('.')[0] in module._modules, f'{exclude_module} have to be a submodule of module.'
+            assert exclude_module.split(
+                '.'
+            )[0] in module._modules, f'{exclude_module} have to be a submodule of module.'
             for name, sub_module in module._modules.items():
                 # recursive to math to the corresponding level.
-                if exclude_module.startswith(name) and len(exclude_module.split('.')) > 1:
+                if exclude_module.startswith(name) and len(
+                        exclude_module.split('.')) > 1:
                     exclude_module = '.'.join(exclude_module.split('.')[1:])
                     sub_module = _wrap_model(sub_module, exclude_module)
                 elif name == exclude_module:
@@ -92,29 +100,40 @@ class SPOSPartialFCDDP(DistributedDataParallel):
             data = self.module.data_preprocessor(data, True)
             feats = self.module.architecture.extract_feat(data['inputs'])
         with optim_wrapper['architecture.head'].optim_context(self):
-            losses = self.module.architecture.head.loss(feats, data['data_samples'])
+            losses = self.module.architecture.head.loss(
+                feats, data['data_samples'])
             optimizer_cfg = losses.pop('optimizer')
-            optim_wrapper['architecture.head'].optimizer.state.pop(optim_wrapper['architecture.head'].param_groups[-1]['params'][-1], None)
-            optim_wrapper['architecture.head'].param_groups[-1]['params'][-1] = optimizer_cfg['params']
-            optim_wrapper['architecture.head'].optimizer.state[optimizer_cfg['params']] = optimizer_cfg['state']
+            optim_wrapper['architecture.head'].optimizer.state.pop(
+                optim_wrapper['architecture.head'].param_groups[-1]['params']
+                [-1], None)
+            optim_wrapper['architecture.head'].param_groups[-1]['params'][
+                -1] = optimizer_cfg['params']
+            optim_wrapper['architecture.head'].optimizer.state[
+                optimizer_cfg['params']] = optimizer_cfg['state']
 
-        parsed_losses, log_vars = self.module.parse_losses(losses)  # type: ignore
-        parsed_losses = optim_wrapper['architecture.head'].scale_loss(parsed_losses)
+        parsed_losses, log_vars = self.module.parse_losses(
+            losses)  # type: ignore
+        parsed_losses = optim_wrapper['architecture.head'].scale_loss(
+            parsed_losses)
         optim_wrapper['architecture.head'].backward(parsed_losses)
         optim_wrapper['architecture.head'].step()
-        if hasattr(optim_wrapper['architecture.backbone'], 'loss_scaler') and hasattr(
-            optim_wrapper['architecture.head'], 'loss_scaler'):
-            optim_wrapper['architecture.backbone'].loss_scaler._scale = optim_wrapper['architecture.head'].loss_scaler._scale
-            optim_wrapper['architecture.backbone'].loss_scaler._growth_tracker = optim_wrapper['architecture.head'].loss_scaler._growth_tracker
+        if hasattr(optim_wrapper['architecture.backbone'],
+                   'loss_scaler') and hasattr(
+                       optim_wrapper['architecture.head'], 'loss_scaler'):
+            optim_wrapper[
+                'architecture.backbone'].loss_scaler._scale = optim_wrapper[
+                    'architecture.head'].loss_scaler._scale
+            optim_wrapper[
+                'architecture.backbone'].loss_scaler._growth_tracker = optim_wrapper[
+                    'architecture.head'].loss_scaler._growth_tracker
         optim_wrapper['architecture.backbone'].step()
         optim_wrapper['architecture.head'].zero_grad()
         optim_wrapper['architecture.backbone'].zero_grad()
 
         return log_vars
 
-
     def train(self, mode: bool = True) -> 'SPOSPartialFCDDP':
-        """Sets the module in training mode. """
+        """Sets the module in training mode."""
         self.training = mode
         self.module.train(mode)
         return self

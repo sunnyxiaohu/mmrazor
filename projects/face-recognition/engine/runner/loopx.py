@@ -1,12 +1,10 @@
 import queue as Queue
 import threading
-
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-from torch.utils.data import DataLoader
-
 from mmengine.runner import EpochBasedTrainLoop
+from torch.utils.data import DataLoader
 
 from mmrazor.registry import LOOPS
 
@@ -37,15 +35,20 @@ class EpochBasedTrainLoopX(EpochBasedTrainLoop):
             val_begin: int = 1,
             val_interval: int = 1,
             dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
-        super().__init__(runner, dataloader, max_epochs, val_begin=val_begin,
-                         val_interval=val_interval,
-                         dynamic_intervals=dynamic_intervals)
+        super().__init__(
+            runner,
+            dataloader,
+            max_epochs,
+            val_begin=val_begin,
+            val_interval=val_interval,
+            dynamic_intervals=dynamic_intervals)
         # Make a dataloader proxy.
         # import pdb; pdb.set_trace()
         self.dataloader = DataLoaderX(self.dataloader)
 
 
 class BackgroundGenerator(threading.Thread):
+
     def __init__(self, generator, local_rank, max_prefetch=6):
         super(BackgroundGenerator, self).__init__()
         self.queue = Queue.Queue(max_prefetch)
