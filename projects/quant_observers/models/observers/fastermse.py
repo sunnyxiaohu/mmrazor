@@ -13,6 +13,7 @@ try:
 except ImportError:
     from mmrazor.utils import get_placeholder
     MinMaxObserver = get_placeholder('torch>=1.13')
+from torch.ao.quantization.utils import (is_per_tensor)
 
 
 def sync_tensor(tensor):
@@ -42,6 +43,11 @@ class FasterMSEObserver(KLObserver):
                  factory_kwargs=None,
                  hist_bins=4096,
                  ch_axis=-1) -> None:
+        if not is_per_tensor(qscheme):
+            raise NotImplementedError(
+                "FasterMSEObserver's qscheme only support \
+                    torch.per_tensor_symmetric, torch.per_tensor_affine"
+            )
         super(FasterMSEObserver, self).__init__(
             dtype,
             qscheme,

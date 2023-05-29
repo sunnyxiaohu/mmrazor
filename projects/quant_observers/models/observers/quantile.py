@@ -6,6 +6,7 @@ import torch.distributed as dist
 
 from mmrazor.models.observers.base import BaseObserver
 from mmrazor.registry import MODELS
+from torch.ao.quantization.utils import (is_per_tensor)
 
 
 def sync_tensor(tensor):
@@ -36,6 +37,11 @@ class EMAQuantileObserver(BaseObserver):
                  threshold=0.99999,
                  bins=2048,
                  factory_kwargs=None) -> None:
+        if not is_per_tensor(qscheme):
+            raise NotImplementedError(
+                "EMAQuantileObserver's qscheme only support \
+                    torch.per_tensor_symmetric, torch.per_tensor_affine"
+            )
         super(EMAQuantileObserver, self).__init__(
             dtype,
             qscheme,

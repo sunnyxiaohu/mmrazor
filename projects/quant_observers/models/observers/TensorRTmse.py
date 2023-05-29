@@ -7,6 +7,7 @@ import torch.distributed as dist
 
 from mmrazor.models.observers.base import BaseObserver
 from mmrazor.registry import MODELS
+from torch.ao.quantization.utils import (is_per_tensor)
 
 
 def sync_tensor(tensor):
@@ -35,6 +36,11 @@ class TensorRTHistogramBasedMSEObserver(BaseObserver):
                  factory_kwargs=None,
                  num_bins=2048,
                  ch_axis=-1) -> None:
+        if not is_per_tensor(qscheme):
+            raise NotImplementedError(
+                "TensorRTHistogramBasedMSEObserver's qscheme only support \
+                    torch.per_tensor_symmetric, torch.per_tensor_affine"
+            )
         super(TensorRTHistogramBasedMSEObserver, self).__init__(
             dtype,
             qscheme,

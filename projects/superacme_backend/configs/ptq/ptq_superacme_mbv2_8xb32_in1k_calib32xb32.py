@@ -9,56 +9,22 @@ custom_imports = dict(
     ],
     allow_failed_imports=False)
 
-dataset_type = 'ImageNet'
-train_pipeline = [
-    dict(type='LoadImageFromFile'),
-    dict(type='RandomResizedCrop', scale=224, backend='pillow'),
-    dict(type='RandomFlip', prob=0.5, direction='horizontal'),
-    dict(type='PackClsInputs'),
-]
-
-test_pipeline = [
-    dict(type='LoadImageFromFile'),
-    dict(type='ResizeEdge', scale=256, edge='short', backend='pillow'),
-    dict(type='CenterCrop', crop_size=224),
-    dict(type='PackClsInputs'),
-]
-
 train_dataloader = dict(
     batch_size=32,
-    num_workers=5,
     dataset=dict(
-        type=dataset_type,
-        data_root='/mnt/data/imagenet',
-        ann_file='meta/train.txt',
-        data_prefix='train',
-        pipeline=train_pipeline),
-    sampler=dict(type='DefaultSampler', shuffle=True),
+        data_root='/mnt/data/imagenet')
 )
 
 val_dataloader = dict(
     batch_size=32,
-    num_workers=5,
     dataset=dict(
-        type=dataset_type,
-        data_root='/mnt/data/imagenet',
-        ann_file='meta/val.txt',
-        data_prefix='val',
-        pipeline=test_pipeline),
-    sampler=dict(type='DefaultSampler', shuffle=False),
+        data_root='/mnt/data/imagenet')
 )
 test_dataloader = dict(
     batch_size=32,
-    num_workers=5,
     dataset=dict(
-        type=dataset_type,
-        data_root='/mnt/data/imagenet',
-        ann_file='meta/val.txt',
-        data_prefix='val',
-        pipeline=test_pipeline),
-    sampler=dict(type='DefaultSampler', shuffle=False),
+        data_root='/mnt/data/imagenet')
 )
-# val_dataloader = dict(batch_size=32)
 
 test_cfg = dict(
     type='mmrazor.SuperAcmePTQLoop',

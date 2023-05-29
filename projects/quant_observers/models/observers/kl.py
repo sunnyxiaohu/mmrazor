@@ -4,7 +4,7 @@ import math
 import torch
 import torch.distributed as dist
 
-from mmrazor.models.observers.base import BaseObserver
+from torch.ao.quantization.utils import (is_per_tensor)
 from mmrazor.registry import MODELS
 
 try:
@@ -41,6 +41,11 @@ class KLObserver(MinMaxObserver):
                  factory_kwargs=None,
                  hist_bins=4096,
                  ch_axis=-1) -> None:
+        if not is_per_tensor(qscheme):
+            raise NotImplementedError(
+                "KLObserver's qscheme only support \
+                    torch.per_tensor_symmetric"
+            )
         super(KLObserver, self).__init__(
             dtype,
             qscheme,
