@@ -11,6 +11,7 @@ custom_imports = dict(
         'projects.face-recognition.datasets.mx_face_dataset',
         'projects.face-recognition.evaluation.match_rank',
         'projects.face-recognition.engine.runner.loopx',
+        'projects.face-recognition.engine.optimizers.optimizer_constructor.py'
     ],
     allow_failed_imports=False
 )
@@ -133,7 +134,7 @@ test_evaluator = val_evaluator
 
 # optimizer
 optim_wrapper = {
-    'constructor': 'mmrazor.SeparateOptimWrapperConstructor',
+    'constructor': 'mmrazor.FaceSeparateOptimWrapperConstructor',
     'architecture.backbone': dict(
         # type='AmpOptimWrapper',
         # loss_scale=dict(growth_interval=100),

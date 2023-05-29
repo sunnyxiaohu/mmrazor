@@ -9,7 +9,7 @@ from mmrazor.registry import OPTIM_WRAPPER_CONSTRUCTORS
 
 
 @OPTIM_WRAPPER_CONSTRUCTORS.register_module()
-class SeparateOptimWrapperConstructor:
+class FaceSeparateOptimWrapperConstructor:
     """OptimizerConstructor for Darts. This class construct optimizer for
     the submodules (generator and discriminator for GAN most models) of the
     model separately, and return a :class:~`mmengine.optim.OptimWrapperDict`.
@@ -66,6 +66,10 @@ class SeparateOptimWrapperConstructor:
         optimizers = {}
         if hasattr(module, 'module'):
             module = module.module
+
         for key, constructor in self.constructors.items():
-            optimizers[key] = constructor(module._modules[key])
+            sub_module = module
+            for sub_key in key.split('.'):
+                sub_module = sub_module._modules[sub_key]
+            optimizers[key] = constructor(sub_module)
         return OptimWrapperDict(**optimizers)

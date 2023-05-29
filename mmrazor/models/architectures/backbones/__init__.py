@@ -8,6 +8,5 @@ from .wideresnet import WideResNet
 
 __all__ = [
     'DartsBackbone', 'AutoformerBackbone', 'SearchableMobileNetV2',
-    'AttentiveMobileNetV3', 'SearchableShuffleNetV2', 'WideResNet',
-    'Searchable_CSPDarknet'
+    'AttentiveMobileNetV3', 'SearchableShuffleNetV2', 'WideResNet'
 ]
