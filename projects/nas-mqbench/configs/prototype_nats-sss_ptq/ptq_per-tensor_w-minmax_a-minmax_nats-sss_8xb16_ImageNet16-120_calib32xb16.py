@@ -1,5 +1,5 @@
 _base_ = [
-    './ptq_fp32_nats_8xb16_ImageNet16-120.py'
+    '../prototype_nats-sss_fp32/ptq_fp32_nats-sss_8xb16_ImageNet16-120.py'
 ]
 
 calibrate_dataloader = dict(
@@ -16,14 +16,14 @@ test_cfg = dict(
 )
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.HistogramObserver'),
-    a_observer=dict(type='mmrazor.HistogramObserver'),
+    w_observer=dict(type='mmrazor.MinMaxObserver'),
+    a_observer=dict(type='mmrazor.MovingAverageMinMaxObserver'),
     w_fake_quant=dict(type='mmrazor.FakeQuantize'),
     a_fake_quant=dict(type='mmrazor.FakeQuantize'),
     w_qscheme=dict(
         qdtype='qint8', bit=8, is_symmetry=True),
     a_qscheme=dict(
-        qdtype='qint8', bit=8, is_symmetry=True),
+        qdtype='qint8', bit=8, is_symmetry=True, averaging_constant=0.1),
 )
 
 model = dict(

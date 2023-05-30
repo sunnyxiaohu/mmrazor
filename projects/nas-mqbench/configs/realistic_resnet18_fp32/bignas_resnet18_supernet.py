@@ -27,6 +27,6 @@ nas_backbone = dict(
     type='mmrazor.BigNASResNet',
     depth=18,
     arch_setting=arch_setting,
-    norm_cfg=dict(type='DynamicBatchNorm2d', momentum=0.01),
+    norm_cfg=dict(type='DynamicBatchNorm2d'),
     fine_grained_mode=True   
     )

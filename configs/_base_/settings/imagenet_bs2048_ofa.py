@@ -28,7 +28,7 @@ test_pipeline = [
 
 train_dataloader = dict(
     batch_size=64,
-    num_workers=16,
+    num_workers=6,
     dataset=dict(
         type=dataset_type,
         data_root='data/imagenet',
@@ -41,7 +41,7 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     batch_size=64,
-    num_workers=16,
+    num_workers=6,
     dataset=dict(
         type=dataset_type,
         data_root='data/imagenet',
@@ -60,8 +60,8 @@ test_evaluator = val_evaluator
 # optimizer
 optim_wrapper = dict(
     optimizer=dict(
-        type='SGD', lr=0.8, momentum=0.9, weight_decay=0.0001, nesterov=True),
-    # paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0.)
+        type='SGD', lr=0.8, momentum=0.9, weight_decay=0.00001, nesterov=True),
+    paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0.)
 )
 
 # learning policy

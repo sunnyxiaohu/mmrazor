@@ -74,10 +74,10 @@ def mutate_mobilenet_layer(mb_layer: MBBlock,
 
     if not mb_layer.with_res_shortcut:
         if mb_layer.with_attentive_shortcut:
-            MutableChannelContainer.register_mutable_channel_to_module(
-                mb_layer.shortcut.conv, mutable_in_channels, False)
-            MutableChannelContainer.register_mutable_channel_to_module(
-                mb_layer.shortcut.conv, mutable_out_channels, True)
+            mb_layer.shortcut.conv.register_mutable_attr(
+                'in_channels', mutable_in_channels)
+            mb_layer.shortcut.conv.register_mutable_attr(
+                'out_channels', mutable_out_channels)
 
     mutate_conv_module(
         mb_layer.linear_conv,

@@ -101,7 +101,7 @@ def graphwise_analysis(model, dataloader, method, step=-1, verbose=False, topk=1
     model.apply(disable_observer)
     for idx, data_batch in enumerate(dataloader):
         if idx >= step:
-            break        
+            break
         model.test_step(data_batch)
 
     assert 2 * len(names) == len(results)

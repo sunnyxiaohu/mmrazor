@@ -309,6 +309,7 @@ class AttentiveMobileNetV3(BaseBackbone):
             candidate_choices=self.last_out_channels_list)
 
         last_mutable_expand_value = OneShotMutableValue(
+            alias='backbone.last_expand_ratio',
             value_list=self.last_expand_ratio_list,
             default_value=max(self.last_expand_ratio_list))
 

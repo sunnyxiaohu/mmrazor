@@ -1,5 +1,5 @@
 _base_ = [
-    './ptq_fp32_nats_8xb16_ImageNet16-120.py'
+    '../prototype_nats-sss_fp32/ptq_fp32_nats-sss_8xb16_cifar10.py'
 ]
 
 calibrate_dataloader = dict(

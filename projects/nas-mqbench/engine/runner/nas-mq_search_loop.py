@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import copy
 import os
 import os.path as osp
 import random
@@ -11,7 +12,7 @@ import torch
 
 try:
     from torch.ao.quantization import (disable_observer, enable_fake_quant,
-                                       enable_observer)
+                                       disable_fake_quant, enable_observer)
 except ImportError:
     from mmrazor.utils import get_placeholder
 
@@ -84,7 +85,8 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                  estimator_cfg: Optional[Dict] = None,
                  predictor_cfg: Optional[Dict] = None,
                  score_key: str = 'accuracy/top1',
-                 score_indicator: str = 'score') -> None:
+                 score_indicator: str = 'score',
+                 dump_subnet: bool = False) -> None:
         super().__init__(runner, dataloader, max_epochs)
         if isinstance(evaluator, dict) or is_list_of(evaluator, dict):
             self.evaluator = runner.build_evaluator(evaluator)  # type: ignore
@@ -117,6 +119,7 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         self.score_key = score_key
         self.max_keep_ckpts = max_keep_ckpts
         self.resume_from = resume_from
+        self.dump_subnet = dump_subnet
 
         if mq_init_candidates is None:
             self.mq_init_candidates = Candidates()
@@ -176,19 +179,33 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         """
         self.sample_candidates()
         self.update_candidates_scores()
-        self.all_candidates.extend(self.candidates)
+
         export_candidates = []
         subnets = self.candidates.subnets
-
-        for subnet, item in zip(subnets, self.candidates.data):
+        for idx, (subnet, item) in enumerate(zip(subnets, self.candidates.data)):
             self.model.mutator.set_choices(subnet)
-            export_subnet, _ = \
-                export_fix_subnet(self.model, slice_weight=False)
+            slice_weight = True if self.dump_subnet else False
+            export_subnet, sliced_model = \
+                export_fix_subnet(self.model, slice_weight=slice_weight)
             export_subnet = convert_fix_subnet(export_subnet)
             export_item = {}
             export_item[str(export_subnet)] = item[str(subnet)]
             export_candidates.append(export_item)
+
+            if self.dump_subnet and self.runner.rank == 0:
+                timestamp_subnet = time.strftime('%Y%m%d_%H%M', time.localtime())
+                model_name = f'subnet_{len(self.all_candidates) + idx}_{timestamp_subnet}'
+                torch.save({
+                    'state_dict': sliced_model.state_dict(),
+                    'meta': {}
+                }, osp.join(self.runner.work_dir, f'{model_name}.pth'))
+                fileio.dump(export_subnet,
+                            osp.join(self.runner.work_dir, f'{model_name}.yaml'))
+                self.runner.logger.info(f'Subnet {model_name} saved in '
+                                        f'{self.runner.work_dir}')
+
         self.export_candidates.extend(Candidates(export_candidates))
+        self.all_candidates.extend(self.candidates)
         self.candidates = Candidates()
         # TODO(shiguang): draw pareto front figure
         self._epoch += 1
@@ -203,9 +220,16 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
             return
         candidates_resources = []
         init_candidates = len(self.candidates)
+        idx = 0
         if self.runner.rank == 0:
             while len(self.candidates) < self.num_candidates:
-                candidate = self.model.mutator.sample_choices()
+                idx += 1
+                if idx == 1:
+                    candidate = self.model.mutator.sample_choices('max')
+                elif idx == 2:
+                    candidate = self.model.mutator.sample_choices('min')
+                else:
+                    candidate = self.model.mutator.sample_choices()
                 is_pass, result = self._check_constraints(
                     random_subnet=candidate)
                 if is_pass:
@@ -295,15 +319,16 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                 self.calibrate_bn_statistics(self.runner.train_dataloader,
                                              self.calibrate_sample_num)
             fix_subnet, sliced_model = \
-                export_fix_subnet(self.model, slice_weight=True)
-            mq_model = self.mq_model
-            mq_model['architecture'] = sliced_model.architecture
+                export_fix_subnet(self.model.architecture, slice_weight=True)
+            mq_model = copy.deepcopy(self.mq_model)
+            mq_model['architecture'] = sliced_model
             mq_model = MODELS.build(mq_model)
             mq_model = mq_model.to(get_device())
             default_args = dict(
                 module=mq_model, device_ids=[int(os.environ['LOCAL_RANK'])])
             mq_model = MODEL_WRAPPERS.build(
                 self.mq_model_wrapper_cfg, default_args=default_args)
+
             mq_model.eval()
             mq_model.apply(enable_fake_quant)
             mq_model.apply(enable_observer)
@@ -312,7 +337,7 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                     break
                 mq_model.calibrate_step(data_batch)
             mq_model.apply(enable_fake_quant)
-            mq_model.apply(enable_observer)
+            mq_model.apply(disable_observer)
             for data_batch in self.dataloader:
                 outputs = mq_model.val_step(data_batch)
                 self.evaluator.process(
