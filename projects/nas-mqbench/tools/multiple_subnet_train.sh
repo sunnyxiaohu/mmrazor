@@ -13,6 +13,6 @@ for IDX in $(seq ${START} $(($END - 1))); do
     fi
     PORT=${PORT} bash tools/dist_train.sh projects/nas-mqbench/configs/realistic_resnet18_fp32/bignas_resnet18_subnet_8xb256_in1k.py 8 \
     --cfg-options optim_wrapper.optimizer.weight_decay=0.0001 train_dataloader.batch_size=256 randomness.seed=777 \
-    model.fix_subnet=${FILES} --work-dir ${WORK_DIRS}_subnet${IDX}
+    model.fix_subnet=${FILES} --work-dir ${WORK_DIRS}/subnet${IDX}/float32
 
 done

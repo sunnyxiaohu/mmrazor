@@ -96,7 +96,7 @@ def get_metrics(api, dataset, metric_on_set, hp, fp32_random=777, mq_random=Fals
                               xinfo = arch_info.get_metrics(ds, mc, is_random=is_random)
                               accuracy.append(xinfo['accuracy'])
                         accuracy = np.mean(accuracy)
-                  else:                  
+                  else:
                         xinfo = arch_info.get_metrics(dataset, metric, is_random=is_random)
                         accuracy = xinfo['accuracy']
                   metric_list.append(accuracy)
@@ -218,7 +218,7 @@ for idx, dataset in enumerate(datasets):
       mq_args = ('ptq_per-tensor_w-minmax_a-minmax_nats', 'ptq_per-channel_w-minmax_a-minmax_nats')
       results = get_metrics(api, dataset=dataset, metric_on_set=metric_on_set, hp=hp, mq_args=mq_args)
       # Kendall and Spearmanr Rank.
-      num_rows, num_cols = len(results), len(results)      
+      num_rows, num_cols = len(results), len(results)
       k_corr = np.zeros((num_rows, num_cols))
       s_corr = np.zeros((num_rows, num_cols))
       for i, i_metric in enumerate(results):
@@ -287,13 +287,13 @@ mq_random = False
 datasets = ['cifar10', 'ImageNet16-120']
 for idx, dataset in enumerate(datasets):
       fig, ax = plt.subplots()
-      for idx, (hp, fp32_random) in enumerate(hps_fp32random):
+      for jdx, (hp, fp32_random) in enumerate(hps_fp32random):
             mq_args = ('ptq_per-tensor_w-minmax_a-minmax_nats', 'ptq_per-channel_w-minmax_a-minmax_nats')
             results = get_metrics(api, dataset=dataset, metric_on_set=metric_on_set, hp=hp,
                                   fp32_random=fp32_random, mq_args=mq_args)
             metric = 'deployability_index'
             results.pop(metric)
-            if idx == 0:
+            if jdx == 0:
                   sorted_fp32 = get_sorted_indices(results[metric_on_set])
 
             for jdx, metric in enumerate(results):

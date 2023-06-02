@@ -1,5 +1,5 @@
 _base_ = [
-    './ptq_fp32_nats_8xb16_cifar100.py'
+    './ptq_base_bignas_resnet50d_8xb256_in1k.py'
 ]
 
 calibrate_dataloader = dict(
@@ -9,14 +9,8 @@ calibrate_dataloader = dict(
     sampler=dict(type='DefaultSampler', shuffle=True),
 )
 
-test_cfg = dict(
-    type='mmrazor.PTQLoop',
-    calibrate_dataloader=calibrate_dataloader,
-    calibrate_steps=32,
-)
-
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.PerChannelMinMaxObserver'),
+    w_observer=dict(type='mmrazor.MinMaxObserver'),
     a_observer=dict(type='mmrazor.MovingAverageMinMaxObserver'),
     w_fake_quant=dict(type='mmrazor.FakeQuantize'),
     a_fake_quant=dict(type='mmrazor.FakeQuantize'),
@@ -26,11 +20,10 @@ global_qconfig = dict(
         qdtype='qint8', bit=8, is_symmetry=True, averaging_constant=0.1),
 )
 
-model = dict(
-    _delete_=True,
+mq_model = dict(
     type='mmrazor.MMArchitectureQuant',
-    data_preprocessor=_base_.model.data_preprocessor,
-    architecture=_base_.model,
+    data_preprocessor=_base_.supernet.data_preprocessor,
+    architecture=None,  # _base_.model,
     float_checkpoint=None,
     forward_modes=('tensor', 'predict'),
     quantizer=dict(
@@ -43,4 +36,12 @@ model = dict(
                 'mmcls.models.heads.ClsHead._get_predictions'
             ])))
 
-model_wrapper_cfg = dict(type='mmrazor.MMArchitectureQuantDDP', )
+mq_model_wrapper_cfg = dict(type='mmrazor.MMArchitectureQuantDDP', )
+
+train_cfg = dict(
+    mq_model=mq_model,
+    mq_model_wrapper_cfg=mq_model_wrapper_cfg,
+    mq_calibrate_dataloader=calibrate_dataloader,
+    mq_calibrate_steps=32,
+    mq_init_candidates='work_dirs/ptq_base_bignas_resnet50d_8xb256_in1k/search_epoch_1.pkl',
+    score_indicator='per-tensor_w-minmax_a-minmax')

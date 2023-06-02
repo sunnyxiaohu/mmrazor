@@ -22,7 +22,7 @@ from mmrazor.models.mutables import (MutableChannelContainer,
                                      OneShotMutableValue)
 from mmrazor.models.utils import make_divisible                                     
 from mmrazor.registry import MODELS
-from ..ops.resnet_series import BasicBlock
+from ..ops.resnet_series import BasicBlock, Bottleneck
 
 try:
     from mmcls.models.backbones.base_backbone import BaseBackbone
@@ -40,20 +40,22 @@ def parse_values(candidate_lists: List):
     """
 
     def _range_to_list(input_range: List) -> List:
-        assert len(input_range) == 3, (
-            'The format should be `(min_range, max_range, step)` with dim=3, '
-            f'but got dim={len(input_range)}.')
+        # assert len(input_range) == 3, (
+        #     'The format should be `(min_range, max_range, step)` with dim=3, '
+        #     f'but got dim={len(input_range)}.')
+        if input_range[-1] == 'categorical':
+            return list(input_range[:-1])
         start, end, step = input_range
         return list(np.arange(start, end, step))
 
     return [_range_to_list(i) for i in candidate_lists]
 
 
-def mutate_resnet_layer(block_layer: BasicBlock,
+def mutate_basicblock(block_layer: BasicBlock,
                         mutable_in_channels,
                         mutable_out_channels,
                         mutable_expand_ratio):
-    """Mutate MobileNet layers."""
+    """Mutate basicblock layers."""
 
     derived_mid_channels = \
         (mutable_expand_ratio * mutable_out_channels).derive_divide_mutable(1, 8)
@@ -68,6 +70,38 @@ def mutate_resnet_layer(block_layer: BasicBlock,
     block_layer.conv2.register_mutable_attr('out_channels', mutable_out_channels)
     # norm2
     block_layer.norm2.register_mutable_attr('num_features', mutable_out_channels)
+
+    if block_layer.downsample:
+        block_layer.downsample[-2].register_mutable_attr('in_channels', mutable_in_channels)
+        block_layer.downsample[-2].register_mutable_attr('out_channels', mutable_out_channels)
+        block_layer.downsample[-1].register_mutable_attr('num_features', mutable_out_channels)
+
+
+def mutate_bottleneck(block_layer: Bottleneck,
+                        mutable_in_channels,
+                        mutable_out_channels,
+                        mutable_expand_ratio):
+    """Mutate bottleneck layers."""
+
+    derived_mid_channels = \
+        (mutable_expand_ratio * mutable_out_channels).derive_divide_mutable(1, 8)
+    # conv1
+    block_layer.conv1.register_mutable_attr('in_channels', mutable_in_channels)
+    block_layer.conv1.register_mutable_attr('out_channels', derived_mid_channels)
+    # norm1
+    block_layer.norm1.register_mutable_attr('num_features', derived_mid_channels)
+
+    # conv2
+    block_layer.conv2.register_mutable_attr('in_channels', derived_mid_channels)
+    block_layer.conv2.register_mutable_attr('out_channels', derived_mid_channels)
+    # norm2
+    block_layer.norm2.register_mutable_attr('num_features', derived_mid_channels)
+
+    # conv3
+    block_layer.conv3.register_mutable_attr('in_channels', derived_mid_channels)
+    block_layer.conv3.register_mutable_attr('out_channels', mutable_out_channels)
+    # norm3
+    block_layer.norm3.register_mutable_attr('num_features', mutable_out_channels)
 
     if block_layer.downsample:
         block_layer.downsample[-2].register_mutable_attr('in_channels', mutable_in_channels)
@@ -132,6 +166,7 @@ class BigNASResNet(BaseBackbone):
 
     ref_arch_settings = {
         18: (BasicBlock, (2, 2, 2, 2), (64, 128, 256, 512)),
+        50: (Bottleneck, (3, 4, 6, 3), (256, 512, 1024, 2048))
     }
 
     def __init__(self,
@@ -457,10 +492,16 @@ class BigNASResNet(BaseBackbone):
                     mutable_expand_ratio = OneShotMutableValue(
                         alias=prefix + str(k) + '.expand_ratio',
                         value_list=expand_ratios)
-
-                mutate_resnet_layer(res_layer[k], mid_mutable,
-                                    mutable_out_channels,
-                                    mutable_expand_ratio)
+                if self.block is BasicBlock:
+                    mutate_basicblock(res_layer[k], mid_mutable,
+                                        mutable_out_channels,
+                                        mutable_expand_ratio)
+                elif self.block is Bottleneck:
+                    mutate_bottleneck(res_layer[k], mid_mutable,
+                                        mutable_out_channels,
+                                        mutable_expand_ratio)
+                else:
+                    raise ValueError(f'Unsupposed block type: {self.block}')
                 mid_mutable = mutable_out_channels
         self.last_mutable_channels = mid_mutable
 
@@ -469,3 +510,26 @@ class BigNASResNet(BaseBackbone):
         set_dropout(layers=layers, module=self.block, 
                     dropout_stages=dropout_stages,
                     drop_path_rate=drop_path_rate)
+
+
+@MODELS.register_module()
+class BigNASResNetD(BigNASResNet):
+    def __init__(self, *args, deep_stem=True, **kwargs):
+        super().__init__(*args, deep_stem=deep_stem, **kwargs)
+
+    def forward(self, x):
+        assert self.deep_stem
+        if self.deep_stem:
+            x = self.stem(x)
+        else:
+            x = self.conv1(x)
+            x = self.norm1(x)
+            x = self.relu(x)
+        x = self.maxpool(x)
+        outs = []
+        for i, layer_name in enumerate(self.res_layers):
+            res_layer = getattr(self, layer_name)
+            x = res_layer(x)
+            if i in self.out_indices:
+                outs.append(x)
+        return tuple(outs)
