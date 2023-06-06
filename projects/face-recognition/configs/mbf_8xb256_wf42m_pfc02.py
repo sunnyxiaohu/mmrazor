@@ -30,14 +30,14 @@ architecture = dict(
     # TODO: replace model config
     backbone=dict(
         type='mmrazor.MobileFaceNet',
-        num_features=512,
+        num_features=256,
         fp16=False,
         scale=1,
         blocks=(2, 4, 6, 2)),
     # neck=dict(type='GlobalAveragePooling'),
     head=dict(
         type='mmrazor.PartialFCHead',
-        embedding_size=512,
+        embedding_size=256,
         num_classes=2059906,
         sample_rate=0.2,
         fp16=False,
@@ -68,7 +68,7 @@ train_pipeline = [
     dict(type='PackClsInputs'),
 ]
 train_dataloader = dict(
-    batch_size=512,
+    batch_size=256,
     num_workers=3,
     drop_last=True,
     pin_memory=True,
@@ -277,6 +277,6 @@ test_cfg = dict(
 
 # NOTE: `auto_scale_lr` is for automatically scaling LR,
 # based on the actual training batch size.
-auto_scale_lr = dict(base_batch_size=512)
+auto_scale_lr = dict(base_batch_size=256)
 
 # _base_.default_hooks.logger.interval = 10
