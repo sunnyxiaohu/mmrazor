@@ -12,9 +12,8 @@ from mmrazor.models.architectures.dynamic_ops.bricks import DynamicSequential
 from mmrazor.models.architectures.ops.mobilenet_series import MBBlock
 from mmrazor.models.architectures.utils.mutable_register import (
     mutate_conv_module, mutate_mobilenet_layer)
-from mmrazor.models.mutables import (MutableChannelContainer,
-                                     OneShotMutableChannel,
-                                     OneShotMutableChannelUnit,
+from mmrazor.models.architectures.utils import set_dropout
+from mmrazor.models.mutables import (OneShotMutableChannel,
                                      OneShotMutableValue)
 from mmrazor.models.utils.parse_values import parse_values
 from mmrazor.registry import MODELS
@@ -248,8 +247,6 @@ class AttentiveMobileNetV3(BaseBackbone):
 
     def register_mutables(self):
         """Mutate the BigNAS-style MobileNetV3."""
-        # OneShotMutableChannelUnit._register_channel_container(
-        #     self, MutableChannelContainer)
 
         self.first_mutable_channels = OneShotMutableChannel(
             alias='backbone.first_channels',

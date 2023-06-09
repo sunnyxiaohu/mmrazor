@@ -49,3 +49,4 @@ model = dict(
 
 model_wrapper_cfg = dict(_delete_=True, type='mmrazor.MMArchitectureQuantDDP', )
 default_hooks = dict(checkpoint=None)
+val_cfg = dict(_delete_=True)

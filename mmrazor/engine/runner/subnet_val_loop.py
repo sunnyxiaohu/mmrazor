@@ -84,8 +84,9 @@ class SubnetValLoop(ValLoop, CalibrateBNMixin):
 
     def _evaluate_once(self) -> Dict:
         """Evaluate a subnet once with BN re-calibration."""
-        self.calibrate_bn_statistics(self.runner.train_dataloader,
-                                     self.calibrate_sample_num)
+        if self.calibrate_sample_num > 0:
+            self.calibrate_bn_statistics(self.runner.train_dataloader,
+                                         self.calibrate_sample_num)
         self.runner.model.eval()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch)

@@ -80,6 +80,7 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                  max_keep_ckpts: int = 3,
                  resume_from: Optional[str] = None,
                  num_candidates: int = 50,
+                 calibrate_dataloader: Optional[Dict] = None,
                  calibrate_sample_num: int = -1,
                  constraints_range: Dict[str, Any] = dict(flops=(0., 330.)),
                  estimator_cfg: Optional[Dict] = None,
@@ -99,6 +100,14 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                 f'Dataset {self.dataloader.dataset.__class__.__name__} has no '
                 'metainfo. ``dataset_meta`` in evaluator, metric and '
                 'visualizer will be None.')
+        if isinstance(calibrate_dataloader, dict):
+            # Determine whether or not different ranks use different seed.
+            diff_rank_seed = self.runner._randomness_cfg.get(
+                'diff_rank_seed', False)
+            self.calibrate_dataloader = self.runner.build_dataloader(
+                calibrate_dataloader, seed=self.runner.seed, diff_rank_seed=diff_rank_seed)
+        else:
+            self.calibrate_dataloader = calibrate_dataloader
 
         self.mq_model = mq_model
         self.mq_model_wrapper_cfg = mq_model_wrapper_cfg
@@ -293,7 +302,7 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
             metrics = self.predictor.predict(self.model)
         else:
             if self.calibrate_sample_num > 0:
-                self.calibrate_bn_statistics(self.runner.train_dataloader,
+                self.calibrate_bn_statistics(self.calibrate_dataloader,
                                              self.calibrate_sample_num)
             self.runner.model.eval()
             for data_batch in self.dataloader:
@@ -316,7 +325,7 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
             metrics = self.predictor.predict(self.model)
         else:
             if self.calibrate_sample_num > 0:
-                self.calibrate_bn_statistics(self.runner.train_dataloader,
+                self.calibrate_bn_statistics(self.calibrate_dataloader,
                                              self.calibrate_sample_num)
             fix_subnet, sliced_model = \
                 export_fix_subnet(self.model.architecture, slice_weight=True)
@@ -343,7 +352,7 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                 self.evaluator.process(
                     data_samples=outputs, data_batch=data_batch)
             metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
-            
+
         return metrics
 
     def _save_searcher_ckpt(self) -> None:

@@ -91,7 +91,7 @@ def get_quantize_result(index_list, root_dir='', force_index=None):
         exps = list(
                     filter(lambda x: os.path.isdir(
                         os.path.join(index_path, x)), os.listdir(index_path)))
-        assert len(exps) == 1
+        assert len(exps) == 1, f'{index_path}'
         try:
             exp_path = os.path.join(index_path, exps[0], f'{exps[0]}.json')
             rst = mmengine.load(exp_path)

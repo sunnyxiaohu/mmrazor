@@ -183,7 +183,7 @@ plt.close()
 
 # 1.2 find best
 datasets = ['cifar10', 'cifar100', 'ImageNet16-120']
-hps_fp32random = [('200', 777)]   # [('12', 111), ('200', 777)]
+hps_fp32random = [('12', 111), ('200', 777)]
 mq_random = False
 for dataset in datasets:
       for idx, (hp, fp32_random) in enumerate(hps_fp32random):
@@ -194,19 +194,21 @@ for dataset in datasets:
             f'with hp: {hp}, seed: {mq_random} training is: {results}')
 
 # 1.3 mdiff(Mean of difference) and xrange between float32 and mq
-hp = '200'
+hps_fp32random = [('12', 111), ('200', 777)]
 mq_random = False
 datasets = ['cifar10', 'cifar100', 'ImageNet16-120']
 for idx, dataset in enumerate(datasets):
-      mq_args = ('ptq_per-tensor_w-minmax_a-minmax_nats', 'ptq_per-channel_w-minmax_a-minmax_nats')
-      results = get_metrics(api, dataset=dataset, metric_on_set=metric_on_set, hp=hp, mq_args=mq_args)
-      for jdx, metric in enumerate(results):
-            xrange = np.array(results[metric_on_set]) - np.array(results[metric])
-            max_idx, min_idx = np.argmax(xrange), np.argmin(xrange)
-            print(f"Dataset {dataset}, Xrange between {metric_on_set} and {metric}: "
-                  f"MDiff, Max, Min: {xrange.mean():.2f}, "
-                  f"{xrange[max_idx]:.2f}[{results[metric_on_set][max_idx]:.2f} vs {results[metric][max_idx]:.2f}], "
-                  f"{xrange[min_idx]:.2f}[{results[metric_on_set][min_idx]:.2f} vs {results[metric][min_idx]:.2f}]")
+      for idx, (hp, fp32_random) in enumerate(hps_fp32random):
+            mq_args = ('ptq_per-tensor_w-minmax_a-minmax_nats', 'ptq_per-channel_w-minmax_a-minmax_nats')
+            results = get_metrics(api, dataset=dataset, metric_on_set=metric_on_set, hp=hp,
+                              fp32_random=fp32_random, mq_random=mq_random, mq_args=mq_args)
+            for jdx, metric in enumerate(results):
+                  xrange = np.array(results[metric_on_set]) - np.array(results[metric])
+                  max_idx, min_idx = np.argmax(xrange), np.argmin(xrange)
+                  print(f"Dataset {dataset}, with hp {hp}, seed {mq_random}, Xrange between {metric_on_set} and {metric}: "
+                        f"MDiff, Max, Min: {xrange.mean():.2f}, "
+                        f"{xrange[max_idx]:.2f}[{results[metric_on_set][max_idx]:.2f} vs {results[metric][max_idx]:.2f}], "
+                        f"{xrange[min_idx]:.2f}[{results[metric_on_set][min_idx]:.2f} vs {results[metric][min_idx]:.2f}]")
 
 # 2 architecture ranking
 # 2.1 Kendall and Spearmanr Rank
@@ -229,26 +231,34 @@ for idx, dataset in enumerate(datasets):
                   k_corr[i, j] = correlation
                   correlation, p_value = spearmanr(i_sorted, j_sorted)
                   s_corr[i, j] = correlation
-      fig, ax = plt.subplots()                  
+      fig, ax = plt.subplots(figsize=(8, 8))
       im = ax.imshow(k_corr, cmap='coolwarm', vmin=0.5, vmax=1)
       for i in range(num_rows):
             for j in range(num_cols):
                   text = ax.text(j, i, f'{k_corr[i, j]:.2f}',
                                  ha='center', va='center', color='w')
       plt.colorbar(im)
-      plt.title('Kendall Rank Matrix')
+      ax.set_xticks(np.arange(num_cols))
+      ax.set_xticklabels(list(results.keys()), rotation=90, fontsize=8)
+      ax.set_yticks(np.arange(num_rows))
+      ax.set_yticklabels(list(results.keys()), rotation=60, fontsize=8)
+      plt.title(f'Kendall Rank Matrix on {dataset}')
       plt.show()
       fig.savefig(f'{WORK_DIR}/kendall_rank_matrix_{dataset}.png')
-      fig, ax = plt.subplots()      
+      fig, ax = plt.subplots(figsize=(8, 8))
       im = ax.imshow(s_corr, cmap='coolwarm', vmin=0.5, vmax=1)
       for i in range(num_rows):
             for j in range(num_cols):
                   text = ax.text(j, i, f'{s_corr[i, j]:.2f}',
                                  ha='center', va='center', color='w')      
       plt.colorbar(im)
-      plt.title('Spearmanr Rank Matrix')
+      ax.set_xticks(np.arange(num_cols))
+      ax.set_xticklabels(list(results.keys()), rotation=90, fontsize=8)
+      ax.set_yticks(np.arange(num_rows))
+      ax.set_yticklabels(list(results.keys()), rotation=60, fontsize=8)
+      plt.title(f'Spearmanr Rank Matrix on {dataset}')
       plt.show()
-      fig.savefig(f'{WORK_DIR}/spearmanr_rank_matrix_{dataset}.png')      
+      fig.savefig(f'{WORK_DIR}/spearmanr_rank_matrix_{dataset}.png')
 
       sorted_fp32 = get_sorted_indices(results[metric_on_set])
       fig, ax = plt.subplots()
@@ -284,7 +294,7 @@ plt.close()
 # 2.3 relative ranking between different hps
 hps_fp32random = [('12', 111), ('200', 777)]
 mq_random = False
-datasets = ['cifar10', 'ImageNet16-120']
+datasets = ['cifar10', 'cifar100', 'ImageNet16-120']
 for idx, dataset in enumerate(datasets):
       fig, ax = plt.subplots()
       for jdx, (hp, fp32_random) in enumerate(hps_fp32random):

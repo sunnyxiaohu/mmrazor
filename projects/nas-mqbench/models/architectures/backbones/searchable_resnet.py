@@ -15,7 +15,7 @@ from torch.nn.modules.batchnorm import _BatchNorm
 from mmrazor.models.architectures.dynamic_ops.bricks import DynamicSequential
 from mmrazor.models.architectures.utils.mutable_register import (
     mutate_conv_module)
-from mmrazor.models.architectures.utils import set_dropout    
+from mmrazor.models.architectures.utils import set_dropout
 from mmrazor.models.mutables import (MutableChannelContainer,
                                      OneShotMutableChannel,
                                      OneShotMutableChannelUnit,

@@ -15,7 +15,10 @@ WORK_DIR = os.path.dirname(os.path.abspath(__file__))
 EVALUATED_INDEXES = list(range(0, 100))  # len(api)))
 # Create the API for realistic search space
 nas_mqbench_pth = [
-    'work_dirs/bignas_resnet18_benchmark/wd1e-4_ep200/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl'
+    'work_dirs/bignas_resnet18_benchmark/done_logs/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16_flops0-1000/search_epoch_5.pkl',
+    'work_dirs/bignas_resnet18_benchmark/done_logs/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16_flops1000-2000/search_epoch_5.pkl',
+    'work_dirs/bignas_resnet18_benchmark/done_logs/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16_flops2000-3000/search_epoch_5.pkl',
+    'work_dirs/bignas_resnet18_benchmark/done_logs/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16_flops3000-4000/search_epoch_5.pkl',
 ]
 indexes_per_pth = len(EVALUATED_INDEXES) // len(nas_mqbench_pth)
 api = Candidates()
@@ -27,16 +30,61 @@ metric_marker_mapping = {
       'per-tensor_w-minmax_a-minmax': ('^', 'yellow'),
       'per-channel_w-minmax_a-minmax': ('v', 'purple'),
       'mq_avg': ('*', 'green'),
-      'deployability_index': ('o', 'blue')   
+      'deployability_index': ('o', 'blue'),
+      'retrained.score': ('.', 'red'),
+      # 'retrained.per-tensor_w-minmax_a-minmax': ('^', 'yellow'),
+      # 'retrained.per-channel_w-minmax_a-minmax': ('v', 'purple'),
+      'retrained.mq_avg': ('*', 'green'),
+      'retrained.deployability_index': ('o', 'blue'),
+      'sliced.score': ('.', 'red'),
+      # 'sliced.per-tensor_w-minmax_a-minmax': ('^', 'yellow'),
+      # 'sliced.per-channel_w-minmax_a-minmax': ('v', 'purple'),
+      'sliced.mq_avg': ('*', 'green'),
+      'sliced.deployability_index': ('o', 'blue')        
 }
 Candidates._indicators = tuple(set(Candidates._indicators + tuple(metric_marker_mapping.keys())))
 metric_on_set = 'score'
 hp = '200'
 mq_random = False
-base_metric = metric_on_set
-bmetrics = [metric_on_set]
+base_metric = f'retrained.{metric_on_set}'
 
 ######################GLOBAL SETTINGS#################################
+nas_mqbench_pth2 = [
+    'work_dirs/bignas_resnet18_benchmark/done_logs/ptq_base_bignas_resnet18_8xb256_in1k_flops0-1000',
+    'work_dirs/bignas_resnet18_benchmark/done_logs/ptq_base_bignas_resnet18_8xb256_in1k_flops1000-2000',
+    'work_dirs/bignas_resnet18_benchmark/done_logs/ptq_base_bignas_resnet18_8xb256_in1k_flops2000-3000',
+    'work_dirs/bignas_resnet18_benchmark/done_logs/ptq_base_bignas_resnet18_8xb256_in1k_flops3000-4000',
+]
+assert len(nas_mqbench_pth) == len(nas_mqbench_pth2)
+api2 = Candidates()
+for i, pth in enumerate(nas_mqbench_pth2):
+      for j in range(indexes_per_pth):
+            subnet_folder = pth + f'/subnet{j}'
+            # float32
+            xsubnet_folder = os.path.join(subnet_folder, 'float32')
+            exp_folder = [f for f in os.listdir(xsubnet_folder) if os.path.isdir(os.path.join(xsubnet_folder, f))]
+            assert len(exp_folder) == 1, f'Get multiple exp_folder: {xsubnet_folder}'
+            exp_folder = exp_folder[0]
+            filename = os.path.join(xsubnet_folder, exp_folder, 'vis_data', f'{exp_folder}.json')
+            results = eval(open(filename).readlines()[-1])
+            subnet_yaml = glob.glob(f'{pth}/subnet_{j}_*.yaml')[0]
+            subnet_cfg = fileio.load(subnet_yaml)
+            assert api.subnets[i*indexes_per_pth + j] == subnet_cfg
+            api2.append(deepcopy(api[i*indexes_per_pth + j]))
+            api2.set_resource(i*indexes_per_pth + j, results['accuracy/top1'], key_indicator='score')
+
+            mq_args = ('per-tensor_w-minmax_a-minmax', 'per-channel_w-minmax_a-minmax')
+            for mq in mq_args:
+                  xsubnet_folder = os.path.join(subnet_folder, mq)
+                  exp_folder = [f for f in os.listdir(xsubnet_folder) if os.path.isdir(os.path.join(xsubnet_folder, f))][0]
+                  filename = os.path.join(xsubnet_folder, exp_folder, 'vis_data', f'{exp_folder}.json')
+                  results = eval(open(filename).readlines()[-1])
+                  subnet_yaml = glob.glob(f'{pth}/subnet_{j}_*.yaml')[0]
+                  subnet_cfg = fileio.load(subnet_yaml)
+                  assert api.subnets[i*indexes_per_pth + j] == subnet_cfg
+                  api2.set_resource(i*indexes_per_pth + j, results['accuracy/top1'], key_indicator=mq)
+
+######################################################################
 
 def find_best(api, metric_on_set, mq_args=None,
               evaluated_indexes=None):
@@ -120,12 +168,19 @@ for indicator in cost_indicators:
       for idx, dataset in enumerate(datasets):
             mq_args = ('per-tensor_w-minmax_a-minmax', 'per-channel_w-minmax_a-minmax')
             costs = get_computation_cost(api, indicator)
-            results = get_metrics(api, metric_on_set=metric_on_set, mq_args=mq_args)        
+            results1 = get_metrics(api, metric_on_set=metric_on_set, mq_args=mq_args)
+            results2 = get_metrics(api2, metric_on_set=metric_on_set, mq_args=mq_args)
+            from mmrazor.models.utils import add_prefix
+            results = collections.OrderedDict()
+            results.update(add_prefix(results2, 'retrained'))
+            results.update(add_prefix(results1, 'sliced'))
+            results = collections.OrderedDict(filter(lambda x: x[0] in metric_marker_mapping, results.items()))            
 
             metric = 'deployability_index'
-            if metric in results:
+            if f'retrained.{metric}' in results:
                   fig, ax = plt.subplots()
-                  ax.scatter(costs, results.pop(metric), alpha=0.5, label=metric)
+                  ax.scatter(costs, results.pop(f'retrained.{metric}'), alpha=0.5, label=f'retrained.{metric}')
+                  ax.scatter(costs, results.pop(f'sliced.{metric}'), alpha=0.5, label=f'sliced.{metric}')
                   ax.set_xlabel(f'#{indicator}(M)')
                   ax.set_ylabel('Architecture deploy index')
                   ax.set_title(f'Results of architecture deploy index on {dataset}')
@@ -164,10 +219,15 @@ for dataset in datasets:
 datasets = ['in1k']
 for idx, dataset in enumerate(datasets):
       mq_args = ('per-tensor_w-minmax_a-minmax', 'per-channel_w-minmax_a-minmax')
-      results = get_metrics(api, metric_on_set=metric_on_set, mq_args=mq_args)
-      from mmrazor.models.utils import add_prefix 
+      # results = get_metrics(api, metric_on_set=metric_on_set, mq_args=mq_args)
+      results1 = get_metrics(api, metric_on_set=metric_on_set, mq_args=mq_args)
+      results2 = get_metrics(api2, metric_on_set=metric_on_set, mq_args=mq_args)
+      from mmrazor.models.utils import add_prefix
+      results = collections.OrderedDict()
+      results.update(add_prefix(results2, 'retrained'))
+      results.update(add_prefix(results1, 'sliced'))      
       # results = collections.OrderedDict(filter(lambda x: x[0] in metric_marker_mapping, results.items()))
-      for bmetric in bmetrics:
+      for bmetric in ['retrained.score', 'sliced.score']:
             for jdx, metric in enumerate(results):
                   xrange = np.array(results[bmetric]) - np.array(results[metric])
                   max_idx, min_idx = np.argmax(xrange), np.argmin(xrange)
@@ -182,9 +242,14 @@ for idx, dataset in enumerate(datasets):
 datasets = ['in1k']
 for idx, dataset in enumerate(datasets):
       mq_args = ('per-tensor_w-minmax_a-minmax', 'per-channel_w-minmax_a-minmax')
-      results = get_metrics(api, metric_on_set=metric_on_set, mq_args=mq_args)
+      results1 = get_metrics(api, metric_on_set=metric_on_set, mq_args=mq_args)
+      results2 = get_metrics(api2, metric_on_set=metric_on_set, mq_args=mq_args)
+      from mmrazor.models.utils import add_prefix
+      results = collections.OrderedDict()
+      results.update(add_prefix(results2, 'retrained'))
+      results.update(add_prefix(results1, 'sliced'))         
       # Kendall and Spearmanr Rank.
-      num_rows, num_cols = len(results), len(results)
+      num_rows, num_cols = len(results), len(results)      
       k_corr = np.zeros((num_rows, num_cols))
       s_corr = np.zeros((num_rows, num_cols))
       for i, i_metric in enumerate(results):
@@ -233,11 +298,13 @@ for idx, dataset in enumerate(datasets):
       sorted_fp32 = get_sorted_indices(results[base_metric])
       fig, ax = plt.subplots()
       metric = 'deployability_index'
-      sorted_rst = get_sorted_indices(results.pop(metric))
-      ax.scatter(sorted_fp32, sorted_rst, alpha=0.5, label=metric)   
+      sorted_rst = get_sorted_indices(results.pop(f'retrained.{metric}'))
+      ax.scatter(sorted_fp32, sorted_rst, alpha=0.5, label=f'retrained.{metric}')
+      sorted_rst = get_sorted_indices(results.pop(f'sliced.{metric}'))
+      ax.scatter(sorted_fp32, sorted_rst, alpha=0.5, label=f'sliced.{metric}')      
             # marker=metric_marker_mapping[metric][0],
             # color=metric_marker_mapping[metric][1])
-      ax.set_xlabel('Architecture ranking for float32 accuracy')
+      ax.set_xlabel('Architecture ranking for retrained float32 accuracy')
       ax.set_ylabel('Architecture ranking for deploy index')
       ax.set_title(f'Architecture ranking deploy index on {dataset}')
       plt.tight_layout()
@@ -253,7 +320,7 @@ for idx, dataset in enumerate(datasets):
             ax.scatter(sorted_fp32, sorted_rst, alpha=0.5, label=metric,)
                   #      marker=metric_marker_mapping[metric][0],
                   #      color=metric_marker_mapping[metric][1])
-      ax.set_xlabel('Architecture ranking for float32 accuracy')
+      ax.set_xlabel('Architecture ranking for retrained float32 accuracy')
       ax.set_ylabel('Architecture ranking accuracy')
       ax.set_title(f'Architecture ranking accuracy on {dataset}')
       plt.tight_layout()

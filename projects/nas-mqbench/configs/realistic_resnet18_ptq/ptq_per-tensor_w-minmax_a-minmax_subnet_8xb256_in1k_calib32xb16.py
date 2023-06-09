@@ -25,7 +25,10 @@ global_qconfig = dict(
     a_qscheme=dict(
         qdtype='qint8', bit=8, is_symmetry=True, averaging_constant=0.1),
 )
-
+_base_.model.init_cfg=dict(
+        type='Pretrained',
+        checkpoint=  # noqa: E251
+        'work_dirs/bignas_resnet18_search_8xb128_in1k/subnet_20230519_0915.pth')
 model = dict(
     _delete_=True,
     type='mmrazor.MMArchitectureQuant',
@@ -44,3 +47,5 @@ model = dict(
             ])))
 
 model_wrapper_cfg = dict(_delete_=True, type='mmrazor.MMArchitectureQuantDDP', )
+default_hooks = dict(checkpoint=None)
+val_cfg = dict(_delete_=True)

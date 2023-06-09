@@ -169,6 +169,12 @@ class BigNAS(BaseAlgorithm):
                 total_losses.update(
                     add_prefix(random_subnet_losses, f'{kind}_subnet'))
 
+        # Clear data_buffer so that we could implement deepcopy.
+        for key, recorder in self.distiller.teacher_recorders.recorders.items():
+            recorder.reset_data_buffer()
+        for key, recorder in self.distiller.student_recorders.recorders.items():
+            recorder.reset_data_buffer()
+
         return total_losses
 
 
@@ -253,6 +259,12 @@ class BigNASDDP(MMDistributedDataParallel):
                 random_subnet_losses = distill_step(batch_inputs, data_samples)
                 total_losses.update(
                     add_prefix(random_subnet_losses, f'{kind}_subnet'))
+
+        # Clear data_buffer so that we could implement deepcopy.
+        for key, recorder in self.module.distiller.teacher_recorders.recorders.items():
+            recorder.reset_data_buffer()
+        for key, recorder in self.module.distiller.student_recorders.recorders.items():
+            recorder.reset_data_buffer()
 
         return total_losses
 

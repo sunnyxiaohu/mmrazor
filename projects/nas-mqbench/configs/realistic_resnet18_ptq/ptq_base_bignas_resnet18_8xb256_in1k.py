@@ -14,8 +14,9 @@ train_cfg = dict(
     type='mmrazor.NASMQSearchLoop',
     dataloader=_base_.val_dataloader,
     evaluator=_base_.val_evaluator,
-    max_epochs=2,
-    num_candidates=5,
+    max_epochs=5,
+    num_candidates=20,
+    calibrate_dataloader=_base_.train_dataloader,
     calibrate_sample_num=32,
     constraints_range=dict(flops=(0., 7000.)),
     score_key='accuracy/top1')
