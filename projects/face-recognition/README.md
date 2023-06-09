@@ -39,3 +39,13 @@ Rank1结果
 | ----------------------------------- | ------------ | ------------- | ------------- | ------------- | ------------- | ------------- | ------------ |
 | 原仓库BaseLine: wbf42m+mbf1M_ReLu+10ep | 85.1 (84.54) | 92.72 (92.49) | 96.72 (96.82) | 81.89 (82.36) | 99.67 (99.72) | 93.53 (93.43) | 91.6 (91.56) |
 | 本仓库复现结果                             | 89.89        | 94.28         | 84.26         | 85.30         | 99.52         | 96.74         | 91.67        |
+
+## 转换和部署
+
+```
+bash tools/dist_test.sh projects/face-recognition/configs/mbf_8xb256_wf42m_pfc02.py work_dirs/mbf_8xb256_wf42m_pfc02/epoch_10.pth 8 --cfg-options train_cfg=None train_dataloader=None optim_wrapper=None param_scheduler=None
+```
+
+1. 主要的实现逻辑在`projects/commoms/engine/runner/subnet_ov_val_loop.py`和`projects/commons/models/task_modules/estimators/ov_estimator.py`
+2. 通过修改estimator_cfg为`OVResourceEstimator`可以在NAS的搜索阶段中得以复用。
+3. 关于环境, 可基于`/alg-data2/project/ov/npuc.tar` 或 `/alg-data/ftp-upload/private/wangshiguang/envs/npuc_pt1.13` ,然后再安装MM系列所需要的环境。
