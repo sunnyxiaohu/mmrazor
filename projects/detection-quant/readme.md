@@ -4,7 +4,6 @@
 
 2. 仅针对mobilenetv2 backbone的yolox做了一些PTQ和Qat的实验验证，并且对齐了mnn中的精度
 
-| framwork
 (superacme) | type | model | bits | calibrate_steps | w_observer | w_hyp | a_observer | a_hyp | metric(ap50) | cost_time(s) | other | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | mmrazor | PTQ | mv2+yolox | w8a8 | 32 | PerChannelMinMaxObserver |  | MovingAverageMinMaxObserver |  | 77.9 | 28.84 |  |  |
