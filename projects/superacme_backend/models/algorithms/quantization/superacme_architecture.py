@@ -286,7 +286,7 @@ class SuperAcmeArchitectureQuant(BaseAlgorithm):
 
         rewriter_context = self._get_rewriter_context_in_mmdeploy(
             self.deploy_cfg) if self.deploy_cfg is not None else None
-        rewriter_context = None #手动关闭rewriter_context，防止对onnx进行凸优化导致和mqbench的onnx结构不一致
+        rewriter_context = None #手动关闭rewriter_context，防止对onnx进行图优化导致和mqbench的onnx结构不一致
 
         if rewriter_context is not None:
             # Pop function records in `quantizer.tracer.skipped_method`
@@ -366,7 +366,7 @@ class SuperAcmeArchitectureQuant(BaseAlgorithm):
         self.quantizer.convert_batchnorm2d(fp32_model)
         concrete_args = {'mode': 'tensor'}
         observed_model = self.quantizer.prepare(fp32_model,concrete_args)
-        observed_model.load_state_dict(quantized_state_dict)
+        observed_model.load_state_dict(quantized_state_dict,strict=False)
 
         self.quantizer.post_process_for_deploy(
             observed_model,

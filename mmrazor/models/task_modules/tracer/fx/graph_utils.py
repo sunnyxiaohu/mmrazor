@@ -66,6 +66,10 @@ def recursive_find_erased_nodes(node, prepared_model):
         if isinstance(prev_node, Node):
             nodes_to_erase.extend(
                 recursive_find_erased_nodes(prev_node, prepared_model))
+        elif isinstance(prev_node,List) or isinstance(prev_node,Tuple):
+            for sub_prev_node in prev_node:
+                nodes_to_erase.extend(
+                recursive_find_erased_nodes(sub_prev_node, prepared_model))
     for prev_node in node.kwargs.values():
         if isinstance(prev_node, Node):
             nodes_to_erase.extend(

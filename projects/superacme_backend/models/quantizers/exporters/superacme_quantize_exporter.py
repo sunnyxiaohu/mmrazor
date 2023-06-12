@@ -23,6 +23,8 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
     def __init__(self, onnx_model, export_path) -> None:
         super().__init__(onnx_model, export_path)
         self.optimizer.replace_resize_op_with_upsample(self.onnx_model, self.output2node)
+        self._remap_input_and_node()
+        self._remap_output_and_node()
 
     def _insert_initializers_to_onnx(self, initializers: List):
         """Insert onnx initializers to the onnx graph."""
@@ -37,8 +39,8 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
     def clip_weight(self, node, name2data, named_initializer):
         tensor_name, scale, zero_point, qmin, qmax = self.parse_qparams(node)
         data = name2data[tensor_name]
-        clip_range_min = (qmin - zero_point) * scale
-        clip_range_max = (qmax - zero_point) * scale
+        clip_range_min = ((qmin - zero_point) * scale).astype(data.dtype)
+        clip_range_max = ((qmax - zero_point) * scale).astype(data.dtype)
         if len(scale.shape) > 0 and scale.shape[0] > 1:
             new_data = []
             transposed = False
@@ -192,7 +194,6 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
     def _remove_symbolic_related(self):
         """removeing symbolic related nodes and initializers in the original
         onnx model ."""
-
         symbolic_nodes = self.collect_symbolic_nodes(self.onnx_model)
         self.clip_ranges,nodes_to_be_removed = self.clip_and_collect_params(symbolic_nodes)
 
@@ -205,7 +206,6 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
 
         self._remove_symbolic_related_from_onnx(symbolic_nodes,
                                                 symbolic_constant_inputs)
-        
         
         self.optimizer.optimize(self.onnx_model)
         self.clip_ranges = self.post_process_clip_ranges(self.clip_ranges, self.graph, self.input2node)

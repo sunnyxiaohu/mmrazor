@@ -102,6 +102,8 @@ class ONNXOptimUtils():
         def get_constant_inputs(node, out2node):
             node_list = []
             for inp in node.input:
+                if inp == node.input[2]:
+                    continue
                 if inp in out2node and out2node[inp].op_type == 'Constant':
                     node_list.append(out2node[inp])
             return node_list
@@ -110,7 +112,7 @@ class ONNXOptimUtils():
         while idx < len(onnx_model.graph.node):
             node = onnx_model.graph.node[idx]
             if node.op_type == 'Resize':
-                print_log.info(f"Replace resize op: <{node.name}> with upsample.")
+                print_log(f"Replace resize op: <{node.name}> with upsample.")
                 mode = 'nearest'
                 for attr in node.attribute:
                     if attr.name == 'mode':
