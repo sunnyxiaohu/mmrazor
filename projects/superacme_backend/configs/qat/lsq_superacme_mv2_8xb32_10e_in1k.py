@@ -4,6 +4,7 @@ custom_imports = dict(
         'projects.common.engine.runner.superacme_quantization_loops',
         'projects.superacme_backend.models.algorithms.quantization.superacme_architecture',
         'projects.superacme_backend.models.quantizers.superacme_quantizer',
+        'projects.common.engine.hooks.export_qat_hook',
     ],
     allow_failed_imports=False)
 mv2 = _base_.model
@@ -82,4 +83,4 @@ val_cfg = dict(_delete_=True, type='mmrazor.SuperAcmeQATValLoop')
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
 default_hooks = dict(sync=dict(type='SyncBuffersHook'))
-custom_hooks = [dict(type='ExportQATHook', interval=1, by_epoch=True,save_best='qat.accuracy/top1')]
+custom_hooks = [dict(type='mmrazor.ExportQATHook', interval=1, by_epoch=True,save_best='qat.accuracy/top1')]

@@ -21,3 +21,14 @@
 | openvino  | mv2   | w8a8 | 32              | PerChannelMinMaxObserver |       | KLObserver                        | hist_bins=4096    |              | 30.51        | 不支持激活u8  |
 | superacme | mv2   | w8a8 | 32              | PerChannelMinMaxObserver |       | KLObserver                        | hist_bins=4096    | 70.95        | 38.16        |          |
 | openvino  | mv2   | w8a8 | 32              | PerChannelMinMaxObserver |       | FasterMSEObserver                 |                   | 71.056       | 69.33        |          |
+
+### 新增ppq中的quantileobserver实现
+
+
+| framwork | type | model | bits | calibrate_steps | w_observer | a_observer | metric(top1) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| mmrazor | PTQ | mv2 | w8a8 | 32 | EMAQuantileObserver | MovingAverageMinMaxObserver | 69.088 |
+| mmrazor | PTQ | mv2 | w8a8 | 32 | EMAPPQQuantileObserver | MovingAverageMinMaxObserver | 69.2020 |
+| mmrazor | PTQ | mv2 | w8a8 | 32 | PerChannelEMAPPQQuantileObserver | MovingAverageMinMaxObserver | 69.994 |
+| mmrazor | PTQ | mv2 | w8a8 | 32 | PerChannelMinMaxObserver | EMAQuantileObserver | 71.036 |
+| mmrazor | PTQ | mv2 | w8a8 | 32 | PerChannelMinMaxObserver | EMAPPQQuantileObserver | 71.170 |

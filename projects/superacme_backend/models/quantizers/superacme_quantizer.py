@@ -235,3 +235,8 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
         """Configurate the OPs that their previous nodes are redundant
         fakequants."""
         return ()
+    @property
+    def function_prev_wo_fakequant(self):
+        """Configurate the functions that their previous nodes are redundant
+        fakequants."""
+        return (torch.cat,)

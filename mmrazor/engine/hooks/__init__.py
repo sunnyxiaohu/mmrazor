@@ -4,9 +4,8 @@ from .dump_subnet_hook import DumpSubnetHook
 from .estimate_resources_hook import EstimateResourcesHook
 from .stop_distillation_hook import StopDistillHook
 from .visualization_hook import RazorVisualizationHook
-from .export_qat_hook import ExportQATHook
 
 __all__ = [
     'DumpSubnetHook', 'EstimateResourcesHook', 'RazorVisualizationHook',
-    'DMCPSubnetHook', 'StopDistillHook','ExportQATHook'
+    'DMCPSubnetHook', 'StopDistillHook'
 ]

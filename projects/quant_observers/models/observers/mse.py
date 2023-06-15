@@ -267,7 +267,7 @@ class EMAMSEObserver(MSEObserver):
                  quant_max=None,
                  factory_kwargs=None,
                  p_value=2.0,
-                 ema_ratio=0.9,
+                 averaging_constant =0.1,
                  ch_axis=-1,
                  iter=95,
                  step=0.01,
@@ -294,7 +294,7 @@ class EMAMSEObserver(MSEObserver):
             raise NotImplementedError('Cannot reduce range for symmetric \
                                        quantization for quint8')
         self.p_value = p_value
-        self.ema_ratio = ema_ratio
+        self.averaging_constant = averaging_constant
         self.ch_axis = ch_axis
         self.iter = iter
         self.step = step
@@ -313,8 +313,8 @@ class EMAMSEObserver(MSEObserver):
             min_val = min_val_cur
             max_val = max_val_cur
         else:
-            min_val = self.min_val * self.ema_ratio + min_val_cur * (1.0 - self.ema_ratio)
-            max_val = self.max_val * self.ema_ratio + max_val_cur * (1.0 - self.ema_ratio)
+            min_val = self.min_val * (1.0 - self.averaging_constant) + min_val_cur * self.averaging_constant
+            max_val = self.max_val * (1.0 - self.averaging_constant) + max_val_cur * self.averaging_constant
         self.min_val.copy_(min_val)
         self.max_val.copy_(max_val)
         return x_orig
@@ -349,7 +349,7 @@ class PerChannelEMAMSEObserver(PerChannelMSEObserver):
                  ch_axis=0,
                  iter=80,
                  step=0.01,
-                 ema_ratio = 0.9,
+                 averaging_constant =0.1,
                  mse_plus=False) -> None:
         if not is_per_channel(qscheme):
             raise NotImplementedError(
@@ -372,7 +372,7 @@ class PerChannelEMAMSEObserver(PerChannelMSEObserver):
         self.ch_axis = ch_axis
         self.iter = iter
         self.step = step
-        self.ema_ratio = ema_ratio
+        self.averaging_constant = averaging_constant
         self.mse_plus =mse_plus
 
 
@@ -398,8 +398,8 @@ class PerChannelEMAMSEObserver(PerChannelMSEObserver):
             min_val = min_val_cur
             max_val = max_val_cur
         else:
-            min_val = self.min_val * self.ema_ratio + min_val_cur * (1.0 - self.ema_ratio)
-            max_val = self.max_val * self.ema_ratio + max_val_cur * (1.0 - self.ema_ratio)
+            min_val = self.min_val * (1.0 - self.averaging_constant) + min_val_cur * self.averaging_constant
+            max_val = self.max_val * (1.0 - self.averaging_constant) + max_val_cur * self.averaging_constant
         self.min_val.resize_(min_val.shape)
         self.max_val.resize_(max_val.shape)
         self.min_val.copy_(min_val)
