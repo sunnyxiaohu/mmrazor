@@ -143,7 +143,7 @@ class PerChannelMSEObserver(MSEObserver):
 
     def __init__(self,
                  dtype=torch.quint8,
-                 qscheme=torch.per_tensor_affine,
+                 qscheme=torch.per_channel_affine,
                  reduce_range=False,
                  quant_min=None,
                  quant_max=None,
@@ -340,7 +340,7 @@ class PerChannelEMAMSEObserver(PerChannelMSEObserver):
 
     def __init__(self,
                  dtype=torch.quint8,
-                 qscheme=torch.per_tensor_affine,
+                 qscheme=torch.per_channel_affine,
                  reduce_range=False,
                  quant_min=None,
                  quant_max=None,

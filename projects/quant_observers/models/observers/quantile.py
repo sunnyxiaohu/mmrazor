@@ -34,7 +34,7 @@ class EMAQuantileObserver(BaseObserver):
                  quant_max=None,
                  ch_axis=-1,
                  averaging_constant=0.1,
-                 threshold=0.99999,
+                 _percentile=0.9999,
                  bins=2048,
                  factory_kwargs=None) -> None:
         if not is_per_tensor(qscheme):
@@ -58,10 +58,12 @@ class EMAQuantileObserver(BaseObserver):
                 and self.dtype == torch.quint8):
             raise NotImplementedError('Cannot reduce range for symmetric \
                                        quantization for quint8')
+        if (self.qscheme == torch.per_tensor_affine):
+            raise NotImplementedError('NotImplemente for asymmetric')
         self.ch_axis = ch_axis
         assert self.ch_axis == -1, 'Quantile observer only support in per-tensor scheme.'
         self.averaging_constant = averaging_constant
-        self.threshold = threshold
+        self._percentile = _percentile
         self.bins = bins
 
     def forward(self, x_orig):
@@ -76,7 +78,7 @@ class EMAQuantileObserver(BaseObserver):
         cur_total = 0
         clip_value = max_hist_range
         for i, cnt in enumerate(hist):
-            if cur_total + cnt >= self.threshold * x.numel():
+            if cur_total + cnt >= self._percentile * x.numel():
                 clip_value = (i + 0.5) * (max_hist_range / self.bins)
                 break
             cur_total += cnt
@@ -190,12 +192,12 @@ class PerChannelEMAPPQQuantileObserver(BaseObserver):
 
     def __init__(self,
                  dtype=torch.quint8,
-                 qscheme=torch.per_tensor_affine,
+                 qscheme=torch.per_channel_affine,
                  reduce_range=False,
                  quant_min=None,
                  quant_max=None,
                  ch_axis=0,
-                 averaging_constant=0.01,
+                 averaging_constant=0.1,
                  _percentile=0.9999,
                  factory_kwargs=None) -> None:
         if not is_per_channel(qscheme):
