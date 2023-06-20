@@ -114,23 +114,29 @@ def collect_subset(cfg, benchmark_api, subset_root,
     total_archs = len(benchmark_api)
     setname, this_dataset, this_hp, this_seed = _get_exp_args(subset_root.split('/')[-1])
     assert this_hp == hp and dataset == this_dataset
+
+    if xran is not None:
+        xran = [int(x) for x in xran.split('-')]
+        xran = range(xran[0], xran[1])
+    else:
+        xran = range(0, total_archs)
+    
     filenames = os.listdir(subset_root)
     filenames = list(
         filter(lambda x: os.path.isdir(
             os.path.join(subset_root, x)), filenames))
-    assert len(filenames) == total_archs, f'{len(filenames)} vs {total_archs}'
+    filenames = list(
+        filter(lambda x: os.path.isdir(
+            os.path.join(subset_root, x)) and int(x) in xran, filenames))
+    assert len(filenames) == len(xran), f'{len(filenames)} vs {len(xran)}'
     filenames.sort()
     quantize_result = get_quantize_result(filenames, root_dir=subset_root, force_index=force_index)
 
     if not store and not analysis:
         return
 
-    if xran is not None:
-        xran = [int(x) for x in xran.split('-')]
-        xran = range(xran[0], xran[1])
-
     for arch_index, accuracy in quantize_result.items():
-        if xran is not None and arch_index not in xran:
+        if arch_index not in xran:
             continue
         # backbone_config = benchmark_api.get_net_config(arch_index, cfg.model.architecture.backbone.dataset)
         info = benchmark_api.get_more_info(arch_index, dataset, hp=hp, is_random=fp32_seed)

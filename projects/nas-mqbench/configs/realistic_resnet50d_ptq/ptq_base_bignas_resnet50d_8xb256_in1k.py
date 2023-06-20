@@ -2,12 +2,9 @@ _base_ = [
     '../realistic_resnet50d_fp32/bignas_resnet50d_supernet_16xb128_in1k.py'
 ]
 
-custom_imports = dict(
-    imports=[
-        'projects.nas-mqbench.models.architectures.backbones.searchable_resnet',
+_base_.custom_imports.imports += [
         'projects.nas-mqbench.engine.runner.nas-mq_search_loop'
-    ],
-    allow_failed_imports=False)
+]
 
 train_cfg = dict(
     _delete_=True,

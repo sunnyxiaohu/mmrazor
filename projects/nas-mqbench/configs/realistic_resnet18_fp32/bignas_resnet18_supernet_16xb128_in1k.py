@@ -7,7 +7,8 @@ _base_ = [
 
 custom_imports = dict(
     imports=[
-        'projects.nas-mqbench.models.architectures.backbones.searchable_resnet'
+        'projects.nas-mqbench.models.architectures.backbones.searchable_resnet',
+        'projects.nas-mqbench.engine.runner.subnet_val_analysis_loop'
     ],
     allow_failed_imports=False)
 
@@ -62,9 +63,12 @@ model_wrapper_cfg = dict(
 optim_wrapper = dict(
     type='AmpOptimWrapper',)
     #  clip_grad=dict(type='value', clip_value=1.0))
+    # clip_grad=dict(type='norm', max_norm=1.0))
 
 default_hooks = dict(
     checkpoint=dict(
         type='CheckpointHook', interval=1, max_keep_ckpts=1, save_best='auto'))
 
 train_dataloader = dict(batch_size=128, pin_memory=True)
+# params_modes=('org', 'fuse_conv_bn', 'cle')
+val_cfg = dict(type='SubnetValAnalysisLoop', params_modes=('org', ), topk_params=10)

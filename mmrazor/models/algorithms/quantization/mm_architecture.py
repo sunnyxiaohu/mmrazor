@@ -67,10 +67,11 @@ class MMArchitectureQuant(BaseAlgorithm):
                  forward_modes: Tuple = ('tensor', 'predict', 'loss'),
                  float_checkpoint: Optional[str] = None,
                  input_shapes: Tuple = (1, 3, 224, 224),
+                 use_cle=False,
                  init_cfg: Optional[Dict] = None):
 
         super().__init__(architecture, data_preprocessor, init_cfg)
-
+        self.use_cle = use_cle
         self.quantizer = MODELS.build(quantizer)
         self.input_shapes = input_shapes
         self.forward_modes = forward_modes
@@ -282,7 +283,11 @@ class MMArchitectureQuant(BaseAlgorithm):
             call_method  _get_predictions  (head, head_fc, data_samples)
             output       output            (_get_predictions,)
         """
-
+        if self.use_cle:
+            # import pdb; pdb.set_trace()
+            model = model.eval()
+            from mqbench.cle_superacme.cle import apply_cross_layer_equalization
+            apply_cross_layer_equalization(model=model, input_shape=self.input_shapes)
         rewriter_context = self._get_rewriter_context_in_mmdeploy(
             self.deploy_cfg) if self.deploy_cfg is not None else None
 
