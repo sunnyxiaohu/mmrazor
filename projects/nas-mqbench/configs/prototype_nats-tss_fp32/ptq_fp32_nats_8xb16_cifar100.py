@@ -27,8 +27,8 @@ model = dict(
         arch_index=1452,  # 1017, 1452, 1990
         dataset='cifar100',
         # (hp, seed) -> (12, 111), (200, 777|888|999)
-        seed=111,
-        hp='12',
+        seed=777,
+        hp='200',
     ),
     head=dict(
         type='mmcls.ClsHead'

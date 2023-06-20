@@ -25,6 +25,9 @@ metric_marker_mapping = {
       'deployability_index': ('o', 'blue')
 }
 metric_on_set = 'ori-test'
+hps_fp32random = [('12', 111), ('200', 777)]
+mq_random = False
+datasets = ['cifar10', 'cifar100', 'ImageNet16-120']
 EVALUATED_INDEXES = list(range(0, len(api)))
 ######################GLOBAL SETTINGS#################################
 
@@ -143,48 +146,43 @@ def get_computation_cost(api, dataset, indicator='flops', constraints=None,
 
 # 1 an overview of architecutre performance (float32, mq, and deployability_index).
 # 1.1 respect to parameters and FLOPs, respectively
-hp = '200'
-mq_random = False
-datasets = ['cifar10', 'cifar100', 'ImageNet16-120']
 cost_indicators = ['flops', 'params']
 for indicator in cost_indicators:
       for idx, dataset in enumerate(datasets):
-            mq_args = ('ptq_per-tensor_w-minmax_a-minmax_nats', 'ptq_per-channel_w-minmax_a-minmax_nats')
-            costs, _ = get_computation_cost(api, dataset, indicator=indicator)
-            results = get_metrics(api, dataset=dataset, metric_on_set=metric_on_set, hp=hp, mq_args=mq_args)
-
-            fig, ax = plt.subplots()
-            metric = 'deployability_index'
-            ax.scatter(costs, results.pop(metric), alpha=0.5,
-                  marker=metric_marker_mapping[metric][0],
-                  color=metric_marker_mapping[metric][1])
-            ax.set_xlabel(f'#{indicator}(M)')
-            ax.set_ylabel('Architecture deploy index')
-            ax.set_title(f'Results of architecture deploy index on {dataset}')
-            plt.tight_layout()
-            plt.show()
-            fig.savefig(f'{WORK_DIR}/architecture_deploy_{indicator}_{dataset}.png')
-
-            fig, ax = plt.subplots()
-            for jdx, metric in enumerate(results):
-                  if metric not in metric_marker_mapping:
-                        continue
-                  ax.scatter(costs, results[metric], alpha=0.5, label=metric,
+            for idx, (hp, fp32_random) in enumerate(hps_fp32random):
+                  mq_args = ('ptq_per-tensor_w-minmax_a-minmax_nats', 'ptq_per-channel_w-minmax_a-minmax_nats')
+                  costs, _ = get_computation_cost(api, dataset, indicator=indicator)
+                  results = get_metrics(api, dataset=dataset, metric_on_set=metric_on_set, hp=hp,
+                                        fp32_random=fp32_random, mq_random=mq_random, mq_args=mq_args)
+                  fig, ax = plt.subplots()
+                  metric = 'deployability_index'
+                  ax.scatter(costs, results.pop(metric), alpha=0.5,
                         marker=metric_marker_mapping[metric][0],
                         color=metric_marker_mapping[metric][1])
-            ax.set_xlabel(f'#{indicator}(M)')
-            ax.set_ylabel('Architecture accuracy')
-            ax.set_title(f'Results of architecture accuracy on {dataset}')
-            plt.tight_layout()
-            plt.legend()
-            plt.show()
-            fig.savefig(f'{WORK_DIR}/architecture_results_{indicator}_{dataset}.png')
+                  ax.set_xlabel(f'#{indicator}(M)')
+                  ax.set_ylabel('Architecture deploy index')
+                  ax.set_title(f'Results of architecture deploy index on {dataset}')
+                  plt.tight_layout()
+                  plt.show()
+                  fig.savefig(f'{WORK_DIR}/architecture_deploy_{indicator}_{dataset}_hp{hp}.png')
+
+                  fig, ax = plt.subplots()
+                  for jdx, metric in enumerate(results):
+                        if metric not in metric_marker_mapping:
+                              continue
+                        ax.scatter(costs, results[metric], alpha=0.5, label=metric,
+                              marker=metric_marker_mapping[metric][0],
+                              color=metric_marker_mapping[metric][1])
+                  ax.set_xlabel(f'#{indicator}(M)')
+                  ax.set_ylabel('Architecture accuracy')
+                  ax.set_title(f'Results of architecture accuracy on {dataset}')
+                  plt.tight_layout()
+                  plt.legend()
+                  plt.show()
+                  fig.savefig(f'{WORK_DIR}/architecture_results_{indicator}_{dataset}_hp{hp}.png')
 plt.close()
 
 # 1.2 find best
-datasets = ['cifar10', 'cifar100', 'ImageNet16-120']
-hps_fp32random = [('12', 111), ('200', 777)]
-mq_random = False
 for dataset in datasets:
       for idx, (hp, fp32_random) in enumerate(hps_fp32random):
             mq_args = ('ptq_per-tensor_w-minmax_a-minmax_nats', 'ptq_per-channel_w-minmax_a-minmax_nats')
@@ -194,14 +192,11 @@ for dataset in datasets:
             f'with hp: {hp}, seed: {mq_random} training is: {results}')
 
 # 1.3 mdiff(Mean of difference) and xrange between float32 and mq
-hps_fp32random = [('12', 111), ('200', 777)]
-mq_random = False
-datasets = ['cifar10', 'cifar100', 'ImageNet16-120']
 for idx, dataset in enumerate(datasets):
       for idx, (hp, fp32_random) in enumerate(hps_fp32random):
             mq_args = ('ptq_per-tensor_w-minmax_a-minmax_nats', 'ptq_per-channel_w-minmax_a-minmax_nats')
             results = get_metrics(api, dataset=dataset, metric_on_set=metric_on_set, hp=hp,
-                              fp32_random=fp32_random, mq_random=mq_random, mq_args=mq_args)
+                                  fp32_random=fp32_random, mq_random=mq_random, mq_args=mq_args)
             for jdx, metric in enumerate(results):
                   xrange = np.array(results[metric_on_set]) - np.array(results[metric])
                   max_idx, min_idx = np.argmax(xrange), np.argmin(xrange)
@@ -213,20 +208,53 @@ for idx, dataset in enumerate(datasets):
 # 2 architecture ranking
 # 2.1 Kendall and Spearmanr Rank
 # 2.2 relative ranking between float32 and model quantization settings
-hp = '200'
-mq_random = False
-datasets = ['cifar10', 'cifar100', 'ImageNet16-120']
 for idx, dataset in enumerate(datasets):
-      mq_args = ('ptq_per-tensor_w-minmax_a-minmax_nats', 'ptq_per-channel_w-minmax_a-minmax_nats')
-      results = get_metrics(api, dataset=dataset, metric_on_set=metric_on_set, hp=hp, mq_args=mq_args)
+      hp_results = collections.OrderedDict()
+      for idx, (hp, fp32_random) in enumerate(hps_fp32random):
+            mq_args = ('ptq_per-tensor_w-minmax_a-minmax_nats', 'ptq_per-channel_w-minmax_a-minmax_nats')
+            results = get_metrics(api, dataset=dataset, metric_on_set=metric_on_set, hp=hp,
+                                  fp32_random=fp32_random, mq_random=mq_random, mq_args=mq_args)
+            from mmrazor.models.utils import add_prefix
+            hp_results.update(add_prefix(results, f'hp{hp}'))
+
+            sorted_fp32 = get_sorted_indices(results[metric_on_set])
+            fig, ax = plt.subplots()
+            metric = 'deployability_index'
+            sorted_rst = get_sorted_indices(results.pop(metric))
+            ax.scatter(sorted_fp32, sorted_rst, alpha=0.5,
+                  marker=metric_marker_mapping[metric][0],
+                  color=metric_marker_mapping[metric][1])
+            ax.set_xlabel('Architecture ranking for float32 accuracy')
+            ax.set_ylabel('Architecture ranking for deploy index')
+            ax.set_title(f'Architecture ranking deploy index on {dataset}')
+            plt.tight_layout()
+            plt.show()
+            fig.savefig(f'{WORK_DIR}/architecture_rank_deploy_{dataset}_hp{hp}.png')
+            
+            fig, ax = plt.subplots()
+            for jdx, metric in enumerate(results):
+                  if metric not in metric_marker_mapping:
+                        continue
+                  sorted_rst = get_sorted_indices(results[metric])
+                  ax.scatter(sorted_fp32, sorted_rst, alpha=0.5, label=metric,
+                        marker=metric_marker_mapping[metric][0],
+                        color=metric_marker_mapping[metric][1])
+            ax.set_xlabel('Architecture ranking for float32 accuracy')
+            ax.set_ylabel('Architecture ranking accuracy')
+            ax.set_title(f'Architecture ranking accuracy on {dataset}')
+            plt.tight_layout()
+            plt.legend()
+            plt.show()
+            fig.savefig(f'{WORK_DIR}/architecture_rank_mq_{dataset}_hp{hp}.png')
+
       # Kendall and Spearmanr Rank.
-      num_rows, num_cols = len(results), len(results)
+      num_rows, num_cols = len(hp_results), len(hp_results)
       k_corr = np.zeros((num_rows, num_cols))
       s_corr = np.zeros((num_rows, num_cols))
-      for i, i_metric in enumerate(results):
-            i_sorted = results[i_metric]  # get_sorted_indices(results[i_metric])
-            for j, j_metric in enumerate(results):
-                  j_sorted = results[j_metric]  # get_sorted_indices(results[j_metric])
+      for i, i_metric in enumerate(hp_results):
+            i_sorted = hp_results[i_metric]  # get_sorted_indices(results[i_metric])
+            for j, j_metric in enumerate(hp_results):
+                  j_sorted = hp_results[j_metric]  # get_sorted_indices(results[j_metric])
                   correlation, p_value = kendalltau(i_sorted, j_sorted)
                   k_corr[i, j] = correlation
                   correlation, p_value = spearmanr(i_sorted, j_sorted)
@@ -236,12 +264,12 @@ for idx, dataset in enumerate(datasets):
       for i in range(num_rows):
             for j in range(num_cols):
                   text = ax.text(j, i, f'{k_corr[i, j]:.2f}',
-                                 ha='center', va='center', color='w')
+                              ha='center', va='center', color='w')
       plt.colorbar(im)
       ax.set_xticks(np.arange(num_cols))
-      ax.set_xticklabels(list(results.keys()), rotation=90, fontsize=8)
+      ax.set_xticklabels(list(hp_results.keys()), rotation=90, fontsize=8)
       ax.set_yticks(np.arange(num_rows))
-      ax.set_yticklabels(list(results.keys()), rotation=60, fontsize=8)
+      ax.set_yticklabels(list(hp_results.keys()), rotation=60, fontsize=8)
       plt.title(f'Kendall Rank Matrix on {dataset}')
       plt.show()
       fig.savefig(f'{WORK_DIR}/kendall_rank_matrix_{dataset}.png')
@@ -250,76 +278,13 @@ for idx, dataset in enumerate(datasets):
       for i in range(num_rows):
             for j in range(num_cols):
                   text = ax.text(j, i, f'{s_corr[i, j]:.2f}',
-                                 ha='center', va='center', color='w')      
+                              ha='center', va='center', color='w')      
       plt.colorbar(im)
       ax.set_xticks(np.arange(num_cols))
-      ax.set_xticklabels(list(results.keys()), rotation=90, fontsize=8)
+      ax.set_xticklabels(list(hp_results.keys()), rotation=90, fontsize=8)
       ax.set_yticks(np.arange(num_rows))
-      ax.set_yticklabels(list(results.keys()), rotation=60, fontsize=8)
+      ax.set_yticklabels(list(hp_results.keys()), rotation=60, fontsize=8)
       plt.title(f'Spearmanr Rank Matrix on {dataset}')
       plt.show()
       fig.savefig(f'{WORK_DIR}/spearmanr_rank_matrix_{dataset}.png')
-
-      sorted_fp32 = get_sorted_indices(results[metric_on_set])
-      fig, ax = plt.subplots()
-      metric = 'deployability_index'
-      sorted_rst = get_sorted_indices(results.pop(metric))
-      ax.scatter(sorted_fp32, sorted_rst, alpha=0.5,
-            marker=metric_marker_mapping[metric][0],
-            color=metric_marker_mapping[metric][1])
-      ax.set_xlabel('Architecture ranking for float32 accuracy')
-      ax.set_ylabel('Architecture ranking for deploy index')
-      ax.set_title(f'Architecture ranking deploy index on {dataset}')
-      plt.tight_layout()
-      plt.show()
-      fig.savefig(f'{WORK_DIR}/architecture_rank_deploy_{indicator}_{dataset}.png')
-      
-      fig, ax = plt.subplots()
-      for jdx, metric in enumerate(results):
-            if metric not in metric_marker_mapping:
-                  continue
-            sorted_rst = get_sorted_indices(results[metric])
-            ax.scatter(sorted_fp32, sorted_rst, alpha=0.5, label=metric,
-                       marker=metric_marker_mapping[metric][0],
-                       color=metric_marker_mapping[metric][1])
-      ax.set_xlabel('Architecture ranking for float32 accuracy')
-      ax.set_ylabel('Architecture ranking accuracy')
-      ax.set_title(f'Architecture ranking accuracy on {dataset}')
-      plt.tight_layout()
-      plt.legend()
-      plt.show()
-      fig.savefig(f'{WORK_DIR}/architecture_rank_mq_{dataset}.png')
-plt.close()
-
-# 2.3 relative ranking between different hps
-hps_fp32random = [('12', 111), ('200', 777)]
-mq_random = False
-datasets = ['cifar10', 'cifar100', 'ImageNet16-120']
-for idx, dataset in enumerate(datasets):
-      fig, ax = plt.subplots()
-      for jdx, (hp, fp32_random) in enumerate(hps_fp32random):
-            mq_args = ('ptq_per-tensor_w-minmax_a-minmax_nats', 'ptq_per-channel_w-minmax_a-minmax_nats')
-            results = get_metrics(api, dataset=dataset, metric_on_set=metric_on_set, hp=hp,
-                                  fp32_random=fp32_random, mq_args=mq_args)
-            metric = 'deployability_index'
-            results.pop(metric)
-            if jdx == 0:
-                  sorted_fp32 = get_sorted_indices(results[metric_on_set])
-
-            for jdx, metric in enumerate(results):
-                  if metric not in metric_marker_mapping:
-                        continue            
-                  sorted_rst = get_sorted_indices(results[metric])
-                  ax.scatter(sorted_fp32, sorted_rst, alpha=0.5, label=f'{hp}_{metric}')
-                        #      marker=metric_marker_mapping[metric][0],
-                        #      color=metric_marker_mapping[metric][1])
-
-      ax.set_xlabel(f'Architecture ranking for float32 and hp {hps_fp32random[0][0]}')
-      ax.set_ylabel('Architecture ranking')
-      ax.set_title(f'Architecture ranking between different hps on dataset {dataset}')
-
-      plt.tight_layout()
-      plt.legend()
-      plt.show()
-      fig.savefig(f'{WORK_DIR}/architecture_rank_hp_{dataset}.png')
 plt.close()

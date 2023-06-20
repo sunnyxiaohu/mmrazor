@@ -29,8 +29,8 @@ model = dict(
         dataset='cifar10',
         # NATS-tss: (hp, seed) -> (12, 111), (200, 777|888|999)
         # NATS-sss: (hp, seed) -> (01|12|90, 777)
-        seed=111,
-        hp='12',  # 12, 200
+        seed=777,
+        hp='200',  # 12, 200
     ),
     head=dict(
         type='mmcls.ClsHead'

@@ -15,26 +15,45 @@ WORK_DIR = os.path.dirname(os.path.abspath(__file__))
 EVALUATED_INDEXES = list(range(0, 100))  # len(api)))
 # Create the API for realistic search space
 nas_mqbench_pth = [
-    'work_dirs/bignas_resnet18_benchmark/wd1e-4_ep200/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl'
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-5_ep300/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-5_ep300_cle/ptq_per-tensor_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-5_ep200/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-5_ep200_cle/ptq_per-tensor_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-5_ep100/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-5_ep100_cle/ptq_per-tensor_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-4_ep200/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-4_ep200_cle/ptq_per-tensor_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-4_ep100/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-4_ep100_cle/ptq_per-tensor_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-4-linear_ep100/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-4-cosine_ep100/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-4-cosine-ep0-50_ep100/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+'work_dirs/bignas_resnet18_benchmark/wd1e-4-cosine-ep0-50_ep100_cle/ptq_per-tensor_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl',
+# 'work_dirs/bignas_resnet18_benchmark/wd1e-4-cosine-ep50-100_ep100/ptq_per-channel_w-minmax_a-minmax_bignas_resnet18_8xb256_in1k_calib32xb16/search_epoch_5.pkl'
 ]
-indexes_per_pth = len(EVALUATED_INDEXES) // len(nas_mqbench_pth)
-api = Candidates()
+# indexes_per_pth = len(EVALUATED_INDEXES) // len(nas_mqbench_pth)
+apis = dict()
 for pth in nas_mqbench_pth:
-      _api = fileio.load(pth)['export_candidates'][:indexes_per_pth]
-      api.extend(_api)
+      key = pth.split('/')[-3]
+      _api = fileio.load(pth)['export_candidates']  # [:indexes_per_pth]
+      apis[key] = Candidates(_api)
+      # import pdb; pdb.set_trace()
+      print(f'Loading {pth}, {key}')
 metric_marker_mapping = {
       'score': ('.', 'red'),
       'per-tensor_w-minmax_a-minmax': ('^', 'yellow'),
       'per-channel_w-minmax_a-minmax': ('v', 'purple'),
       'mq_avg': ('*', 'green'),
-      'deployability_index': ('o', 'blue')   
+      'deployability_index': ('o', 'blue')
 }
 Candidates._indicators = tuple(set(Candidates._indicators + tuple(metric_marker_mapping.keys())))
 metric_on_set = 'score'
 hp = '200'
 mq_random = False
 base_metric = metric_on_set
-bmetrics = [metric_on_set]
+base_api = 'wd1e-4-cosine-ep0-50_ep100_cle'
+bmetrics = [f'{base_api}.score', f'{base_api}.per-tensor_w-minmax_a-minmax', f'{base_api}.mq_avg']
+mq_args = ('per-tensor_w-minmax_a-minmax', )
 
 ######################GLOBAL SETTINGS#################################
 
@@ -113,12 +132,12 @@ def get_computation_cost(api, indicator='flops', constraints=None,
 
 # 1 an overview of architecutre performance (float32, mq, and deployability_index).
 # 1.1 respect to parameters and FLOPs, respectively
+api = apis[base_api]
 datasets = ['in1k']
 results = dict()
 cost_indicators = ['flops', 'params']
 for indicator in cost_indicators:
       for idx, dataset in enumerate(datasets):
-            mq_args = ('per-tensor_w-minmax_a-minmax', 'per-channel_w-minmax_a-minmax')
             costs = get_computation_cost(api, indicator)
             results = get_metrics(api, metric_on_set=metric_on_set, mq_args=mq_args)        
 
@@ -150,38 +169,40 @@ for indicator in cost_indicators:
             fig.savefig(f'{WORK_DIR}/architecture_results_{indicator}_{dataset}.png')
 
 # 1.2 find best
+api = apis[base_api]
 datasets = ['in1k']
 hps_fp32random = [('200', 777)]   # [('12', 111), ('200', 777)]
 mq_random = False
 for dataset in datasets:
       for idx, (hp, fp32_random) in enumerate(hps_fp32random):
-            mq_args = ('per-tensor_w-minmax_a-minmax', 'per-channel_w-minmax_a-minmax')
             results = find_best(api, metric_on_set=metric_on_set, mq_args=mq_args)
       print(f'The best architecture on {dataset} ' +
             f'with hp: {hp}, seed: {mq_random} training is: {results}')
 
 # 1.3 mdiff(Mean of difference) and xrange between float32 and mq
 datasets = ['in1k']
+
 for idx, dataset in enumerate(datasets):
-      mq_args = ('per-tensor_w-minmax_a-minmax', 'per-channel_w-minmax_a-minmax')
-      results = get_metrics(api, metric_on_set=metric_on_set, mq_args=mq_args)
-      from mmrazor.models.utils import add_prefix 
-      # results = collections.OrderedDict(filter(lambda x: x[0] in metric_marker_mapping, results.items()))
+      all_results = collections.OrderedDict()  
+      for key, api in apis.items():
+            results = get_metrics(api, metric_on_set=metric_on_set, mq_args=mq_args)
+            from mmrazor.models.utils import add_prefix
+            all_results.update(add_prefix(results, key))
       for bmetric in bmetrics:
-            for jdx, metric in enumerate(results):
-                  xrange = np.array(results[bmetric]) - np.array(results[metric])
+            for jdx, metric in enumerate(all_results):
+                  xrange = np.array(all_results[bmetric]) - np.array(all_results[metric])
                   max_idx, min_idx = np.argmax(xrange), np.argmin(xrange)
                   print(f"Dataset {dataset}, Xrange between {bmetric} and {metric}: "
                         f"MDiff, Max, Min: {xrange.mean():.2f}, "
-                        f"{xrange[max_idx]:.2f}[{results[bmetric][max_idx]:.2f} vs {results[metric][max_idx]:.2f}], "
-                        f"{xrange[min_idx]:.2f}[{results[bmetric][min_idx]:.2f} vs {results[metric][min_idx]:.2f}]")
+                        f"{xrange[max_idx]:.2f}[{all_results[bmetric][max_idx]:.2f} vs {all_results[metric][max_idx]:.2f}], "
+                        f"{xrange[min_idx]:.2f}[{all_results[bmetric][min_idx]:.2f} vs {all_results[metric][min_idx]:.2f}]")
 
 # 2 architecture ranking
 # 2.1 Kendall and Spearmanr Rank
 # 2.2 relative ranking between float32 and model quantization settings
+api = apis[base_api]
 datasets = ['in1k']
 for idx, dataset in enumerate(datasets):
-      mq_args = ('per-tensor_w-minmax_a-minmax', 'per-channel_w-minmax_a-minmax')
       results = get_metrics(api, metric_on_set=metric_on_set, mq_args=mq_args)
       # Kendall and Spearmanr Rank.
       num_rows, num_cols = len(results), len(results)

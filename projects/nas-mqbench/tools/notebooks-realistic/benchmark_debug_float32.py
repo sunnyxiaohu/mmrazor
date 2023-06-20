@@ -227,7 +227,7 @@ for idx, dataset in enumerate(datasets):
       results.update(add_prefix(results2, 'retrained'))
       results.update(add_prefix(results1, 'sliced'))      
       # results = collections.OrderedDict(filter(lambda x: x[0] in metric_marker_mapping, results.items()))
-      for bmetric in ['retrained.score', 'sliced.score']:
+      for bmetric in ['retrained.score', 'sliced.score', 'retrained.per-channel_w-minmax_a-minmax']:
             for jdx, metric in enumerate(results):
                   xrange = np.array(results[bmetric]) - np.array(results[metric])
                   max_idx, min_idx = np.argmax(xrange), np.argmin(xrange)
