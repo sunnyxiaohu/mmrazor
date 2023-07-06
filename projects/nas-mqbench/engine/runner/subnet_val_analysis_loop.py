@@ -14,7 +14,7 @@ from mmrazor.engine import SubnetValLoop
 
 
 def draw_params_boxplot(model, filename, topk_params = 10):
-    candidate_params = [(name, param) for name, param in model.named_parameters() if len(param.size()) >= 2]
+    candidate_params = [(name, param) for name, param in model.named_parameters() if param.dim() >= 2]
     candidate_params = candidate_params[:topk_params]
     cols = int(np.sqrt(len(candidate_params)))
     rows = len(candidate_params) // cols + (len(candidate_params) % cols > 0)
@@ -81,7 +81,7 @@ class SubnetValAnalysisLoop(SubnetValLoop):
             metrics = self._evaluate_once()
             all_metrics.update(add_prefix(metrics, 'fix_subnet'))
         elif hasattr(self.model, 'sample_kinds'):
-            for kind in self.model.sample_kinds:
+            for kind in ['max', 'min']:  # self.model.sample_kinds:
                 if kind == 'max':
                     self.model.mutator.set_max_choices()
                     metrics = self._evaluate_once(kind=kind)
@@ -95,7 +95,7 @@ class SubnetValAnalysisLoop(SubnetValLoop):
                         self.model.mutator.sample_choices())
                     metrics = self._evaluate_once(kind=kind)
                     all_metrics.update(add_prefix(metrics, f'{kind}_subnet'))
-
+        # import pdb; pdb.set_trace()
         self.runner.call_hook('after_val_epoch', metrics=all_metrics)
         self.runner.call_hook('after_val')
 
@@ -128,5 +128,7 @@ class SubnetValAnalysisLoop(SubnetValLoop):
             draw_params_boxplot(sliced_model, filename, topk_params=self.topk_params)
 
         metrics.update(resource_metrics)
+        # if kind == 'max' or kind == '':
+        #     metrics.update(dict(model=sliced_model))
 
         return metrics

@@ -8,7 +8,9 @@ _base_ = [
 custom_imports = dict(
     imports=[
         'projects.nas-mqbench.models.architectures.backbones.searchable_resnet',
-        'projects.nas-mqbench.engine.runner.subnet_val_analysis_loop'
+        'projects.nas-mqbench.engine.runner.subnet_val_analysis_loop',
+        'projects.nas-mqbench.engine.optim.independent_constructor',
+        'projects.nas-mqbench.engine.optim.param_scheduler'
     ],
     allow_failed_imports=False)
 
@@ -48,9 +50,9 @@ model = dict(
         student_recorders=dict(
             fc=dict(type='ModuleOutputs', source='head.fc')),
         distill_losses=dict(
-            loss_kl=dict(type='KLDivergence', tau=1, loss_weight=1)),
+            loss_kd=dict(type='KDSoftCELoss', tau=1, loss_weight=1)),
         loss_forward_mappings=dict(
-            loss_kl=dict(
+            loss_kd=dict(
                 preds_S=dict(recorder='fc', from_student=True),
                 preds_T=dict(recorder='fc', from_student=False)))),
     mutator=dict(type='mmrazor.NasMutator'))
@@ -61,14 +63,33 @@ model_wrapper_cfg = dict(
     find_unused_parameters=True)
 
 optim_wrapper = dict(
+    # constructor='mmrazor.IndependentOptimWrapperConstructor',
     type='AmpOptimWrapper',)
     #  clip_grad=dict(type='value', clip_value=1.0))
     # clip_grad=dict(type='norm', max_norm=1.0))
 
+# _base_.param_scheduler += [
+#     # # # weight_decay
+#     # dict(
+#     #     type='CosineAnnealingParamScheduler',
+#     #     param_name='weight_decay',
+#     #     T_max=max_epochs,
+#     #     by_epoch=True,
+#     #     begin=0,
+#     #     end=max_epochs,
+#     #     eta_min_ratio=0.1),
+#     dict(
+#         type='mmrazor.QRangeParamScheduler',
+#         param_name='weight_decay',
+#         verbose=True,
+#         monitor='max_subnet.model'),    
+# ]
+
 default_hooks = dict(
+    # param_scheduler=dict(priority='NORMAL'),
     checkpoint=dict(
-        type='CheckpointHook', interval=1, max_keep_ckpts=1, save_best='auto'))
+        type='CheckpointHook', interval=1, max_keep_ckpts=1, save_best=None))
 
 train_dataloader = dict(batch_size=128, pin_memory=True)
 # params_modes=('org', 'fuse_conv_bn', 'cle')
-val_cfg = dict(type='SubnetValAnalysisLoop', params_modes=('org', ), topk_params=10)
+val_cfg = dict(type='SubnetValAnalysisLoop', params_modes=('org', ), topk_params=10, calibrate_sample_num=4096)
