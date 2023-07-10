@@ -154,6 +154,7 @@ class OVResourceEstimator(ResourceEstimator):
                 logger.info(
                     f'Fixed inference: {self.ovmodel.fixed_inference()}')
             ov_metrics = [self.ovmodel.sim_ppa()]
+            self.ovmodel.reset_model()
         else:
             ov_metrics = [None]
         broadcast_object_list(ov_metrics)
@@ -226,6 +227,14 @@ class OVModelWrapper:
         self.infer_metric = infer_metric
         if infer_metric is not None:
             self.infer_metric = METRICS.build(infer_metric)
+
+    def reset_model(self):
+        self.graph = None
+        self.params = None
+        self.data = None
+        self.label = None
+        self.output = None
+        self.ovm_hdl = None
 
     def reset_data(self):
         """Reset dataset iterator."""

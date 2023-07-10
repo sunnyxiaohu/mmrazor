@@ -147,11 +147,11 @@ class Residual(BaseModule):
 
 class GDC(BaseModule):
 
-    def __init__(self, embedding_size):
+    def __init__(self, embedding_size, mid_features=512):
         super(GDC, self).__init__()
         self.layers = nn.Sequential(
-            PoolBlock(512, 512, kernel=(7, 7), stride=(1, 1)), Flatten(),
-            Linear(512, embedding_size, bias=True),
+            PoolBlock(None, mid_features, kernel=(7, 7), stride=(1, 1)), Flatten(),
+            Linear(mid_features, embedding_size, bias=True),
             BatchNorm1d(embedding_size))
 
     def forward(self, x):
@@ -172,85 +172,88 @@ class MobileFaceNet(BaseBackbone):
         self.norm_eval = False
         self.scale = scale
         self.fp16 = fp16
+        mid1_features = make_divisible(64 * self.scale, 8)
+        mid2_features = make_divisible(128 * self.scale, 8)
+        mid3_features = make_divisible(512 * self.scale, 8)
         self.layers = nn.ModuleList()
         self.layers.append(
             ConvBlock(
                 3,
-                64 * self.scale,
+                mid1_features,
                 kernel=(3, 3),
                 stride=(2, 2),
                 padding=(1, 1)))
         if blocks[0] == 1:
             self.layers.append(
                 ConvBlock(
-                    64 * self.scale,
-                    64 * self.scale,
+                    mid1_features,
+                    mid1_features,
                     kernel=(3, 3),
                     stride=(1, 1),
                     padding=(1, 1),
-                    groups=64))
+                    groups=mid1_features))
         else:
             self.layers.append(
                 Residual(
-                    64 * self.scale,
+                    mid1_features,
                     num_block=blocks[0],
-                    groups=128,
+                    groups=2 * mid1_features,
                     kernel=(3, 3),
                     stride=(1, 1),
                     padding=(1, 1)), )
 
         self.layers.extend([
             DepthWise(
-                64 * self.scale,
-                64 * self.scale,
+                mid1_features,
+                mid1_features,
                 kernel=(3, 3),
                 stride=(2, 2),
                 padding=(1, 1),
-                groups=128),
+                groups=2 * mid1_features),
             Residual(
-                64 * self.scale,
+                mid1_features,
                 num_block=blocks[1],
-                groups=128,
+                groups=2 * mid1_features,
                 kernel=(3, 3),
                 stride=(1, 1),
                 padding=(1, 1)),
             DepthWise(
-                64 * self.scale,
-                128 * self.scale,
+                mid1_features,
+                mid2_features,
                 kernel=(3, 3),
                 stride=(2, 2),
                 padding=(1, 1),
-                groups=256),
+                groups=2 * mid2_features),
             Residual(
-                128 * self.scale,
+                mid2_features,
                 num_block=blocks[2],
-                groups=256,
+                groups=2 * mid2_features,
                 kernel=(3, 3),
                 stride=(1, 1),
                 padding=(1, 1)),
             DepthWise(
-                128 * self.scale,
-                128 * self.scale,
+                mid2_features,
+                mid2_features,
                 kernel=(3, 3),
                 stride=(2, 2),
                 padding=(1, 1),
-                groups=512),
+                groups=4 * mid2_features),
             Residual(
-                128 * self.scale,
+                mid2_features,
                 num_block=blocks[3],
-                groups=256,
+                groups=2 * mid2_features,
                 kernel=(3, 3),
                 stride=(1, 1),
                 padding=(1, 1)),
         ])
 
         self.conv_sep = ConvBlock(
-            128 * self.scale,
-            512,
+            mid2_features,
+            mid3_features,
             kernel=(1, 1),
             stride=(1, 1),
             padding=(0, 0))
-        self.features = GDC(num_features)
+        self.features = GDC(num_features, mid_features=mid3_features)
 
     def init_weights(self):
         super().init_weights()
