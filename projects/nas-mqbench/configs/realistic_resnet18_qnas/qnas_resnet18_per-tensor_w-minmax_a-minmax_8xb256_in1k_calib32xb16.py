@@ -6,13 +6,6 @@ _base_.custom_imports.imports += [
         'projects.nas-mqbench.engine.runner.nas-mq_search_loop'
 ]
 
-calibrate_dataloader = dict(
-    batch_size=16,
-    num_workers=1,
-    dataset=_base_.val_dataloader.dataset,
-    sampler=dict(type='DefaultSampler', shuffle=True),
-)
-
 train_cfg = dict(
     _delete_=True,
     type='mmrazor.NASMQSearchLoop',

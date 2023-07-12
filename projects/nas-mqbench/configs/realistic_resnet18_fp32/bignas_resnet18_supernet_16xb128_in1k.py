@@ -62,9 +62,9 @@ model_wrapper_cfg = dict(
     broadcast_buffers=False,
     find_unused_parameters=True)
 
-optim_wrapper = dict(
-    # constructor='mmrazor.IndependentOptimWrapperConstructor',
-    type='AmpOptimWrapper',)
+# optim_wrapper = dict(
+#     # constructor='mmrazor.IndependentOptimWrapperConstructor',
+#     type='AmpOptimWrapper',)
     #  clip_grad=dict(type='value', clip_value=1.0))
     # clip_grad=dict(type='norm', max_norm=1.0))
 

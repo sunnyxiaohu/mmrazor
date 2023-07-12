@@ -1,6 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import warnings
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 
 import torch
 import torch.nn as nn
@@ -131,6 +131,8 @@ class NasMutator(BaseMutator[MUTABLE_TYPE], GroupMixin):
                     choices[name] = mutables[0].min_choice
                 elif kind == 'random':
                     choices[name] = mutables[0].sample_choice()
+                elif isinstance(kind, Callable):
+                    choices[name] = kind(mutables)
                 else:
                     raise NotImplementedError()
         return choices

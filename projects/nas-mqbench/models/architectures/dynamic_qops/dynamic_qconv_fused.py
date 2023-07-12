@@ -28,6 +28,8 @@ from mmrazor.models.architectures.dynamic_ops import (DynamicConvMixin,
 from mmengine.utils import import_modules_from_strings
 custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_fused'
 dynamic_fused = import_modules_from_strings(custom_imports)
+custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_qlinear'
+dynamic_qlinear = import_modules_from_strings(custom_imports)
 
 
 _BN_CLASS_MAP[1] = DynamicBatchNorm1d
@@ -226,7 +228,7 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
     _FLOAT_CONV_MODULE = BigNasConv2d
     _FLOAT_BN_MODULE = DynamicBatchNorm2d
     _FLOAT_RELU_MODULE = None
-    accepted_mutable_attrs = {'in_channels', 'out_channels'}
+    accepted_mutable_attrs = {'in_channels', 'out_channels', 'quant_bits'}
 
     def __init__(self, *args, **kwarg):
         super().__init__(*args, **kwarg)
@@ -237,6 +239,13 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         conv_orig = conv / scale_factor where scale_factor = bn.weight / running_std
         """
         # import pdb; pdb.set_trace()
+        weight_fake_quant = self.weight_fake_quant
+        if 'quant_bits' in self.mutable_attrs:        
+            bit = self.mutable_attrs['quant_bits'].current_choice
+            dynamic_qlinear.update_qdype_qmin_qmax(self, bit)
+            if bit == 32:
+                weight_fake_quant = dynamic_qlinear.bypass
+
         groups = self.groups
         if self.groups == self.in_channels == self.out_channels:
             groups = input.size(1)        
@@ -249,7 +258,7 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         weight_shape[0] = -1
         bias_shape = [1] * len(weight.shape)
         bias_shape[1] = -1
-        scaled_weight = self.weight_fake_quant(weight * scale_factor.reshape(weight_shape))
+        scaled_weight = weight_fake_quant(weight * scale_factor.reshape(weight_shape))
         # using zero bias here since the bias for original conv
         # will be added later
         if self.bias is not None:
@@ -280,6 +289,12 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
                 f'Get invalid attrs, `{attr}` can not be accepted, '
                 f'excepted in {qat_conv.accepted_mutable_attrs.keys()}')
             qat_conv.register_mutable_attr(attr, value)
+            assert hasattr(mod[0], "qbconfig"), "Input float module must have qbconfig defined"
+            for attr, value in mod[0].qbconfig.items():
+                assert attr in ('quant_bits', ), (
+                    f'Get invalid attrs, `{attr}` can not be accepted, '
+                    f'excepted in {("quant_bits", )}')
+                qat_conv.mutable_attrs[attr] = value
 
         for attr, value in mod[1].mutable_attrs.items():
             assert attr in qat_conv.bn.accepted_mutable_attrs, (
@@ -325,7 +340,6 @@ class DynamicQConvBnReLU2d(DynamicQConvBn2d):
 
     @classmethod
     def from_float(cls, mod):
-        # import pdb; pdb.set_trace()
         return super(DynamicQConvBnReLU2d, cls).from_float(mod)
 
 class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
@@ -334,7 +348,7 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
     _FLOAT_CONV_MODULE = BigNasConv2d
     _FLOAT_BN_MODULE = None
     _FLOAT_RELU_MODULE = nn.ReLU
-    accepted_mutable_attrs = {'in_channels', 'out_channels'}
+    accepted_mutable_attrs = {'in_channels', 'out_channels', 'quant_bits'}
 
     def __init__(self, *args, **kwarg):
         super().__init__(*args, **kwarg)
@@ -356,6 +370,13 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
                 f'Get invalid attrs, `{attr}` can not be accepted, '
                 f'excepted in {qat_conv.accepted_mutable_attrs.keys()}')
             qat_conv.register_mutable_attr(attr, value)
+            assert hasattr(mod[0], "qbconfig"), "Input float module must have qbconfig defined"
+            for attr, value in mod[0].qbconfig.items():
+                assert attr in ('quant_bits', ), (
+                    f'Get invalid attrs, `{attr}` can not be accepted, '
+                    f'excepted in {("quant_bits", )}')
+                qat_conv.mutable_attrs[attr] = value
+
         return qat_conv
 
     @property
@@ -373,12 +394,18 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
 
     def forward(self, input):
         import pdb; pdb.set_trace()
+        weight_fake_quant = self.weight_fake_quant
         groups = self.groups
         if self.groups == self.in_channels == self.out_channels:
             groups = input.size(1)
         weight, bias, padding = self.get_dynamic_params()
+        if 'quant_bits' in self.mutable_attrs:        
+            bit = self.mutable_attrs['quant_bits'].current_choice
+            dynamic_qlinear.update_qdype_qmin_qmax(self, bit)
+            if bit == 32:
+                weight_fake_quant = dynamic_qlinear.bypass            
         return F.relu(
-            self.conv_func(input, self.weight_fake_quant(weight), bias,
+            self.conv_func(input, weight_fake_quant(weight), bias,
                            self.stride, padding, self.dilation, groups))
 
     def to_static_op(self):

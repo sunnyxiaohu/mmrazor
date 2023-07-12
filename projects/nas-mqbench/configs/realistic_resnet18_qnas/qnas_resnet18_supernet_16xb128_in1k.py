@@ -46,6 +46,10 @@ qmodel = dict(
     forward_modes=('tensor', 'predict', 'loss'),
     quantizer=dict(
         type='mmrazor.MutableTensorRTQuantizer',
+        quant_bits_skipped_module_names=[
+            'backbone.conv1',
+            'head.fc'
+        ],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
@@ -98,8 +102,13 @@ model = dict(
     mutator=dict(type='mmrazor.NasMutator'))
 
 optim_wrapper = dict(
-    paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0.,
-        bypass_duplicate=True),
+    paramwise_cfg=dict(
+        # _delete_=True,
+        # bias_decay_mult=0.0, norm_decay_mult=0.0,
+        # custom_keys={
+        # 'architecture.qmodels': dict(lr_mult=0.1)},
+        bypass_duplicate=True
+    ),
     type='AmpOptimWrapper',)
 
 model_wrapper_cfg = dict(
@@ -110,10 +119,15 @@ model_wrapper_cfg = dict(
 train_cfg = dict(
     _delete_=True,
     type='mmrazor.QNASEpochBasedLoop',
-    max_epochs=100,
-    val_interval=,
+    max_epochs=_base_.max_epochs,
+    val_interval=5,
     qat_begin=81,
     freeze_bn_begin=-1)
 
 # total calibrate_sample_num = 256 * 8 * 2
 val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=4096)
+# Make sure the buffer such as min_val/max_val in saved checkpoint is the same
+# among different rank.
+default_hooks = dict(
+    checkpoint=dict(save_best=None),
+    sync=dict(type='SyncBuffersHook'))

@@ -197,7 +197,16 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
         elif hasattr(self.model, 'sample_kinds'):
             for kind in ['max', 'min']:  # self.model.sample_kinds:
                 if kind == 'max':
-                    self.model.mutator.set_max_choices()
+                    if self.model.current_stage == 'float':
+                        self.model.mutator.set_max_choices()
+                    else:
+                        def qmax(mutables):
+                            choice = mutables[0].max_choice
+                            if mutables[0].alias and 'quant_bits' in mutables[0].alias and choice == 32:
+                                choice = mutables[0].choices[-2]
+                            return choice
+                        self.model.mutator.set_choices(
+                            self.model.mutator.sample_choices(kind=qmax))
                     metrics = evaluate_once_func(kind=kind)
                     all_metrics.update(add_prefix(metrics, 'max_subnet'))
                 elif kind == 'min':

@@ -86,10 +86,10 @@ param_scheduler = [
         by_epoch=True,
         begin=warm_epochs,
         end=max_epochs,
-    )
+    ),
 ]
 
 # train, val, test setting
 train_cfg = dict(by_epoch=True, max_epochs=max_epochs, val_interval=5)
-val_cfg = dict(type='mmrazor.SubnetValLoop', calibrate_sample_num=32)
-test_cfg = dict(type='mmrazor.SubnetValLoop', calibrate_sample_num=32)
+val_cfg = dict(type='mmrazor.SubnetValLoop', calibrate_sample_num=4096)
+test_cfg = dict(type='mmrazor.SubnetValLoop', calibrate_sample_num=4096)

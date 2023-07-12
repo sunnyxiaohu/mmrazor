@@ -4,7 +4,6 @@ from typing import Optional, Sequence, Tuple
 
 from mmrazor.models.architectures.ops.mobilenet_series import MBBlock
 from ...mutables.base_mutable import BaseMutable
-from ...mutables.mutable_channel import MutableChannelContainer
 
 
 def mutate_conv_module(

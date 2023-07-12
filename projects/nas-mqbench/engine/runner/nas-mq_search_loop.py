@@ -193,9 +193,11 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         subnets = self.candidates.subnets
         for idx, (subnet, item) in enumerate(zip(subnets, self.candidates.data)):
             self.model.mutator.set_choices(subnet)
-            slice_weight = True if self.dump_subnet else False
+            if self.calibrate_sample_num > 0 and self.dump_subnet:
+                self.calibrate_bn_statistics(self.calibrate_dataloader,
+                                             self.calibrate_sample_num)
             export_subnet, sliced_model = \
-                export_fix_subnet(self.model, slice_weight=slice_weight)
+                export_fix_subnet(self.model, slice_weight=self.dump_subnet)
             export_subnet = convert_fix_subnet(export_subnet)
             export_item = {}
             export_item[str(export_subnet)] = item[str(subnet)]
