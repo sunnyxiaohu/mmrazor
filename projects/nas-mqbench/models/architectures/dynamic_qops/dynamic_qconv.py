@@ -1,3 +1,5 @@
+from typing import Dict
+
 import torch.nn as nn
 from typing import Callable
 import torch.nn.functional as F
@@ -8,6 +10,7 @@ except ImportError:
     from mmrazor.utils import get_package_placeholder, get_placeholder
     nnqat = get_package_placeholder('torch>=1.13')
 
+from mmrazor.models import BaseMutable
 from mmrazor.models.architectures.dynamic_ops import (BigNasConv2d,
                                                       DynamicConvMixin)
 
@@ -34,11 +37,11 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
         weight, bias, padding = self.get_dynamic_params()
         if 'quant_bits' in self.mutable_attrs:
             bit = self.mutable_attrs['quant_bits'].current_choice
-            dynamic_qlinear.update_qdype_qmin_qmax(self, bit)
+            dynamic_qlinear.update_qdype_qmin_qmax(self.weight_fake_quant, bit)
             if bit == 32:
-                weight_fake_quant = dynamic_qlinear.bypass             
-        return self.conv_func(input, weight_fake_quant(weight), bias, 
-                              self.stride, padding, self.dilation, groups)        
+                weight_fake_quant = dynamic_qlinear.bypass
+        return self.conv_func(input, weight_fake_quant(weight), bias,
+                              self.stride, padding, self.dilation, groups)
 
     @classmethod
     def from_float(cls, mod):
@@ -76,4 +79,5 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
 
     @classmethod
     def convert_from(cls, module):
-        return cls.from_float(mod)
+        return cls.from_float(module)
+

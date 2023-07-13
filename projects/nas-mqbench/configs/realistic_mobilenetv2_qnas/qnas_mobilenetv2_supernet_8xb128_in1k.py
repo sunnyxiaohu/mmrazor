@@ -1,5 +1,5 @@
 _base_ = [
-    '../realistic_resnet18_fp32/bignas_resnet18_supernet_16xb128_in1k.py',
+    '../realistic_mobilenetv2_fp32/bignas_mobilenetv2_supernet_8xb128_in1k.py',
 ]
 
 _base_.custom_imports.imports += [
@@ -17,7 +17,7 @@ supernet = dict(
     head=dict(
         type='DynamicLinearClsHead',
         num_classes=1000,
-        in_channels=560,
+        in_channels=1280,
         loss=dict(
             type='mmcls.LabelSmoothLoss',
             num_classes=1000,
@@ -50,7 +50,6 @@ qmodel = dict(
             'backbone.conv1',
             'head.fc'
         ],
-        # quant_bits=[4, 8, 32],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
@@ -60,7 +59,7 @@ qmodel = dict(
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_conv.BigNasConv2d',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_function.DynamicInputResizer',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_linear.DynamicLinear',
-                'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_norm.DynamicBatchNorm2d',                
+                'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_norm.DynamicBatchNorm2d',
             ],
             skipped_methods=[
                 'mmcls.models.heads.ClsHead._get_loss',
@@ -103,9 +102,10 @@ model = dict(
     mutator=dict(type='mmrazor.NasMutator'))
 
 optim_wrapper = dict(
+    optimizer=dict(lr=0.4),
     paramwise_cfg=dict(
-        # custom_keys={
-        # 'architecture.qmodels': dict(lr_mult=0.1)},
+        # _delete_=True,
+        # bias_decay_mult=0.0, norm_decay_mult=0.0,
         bypass_duplicate=True
     ),
     type='AmpOptimWrapper',)

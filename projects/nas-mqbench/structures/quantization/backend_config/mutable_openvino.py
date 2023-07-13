@@ -37,7 +37,7 @@ from mmengine.utils import import_modules_from_strings
 from mmrazor.models.architectures.dynamic_ops import (BigNasConv2d,
                                                       DynamicBatchNorm2d,
                                                       DynamicLinear)
-from mmrazor.structures.quantization.backend_config import get_tensorrt_backend_config
+from mmrazor.structures.quantization.backend_config import get_openvino_backend_config
 
 custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_fused'
 dynamic_fused = import_modules_from_strings(custom_imports)
@@ -345,8 +345,8 @@ def _get_dynamiclinear_configs(
     return linear_configs
 
 
-def get_mutabletensorrt_backend_config() -> BackendConfig:
-    """Return the `BackendConfig` for the TensorRT backend.
+def get_mutableopenvino_backend_config() -> BackendConfig:
+    """Return the `BackendConfig` for the openvino backend.
 
     Note:
         Learn more about BackendConfig, please refer to:
@@ -354,8 +354,8 @@ def get_mutabletensorrt_backend_config() -> BackendConfig:
     """
     # dtype configs
     weighted_op_qint8_dtype_config = DTypeConfig(
-        input_dtype=torch.qint8,
-        output_dtype=torch.qint8,
+        input_dtype=torch.quint8,
+        output_dtype=torch.quint8,
         weight_dtype=torch.qint8,
         bias_dtype=torch.float,
     )
@@ -366,21 +366,21 @@ def get_mutabletensorrt_backend_config() -> BackendConfig:
         weighted_op_qint8_dtype_config,
     ]
 
-    mutabletensorrt_config = get_tensorrt_backend_config()
-    mutabletensorrt_config.set_name('mutabletensorrt') \
+    mutableopenvino_config = get_openvino_backend_config()
+    mutableopenvino_config.set_name('mutableopenvino') \
         .set_backend_pattern_configs(_get_dynamicconv_configs(conv_dtype_configs)) \
         .set_backend_pattern_configs(_get_dynamiclinear_configs(linear_dtype_configs))
 
-    return mutabletensorrt_config
+    return mutableopenvino_config
 
 
-def get_mutabletensorrt_backend_config_dict():
-    """Return the `BackendConfig` for the TensorRT backend in dictionary
+def get_mutableopenvino_backend_config_dict():
+    """Return the `BackendConfig` for the openvino backend in dictionary
     form."""
-    return get_mutabletensorrt_backend_config().to_dict()
+    return get_mutableopenvino_backend_config().to_dict()
 
 
 __all__ = [
-    'get_mutabletensorrt_backend_config',
-    'get_mutabletensorrt_backend_config_dict',
+    'get_mutableopenvino_backend_config',
+    'get_mutableopenvino_backend_config_dict',
 ]

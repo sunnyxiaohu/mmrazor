@@ -2,13 +2,17 @@ _base_ = [
     '../realistic_resnet18_fp32/bignas_resnet18_subnet_8xb256_in1k.py'
 ]
 
+_base_.custom_imports.imports += [
+    'projects.nas-mqbench.models.quantizers.mutable_quantizer',
+]
+
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True),
-    a_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True),
+    a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
 )
 
 _base_.model.init_cfg = dict(
@@ -24,7 +28,11 @@ model = dict(
     float_checkpoint=None,
     forward_modes=('tensor', 'predict', 'loss'),
     quantizer=dict(
-        type='mmrazor.TensorRTQuantizer',
+        type='mmrazor.MutableOpenVINOQuantizer',
+        # quant_bits_skipped_module_names=[
+        #     'backbone.conv1',
+        #     'head.fc'
+        # ],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
@@ -34,22 +42,36 @@ model = dict(
             ])))
 
 optim_wrapper = dict(
-    optimizer=dict(lr=0.008),
+    optimizer=dict(lr=0.016),
     paramwise_cfg=dict(
         # custom_keys={
         # 'qmodels': dict(lr_mult=0.1)},
         bypass_duplicate=True
     ))
 
-max_epochs = 20 # _base_.max_epochs
+max_epochs = 20
+warm_epochs = 1
 # learning policy
-param_scheduler = dict(
-    _delete_=True,
-    type='CosineAnnealingLR',
-    T_max=max_epochs,
-    by_epoch=True,
-    begin=0,
-    end=max_epochs)
+param_scheduler = [
+    # warm up learning rate scheduler
+    dict(
+        type='LinearLR',
+        start_factor=0.25,
+        by_epoch=True,
+        begin=0,
+        # about 2500 iterations for ImageNet-1k
+        end=warm_epochs,
+        # update by iter
+        convert_to_iter_based=True),
+    # main learning rate scheduler
+    dict(
+        type='CosineAnnealingLR',
+        T_max=max_epochs-warm_epochs,
+        by_epoch=True,
+        begin=warm_epochs,
+        end=max_epochs,
+    ),
+]
 
 model_wrapper_cfg = dict(
     _delete_=True,

@@ -1,9 +1,9 @@
 _base_ = [
-    './qnas_resnet18_supernet_16xb128_in1k.py',
+    './qnas_mobilenetv2_supernet_8xb128_in1k.py',
 ]
 
 optim_wrapper = dict(
-    optimizer=dict(lr=0.016),
+    optimizer=dict(lr=0.02),
     paramwise_cfg=dict(
         # custom_keys={
         # 'architecture.qmodels': dict(lr_mult=0.1)},

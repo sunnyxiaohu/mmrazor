@@ -1,3 +1,8 @@
+from typing import Dict
+
+import copy
+from contextlib import contextmanager
+
 import math
 import torch
 import torch.nn as nn
@@ -12,13 +17,14 @@ from typing import Callable
 try:
     import torch.ao.nn.intrinsic as nni
     import torch.nn.intrinsic.qat as nniqat
-    from torch.nn.intrinsic.qat.modules.conv_fused import _BN_CLASS_MAP    
+    from torch.nn.intrinsic.qat.modules.conv_fused import _BN_CLASS_MAP
 except ImportError:
     from mmrazor.utils import get_package_placeholder, get_placeholder
     nni = get_package_placeholder('torch>=1.13')
     nniqat = get_package_placeholder('torch>=1.13')
     _BN_CLASS_MAP = {}
 
+from mmrazor.models import BaseMutable
 from mmrazor.models.architectures.dynamic_ops import (DynamicConvMixin,
                                                       DynamicMixin,
                                                       BigNasConv2d,
@@ -32,9 +38,15 @@ custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic
 dynamic_qlinear = import_modules_from_strings(custom_imports)
 
 
-_BN_CLASS_MAP[1] = DynamicBatchNorm1d
-_BN_CLASS_MAP[2] =  DynamicBatchNorm2d
-_BN_CLASS_MAP[3] =  DynamicBatchNorm3d
+@contextmanager
+def substitute_bn_class_map():
+    org_bn_class_map = copy.deepcopy(_BN_CLASS_MAP)
+    _BN_CLASS_MAP[1] = DynamicBatchNorm1d
+    _BN_CLASS_MAP[2] = DynamicBatchNorm2d
+    _BN_CLASS_MAP[3] = DynamicBatchNorm3d
+    yield
+    _BN_CLASS_MAP.clear()
+    _BN_CLASS_MAP.update(org_bn_class_map)
 
 
 def traverse_children(module: nn.Module) -> None:
@@ -231,7 +243,8 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
     accepted_mutable_attrs = {'in_channels', 'out_channels', 'quant_bits'}
 
     def __init__(self, *args, **kwarg):
-        super().__init__(*args, **kwarg)
+        with substitute_bn_class_map():
+            super().__init__(*args, **kwarg)
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
 
     def _forward_approximate(self, input):
@@ -240,9 +253,9 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         """
         # import pdb; pdb.set_trace()
         weight_fake_quant = self.weight_fake_quant
-        if 'quant_bits' in self.mutable_attrs:        
+        if 'quant_bits' in self.mutable_attrs:
             bit = self.mutable_attrs['quant_bits'].current_choice
-            dynamic_qlinear.update_qdype_qmin_qmax(self, bit)
+            dynamic_qlinear.update_qdype_qmin_qmax(self.weight_fake_quant, bit)
             if bit == 32:
                 weight_fake_quant = dynamic_qlinear.bypass
 
@@ -265,8 +278,8 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
             zero_bias = torch.zeros_like(bias, dtype=input.dtype)
         else:
             zero_bias = torch.zeros(weight.size(0), device=scaled_weight.device, dtype=input.dtype)
-        conv = self.conv_func(input, scaled_weight, zero_bias, 
-                              self.stride, padding, self.dilation, groups)          
+        conv = self.conv_func(input, scaled_weight, zero_bias,
+                              self.stride, padding, self.dilation, groups)
         conv_orig = conv / scale_factor.reshape(bias_shape)
         if self.bias is not None:
             conv_orig = conv_orig + bias.reshape(bias_shape)
@@ -316,8 +329,11 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
     def convert_from(cls, module):
         return cls.from_float(module)
 
-    def to_static_op(self):
+    def to_static_op(self):  
         mod = self.to_float()
+        for attr, value in self.mutable_attrs.items():
+            if attr in mod.accepted_mutable_attrs:
+                mod.register_mutable_attr(attr, value)
         if isinstance(mod, DynamicMixin):
             mod = mod.to_static_op()
         else:
@@ -341,6 +357,17 @@ class DynamicQConvBnReLU2d(DynamicQConvBn2d):
     @classmethod
     def from_float(cls, mod):
         return super(DynamicQConvBnReLU2d, cls).from_float(mod)
+
+    def to_static_op(self):
+        mod = self.to_float()
+        for attr, value in self.mutable_attrs.items():
+            if attr in mod[0].accepted_mutable_attrs:
+                mod[0].register_mutable_attr(attr, value)        
+        if isinstance(mod, DynamicMixin):
+            mod = mod.to_static_op()
+        else:
+            traverse_children(mod._modules)
+        return mod
 
 class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
 
@@ -399,17 +426,20 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
         if self.groups == self.in_channels == self.out_channels:
             groups = input.size(1)
         weight, bias, padding = self.get_dynamic_params()
-        if 'quant_bits' in self.mutable_attrs:        
+        if 'quant_bits' in self.mutable_attrs:
             bit = self.mutable_attrs['quant_bits'].current_choice
-            dynamic_qlinear.update_qdype_qmin_qmax(self, bit)
+            dynamic_qlinear.update_qdype_qmin_qmax(self.weight_fake_quant, bit)
             if bit == 32:
-                weight_fake_quant = dynamic_qlinear.bypass            
+                weight_fake_quant = dynamic_qlinear.bypass
         return F.relu(
             self.conv_func(input, weight_fake_quant(weight), bias,
                            self.stride, padding, self.dilation, groups))
 
     def to_static_op(self):
         mod = self.to_float()
+        for attr, value in self.mutable_attrs.items():
+            if attr in mod[0].accepted_mutable_attrs:
+                mod[0].register_mutable_attr(attr, value)        
         if isinstance(mod, DynamicMixin):
             mod = mod.to_static_op()
         else:

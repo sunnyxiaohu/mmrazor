@@ -16,7 +16,7 @@ train_cfg = dict(
     calibrate_dataloader=_base_.train_dataloader,
     calibrate_sample_num=4096,
     constraints_range=dict(flops=(0., 7000.)),
-    mq_init_candidates='work_dirs/ptq_base_bignas_resnet18_8xb256_in1k/search_epoch_1.pkl',
+    mq_init_candidates='work_dirs/bignas_resnet18_per-tensor_w-minmax_a-minmax_8xb256_in1k_calib32xb16/search_epoch_1.pkl',
     score_indicator='per-tensor_qnas',
     score_key='accuracy/top1')
 

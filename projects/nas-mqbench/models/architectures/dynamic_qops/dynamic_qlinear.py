@@ -1,3 +1,5 @@
+from typing import Dict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,15 +12,17 @@ except ImportError:
     # nniqat = get_package_placeholder('torch>=1.13')
     nnqat = get_package_placeholder('torch>=1.13')
 
+from mmrazor.models import BaseMutable
 from mmrazor.models.architectures.dynamic_ops import (DynamicLinear,
                                                       DynamicLinearMixin)
 
-def update_qdype_qmin_qmax(self, bit):
+
+def update_qdype_qmin_qmax(weight_fake_quant, bit):
     # TODO: calc qdype according quant_min, quant_max (rely on backend support)
     # reduce_range is False by default.
-    qdtype = self.weight_fake_quant.dtype
-    quant_min = self.weight_fake_quant.quant_min
-    quant_max = self.weight_fake_quant.quant_max
+    qdtype = weight_fake_quant.dtype
+    quant_min = weight_fake_quant.quant_min
+    quant_max = weight_fake_quant.quant_max
 
     is_symmetric_range = False
     if abs(quant_min) == abs(quant_max):
@@ -33,11 +37,11 @@ def update_qdype_qmin_qmax(self, bit):
         else:
             quant_min = -2**(bit - 1)
     else:
-        raise ValueError(f'Only support qint8 and quint8, got {dtype}')
-    self.weight_fake_quant.quant_max = \
-        self.weight_fake_quant.activation_post_process.quant_max = quant_max
-    self.weight_fake_quant.quant_min = \
-        self.weight_fake_quant.activation_post_process.quant_min = quant_min
+        raise ValueError(f'Only support qint8 and quint8, got {qdtype}')
+    weight_fake_quant.quant_max = \
+        weight_fake_quant.activation_post_process.quant_max = quant_max
+    weight_fake_quant.quant_min = \
+        weight_fake_quant.activation_post_process.quant_min = quant_min
 
 def bypass(x):
     return x
@@ -57,10 +61,10 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
         weight, bias = self.get_dynamic_params()
         if 'quant_bits' in self.mutable_attrs:
             bit = self.mutable_attrs['quant_bits'].current_choice
-            update_qdype_qmin_qmax(self, bit)
+            update_qdype_qmin_qmax(self.weight_fake_quant, bit)
             if bit == 32:
                 weight_fake_quant = bypass
-        return F.linear(input, self.weight_fake_quant(weight), bias)
+        return F.linear(input, weight_fake_quant(weight), bias)
 
     @classmethod
     def from_float(cls, mod):
@@ -91,4 +95,5 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
 
     @classmethod
     def convert_from(cls, module):
-        return cls.from_float(mod)
+        return cls.from_float(module)
+

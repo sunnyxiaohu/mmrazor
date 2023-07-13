@@ -23,7 +23,7 @@ global_qconfig = dict(
     w_qscheme=dict(
         qdtype='qint8', bit=8, is_symmetry=True),
     a_qscheme=dict(
-        qdtype='qint8', bit=8, is_symmetry=True, averaging_constant=0.1),
+        qdtype='quint8', bit=8, is_symmetry=True, averaging_constant=0.1),
 )
 _base_.model.init_cfg=dict(
         type='Pretrained',
@@ -37,7 +37,7 @@ model = dict(
     float_checkpoint=None,
     forward_modes=('tensor', 'predict'),
     quantizer=dict(
-        type='mmrazor.TensorRTQuantizer',
+        type='mmrazor.OpenVINOQuantizer',
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',

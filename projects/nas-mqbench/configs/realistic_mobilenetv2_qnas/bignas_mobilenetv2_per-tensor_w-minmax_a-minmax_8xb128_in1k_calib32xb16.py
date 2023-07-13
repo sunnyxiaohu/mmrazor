@@ -1,5 +1,9 @@
 _base_ = [
-    './ptq_base_bignas_resnet18_8xb256_in1k.py'
+    '../realistic_mobilenetv2_fp32/bignas_mobilenetv2_supernet_8xb128_in1k.py'
+]
+
+_base_.custom_imports.imports += [
+        'projects.nas-mqbench.engine.runner.nas-mq_search_loop'
 ]
 
 calibrate_dataloader = dict(
@@ -38,10 +42,23 @@ mq_model = dict(
 
 mq_model_wrapper_cfg = dict(type='mmrazor.MMArchitectureQuantDDP', )
 
+
 train_cfg = dict(
+    _delete_=True,
     mq_model=mq_model,
     mq_model_wrapper_cfg=mq_model_wrapper_cfg,
     mq_calibrate_dataloader=calibrate_dataloader,
     mq_calibrate_steps=32,
-    mq_init_candidates='work_dirs/ptq_base_bignas_resnet18_8xb256_in1k/search_epoch_1.pkl',
-    score_indicator='per-tensor_w-minmax_a-minmax')
+    mq_init_candidates='work_dirs/bignas_mobilenetv2_per-tensor_w-minmax_a-minmax_8xb256_in1k_calib32xb16/search_epoch_5.pkl',    
+    type='mmrazor.NASMQSearchLoop',
+    dataloader=_base_.val_dataloader,
+    evaluator=_base_.val_evaluator,
+    max_epochs=5,
+    num_candidates=20,
+    calibrate_dataloader=_base_.train_dataloader,
+    calibrate_sample_num=4096,
+    constraints_range=dict(flops=(0., 7000.)),
+    score_indicator='score',
+    score_key='accuracy/top1')
+
+val_cfg = dict(_delete_=True)
