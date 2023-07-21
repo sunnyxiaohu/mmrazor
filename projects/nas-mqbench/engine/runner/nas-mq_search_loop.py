@@ -121,7 +121,8 @@ class NASMQSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         else:
             self.mq_calibrate_dataloader = mq_calibrate_dataloader
         self.score_indicator = score_indicator
-        Candidates._indicators = tuple(set(Candidates._indicators + (score_indicator, )))
+        Candidates._indicators = tuple(
+            set(Candidates._indicators + (score_indicator, ) + tuple(constraints_range.keys())))
         self.num_candidates = num_candidates
         self.constraints_range = constraints_range
         self.calibrate_sample_num = calibrate_sample_num

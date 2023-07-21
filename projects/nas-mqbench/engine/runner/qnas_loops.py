@@ -105,7 +105,7 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
     @property
     def is_first_batch(self):
         return (self.qat_begin > 0
-                    and self._epoch + 1 >= self.qat_begin
+                    and self._epoch + 1 == self.qat_begin
                         and self._is_first_batch)
 
     def run_epoch(self) -> None:

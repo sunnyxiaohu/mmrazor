@@ -26,3 +26,5 @@ _base_.param_scheduler[0].end = warm_epochs
 _base_.param_scheduler[1].T_max = max_epochs - warm_epochs
 _base_.param_scheduler[1].begin = warm_epochs
 _base_.param_scheduler[1].end = max_epochs
+
+train_dataloader = dict(batch_size=64)

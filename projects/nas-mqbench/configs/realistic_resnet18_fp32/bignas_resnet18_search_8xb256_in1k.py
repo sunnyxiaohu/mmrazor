@@ -1,4 +1,4 @@
-_base_ = ['./bignas_resnet18_supernet_16xb128_in1k.py']
+_base_ = ['./bignas_resnet18_supernet_8xb256_in1k.py']
 
 train_cfg = dict(
     _delete_=True,

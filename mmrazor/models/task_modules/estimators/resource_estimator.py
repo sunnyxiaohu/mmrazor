@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from typing import Dict, Optional, Tuple, Union
 
+import torch
 import torch.nn
 
 from mmrazor.registry import TASK_UTILS
@@ -92,6 +93,7 @@ class ResourceEstimator(BaseEstimator):
             self.flops_params_cfg = dict()
         self.latency_cfg = latency_cfg if latency_cfg else dict()
 
+    @torch.no_grad()
     def estimate(self,
                  model: torch.nn.Module,
                  flops_params_cfg: dict = None,

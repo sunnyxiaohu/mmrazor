@@ -1,4 +1,4 @@
-# _base_ = './qnas_resnet18_supernet_16xb128_in1k.py'
+# _base_ = './qnas_resnet18_supernet_8xb256_in1k.py'
 
 # model = dict(
 #     _delete_=True,

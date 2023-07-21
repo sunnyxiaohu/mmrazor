@@ -29,10 +29,10 @@ model = dict(
     forward_modes=('tensor', 'predict', 'loss'),
     quantizer=dict(
         type='mmrazor.MutableOpenVINOQuantizer',
-        # quant_bits_skipped_module_names=[
-        #     'backbone.conv1',
-        #     'head.fc'
-        # ],
+        quant_bits_skipped_module_names=[
+            'backbone.conv1',
+            'head.fc'
+        ],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
@@ -42,14 +42,14 @@ model = dict(
             ])))
 
 optim_wrapper = dict(
-    optimizer=dict(lr=0.016),
+    optimizer=dict(lr=0.08),
     paramwise_cfg=dict(
         # custom_keys={
-        # 'qmodels': dict(lr_mult=0.1)},
+        # 'qmodels': dict(decay_mult=5)},
         bypass_duplicate=True
     ))
 
-max_epochs = 20
+max_epochs = 100
 warm_epochs = 1
 # learning policy
 param_scheduler = [

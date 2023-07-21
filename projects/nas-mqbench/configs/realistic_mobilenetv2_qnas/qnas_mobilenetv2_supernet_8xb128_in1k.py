@@ -130,3 +130,4 @@ val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=4
 default_hooks = dict(
     checkpoint=dict(save_best=None),
     sync=dict(type='SyncBuffersHook'))
+

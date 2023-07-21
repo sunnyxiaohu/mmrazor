@@ -1,5 +1,5 @@
 _base_ = [
-    '../realistic_resnet18_fp32/bignas_resnet18_supernet_16xb128_in1k.py'
+    '../realistic_resnet18_fp32/bignas_resnet18_supernet_8xb256_in1k.py'
 ]
 
 _base_.custom_imports.imports += [
@@ -66,5 +66,5 @@ model = dict(
     init_cfg=dict(
         type='Pretrained',
         checkpoint=  # noqa: E251
-        'work_dirs/qnas_resnet18_supernet_16xb128_in1k/epoch_100.pth',  # noqa: E501
+        'work_dirs/qnas_resnet18_supernet_8xb256_in1k/epoch_100.pth',  # noqa: E501
         prefix='architecture.'))

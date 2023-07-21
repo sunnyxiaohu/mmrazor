@@ -101,8 +101,10 @@ class MMArchitectureQuant(BaseAlgorithm):
             if isinstance(module, (MinMaxObserver, PerChannelMinMaxObserver)):
                 module.reset_min_max_vals()
             elif isinstance(module, FakeQuantizeBase):
-                module.scale.data = torch.ones_like(module.scale)
-                module.zero_point.data = torch.zeros_like(module.zero_point)
+                if hasattr(module, 'scale'):
+                    module.scale.data = torch.ones_like(module.scale)
+                if hasattr(module, 'zero_point'):
+                    module.zero_point.data = torch.zeros_like(module.zero_point)
 
     def sync_qparams(self, src_mode: str):
         """Sync all quantize parameters in different `forward_modes`. We could

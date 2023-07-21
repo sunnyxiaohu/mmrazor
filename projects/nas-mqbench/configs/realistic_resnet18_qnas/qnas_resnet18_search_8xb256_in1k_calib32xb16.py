@@ -1,5 +1,5 @@
 _base_ = [
-    './qnas_resnet18_supernet_16xb128_in1k.py'
+    './qnas_resnet18_supernet_8xb256_in1k.py'
 ]
 
 _base_.custom_imports.imports += [

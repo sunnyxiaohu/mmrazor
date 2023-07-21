@@ -1,11 +1,12 @@
 _base_ = [
-    '../realistic_resnet18_fp32/bignas_resnet18_supernet_16xb128_in1k.py',
+    '../realistic_resnet18_fp32/bignas_resnet18_supernet_8xb256_in1k.py',
 ]
 
 _base_.custom_imports.imports += [
     'projects.nas-mqbench.models.algorithms.qnas',
     'projects.nas-mqbench.models.quantizers.mutable_quantizer',
     'projects.nas-mqbench.engine.runner.qnas_loops',
+    'projects.nas-mqbench.models.fake_quants.batch_lsq',
 ]
 
 supernet = dict(
@@ -31,9 +32,11 @@ supernet = dict(
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),
-    a_observer=dict(type='mmrazor.LSQObserver'),
+    # a_observer=dict(type='mmrazor.LSQObserver'),
+    a_observer=dict(type='mmrazor.MinMaxObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
+    # a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
+    a_fake_quant=dict(type='mmrazor.BatchLearnableFakeQuantize', zero_point_trainable=True, extreme_estimator=0),
     w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True),
     a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
 )

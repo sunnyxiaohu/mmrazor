@@ -90,6 +90,6 @@ default_hooks = dict(
     checkpoint=dict(
         type='CheckpointHook', interval=1, max_keep_ckpts=1, save_best=None))
 
-train_dataloader = dict(batch_size=128, pin_memory=True)
+train_dataloader = dict(batch_size=256, pin_memory=True)
 # params_modes=('org', 'fuse_conv_bn', 'cle')
 val_cfg = dict(type='SubnetValAnalysisLoop', params_modes=('org', ), topk_params=10, calibrate_sample_num=4096)
