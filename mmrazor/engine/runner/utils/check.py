@@ -3,7 +3,7 @@ from typing import Any, Dict, Tuple
 
 import torch
 
-from mmrazor.models import ResourceEstimator
+from mmrazor.models import BaseAlgorithm, ResourceEstimator
 from mmrazor.structures import export_fix_subnet
 from mmrazor.utils import SupportRandomSubnet
 
@@ -29,15 +29,18 @@ def check_subnet_resources(
     if constraints_range is None:
         return True, dict()
 
-    assert hasattr(model, 'mutator') and hasattr(model, 'architecture')
+    assert hasattr(model, 'mutator') and isinstance(model, BaseAlgorithm)
     model.mutator.set_choices(subnet)
-    _, sliced_model = export_fix_subnet(model, slice_weight=True)
+    # Support nested algorithm.
+    model_to_check = model
+    while(isinstance(model_to_check, BaseAlgorithm)):
+        model_to_check = model_to_check.architecture
+    _, sliced_model = export_fix_subnet(model_to_check, slice_weight=True)
 
-    model_to_check = sliced_model.architecture  # type: ignore
-    if isinstance(model_to_check, BaseDetector):
-        results = estimator.estimate(model=model_to_check.backbone)
+    if isinstance(sliced_model, BaseDetector):
+        results = estimator.estimate(model=sliced_model.backbone)
     else:
-        results = estimator.estimate(model=model_to_check)
+        results = estimator.estimate(model=sliced_model)
 
     for k, v in constraints_range.items():
         if not isinstance(v, (list, tuple)):

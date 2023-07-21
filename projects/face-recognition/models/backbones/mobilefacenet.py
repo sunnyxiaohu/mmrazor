@@ -283,7 +283,9 @@ class MobileFaceNet(BaseBackbone):
         for func in self.layers:
             x = func(x)
         with torch.cuda.amp.autocast(enabled=False):
-            x = self.conv_sep(x.float())
+            if self.fp16:  # HeronRT does not support `Cast` operator.
+                x = x.float()
+            x = self.conv_sep(x)
             x = self.features(x)
         return (x, )
 

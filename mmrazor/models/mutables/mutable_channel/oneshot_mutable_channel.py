@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import random
 from typing import List, Union
 
 from .sequential_mutable_channel import SquentialMutableChannel
@@ -40,3 +41,18 @@ class OneShotMutableChannel(SquentialMutableChannel):
         SquentialMutableChannel.current_choice.fset(  # type: ignore
             self,  # type: ignore
             choice)  # type: ignore
+
+    def sample_choice(self) -> Union[int, float]:
+        """Sample a valid choice."""
+        rand_idx = random.randint(0, len(self.candidate_choices) - 1)
+        return self.candidate_choices[rand_idx]
+
+    @property
+    def min_choice(self) -> Union[int, float]:
+        """Get Minimal choice."""
+        return self.candidate_choices[0]
+
+    @property
+    def max_choice(self) -> Union[int, float]:
+        """Get Maximal choice."""
+        return self.candidate_choices[-1]

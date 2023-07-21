@@ -153,12 +153,12 @@ class OVResourceEstimator(ResourceEstimator):
                     f'Floating inference: {self.ovmodel.floating_inference()}')
                 logger.info(
                     f'Fixed inference: {self.ovmodel.fixed_inference()}')
-            ov_metrics = [self.ovmodel.sim_ppa()]
+            ov_metrics = self.ovmodel.sim_ppa()
             self.ovmodel.reset_model()
         else:
-            ov_metrics = [None]
-        broadcast_object_list(ov_metrics)
-        resource_metrics.update(ov_metrics[0])
+            ov_metrics = dict()
+        # broadcast_object_list(ov_metrics)
+        resource_metrics.update(ov_metrics)
         return resource_metrics
 
 

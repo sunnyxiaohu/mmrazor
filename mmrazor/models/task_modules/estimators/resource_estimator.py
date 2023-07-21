@@ -1,6 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from typing import Dict, Optional, Tuple, Union
 
+import torch
 import torch.nn
 from torch.utils.data import DataLoader
 
@@ -93,6 +94,7 @@ class ResourceEstimator(BaseEstimator):
         self.latency_cfg = latency_cfg if latency_cfg else dict()
         self.dataloader = dataloader
 
+    @torch.no_grad()
     def estimate(self,
                  model: torch.nn.Module,
                  flops_params_cfg: dict = None,
@@ -134,6 +136,7 @@ class ResourceEstimator(BaseEstimator):
             latency_cfg = self.latency_cfg
 
         model.eval()
+
         flops, params = get_model_flops_params(model, **flops_params_cfg)
         if measure_latency:
             latency = get_model_latency(model, **latency_cfg)

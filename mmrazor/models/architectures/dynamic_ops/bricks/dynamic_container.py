@@ -27,7 +27,7 @@ class DynamicSequential(Sequential, DynamicMixin):
     def mutable_depth(self):
         """Mutable depth."""
         assert hasattr(self, 'mutable_attrs')
-        return self.mutable_attrs.get('depth', None)
+        return self.mutable_attrs['depth']
 
     def register_mutable_attr(self: Sequential, attr: str,
                               mutable: BaseMutable):
@@ -57,7 +57,7 @@ class DynamicSequential(Sequential, DynamicMixin):
         """Convert dynamic Sequential to static one."""
         self.check_if_mutables_fixed()
 
-        if self.mutable_depth is None:
+        if 'depth' not in self.mutable_attrs:
             fixed_depth = len(self)
         else:
             fixed_depth = self.get_current_choice(self.mutable_depth)
@@ -78,7 +78,8 @@ class DynamicSequential(Sequential, DynamicMixin):
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward of Dynamic Sequential."""
-        if self.mutable_depth is None:
+
+        if 'depth' not in self.mutable_attrs:
             return self(x)
 
         current_depth = self.get_current_choice(self.mutable_depth)
