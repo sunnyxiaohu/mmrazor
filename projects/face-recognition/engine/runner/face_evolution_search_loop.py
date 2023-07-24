@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from mmengine import fileio
 from mmengine.dist import broadcast_object_list, all_gather_object
 from mmengine.evaluator import Evaluator
@@ -180,6 +181,7 @@ class FaceEvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
             4. Implement Mutation and crossover, generate better candidates.
         """
         self.sample_candidates()
+
         self.update_candidates_scores()
 
         scores_before = self.top_k_candidates.resources(key_indicator=self.score_indicator)
@@ -207,44 +209,6 @@ class FaceEvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
 
             self.candidates = self.candidates_mutator_crossover[:self.num_candidates]
 
-
-    # def sample_candidates(self) -> None:
-    #     """Update candidate pool contains specified number of candicates."""
-    #     candidates_resources = []
-    #     init_candidates = len(self.candidates)
-    #     idx = 0
-    #     print_feq = 50
-    #     if self.runner.rank == 0:
-    #         while len(self.candidates) < self.num_candidates:
-    #             idx += 1
-    #             if idx == 1:
-    #                 candidate = self.model.mutator.sample_choices('max')
-    #             elif idx == 2:
-    #                 candidate = self.model.mutator.sample_choices('min')
-    #             else:
-    #                 candidate = self.model.mutator.sample_choices()
-    #             is_pass, result = self._check_constraints(
-    #                 random_subnet=candidate)
-    #             if is_pass:
-    #                 self.candidates.append(candidate)
-    #                 candidates_resources.append(result)
-    #             if idx % print_feq == 0:
-    #                 self.runner.logger.info(
-    #                     f'Current [sampleidx/candidates]:[{idx}/{len(self.candidates)}]')
-    #         self.candidates = Candidates(self.candidates.data)
-    #     else:
-    #         self.candidates = Candidates([dict(a=0)] * self.num_candidates)
-
-    #     if len(candidates_resources) > 0:
-    #         self.candidates.update_resources(
-    #             candidates_resources,
-    #             start=len(self.candidates.data) - len(candidates_resources))
-    #         assert init_candidates + len(
-    #             candidates_resources) == self.num_candidates
-
-    #     # broadcast candidates to val with multi-GPUs.
-    #     broadcast_object_list(self.candidates.data)
-
     def sample_candidates(self) -> None:
         """Update candidate pool contains specified number of candicates."""
         candidates_resources = []
@@ -255,6 +219,9 @@ class FaceEvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
             'Assert zero-divided for distributed sampling.'
         num_candidates_per_rank = (self.num_candidates - len(self.candidates)) // self.runner.world_size
         self.runner.logger.info('Samping candidates may take several minites, pls wait...')
+        # Simulate diff_rank_seed
+        for i in range(self.runner.rank):
+            self.model.mutator.sample_choices()
         while len(init_candidates) < num_candidates_per_rank:
             idx += 1
             if idx == 1 and self.runner.rank == 0:
@@ -263,14 +230,22 @@ class FaceEvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                 candidate = self.model.mutator.sample_choices('min')
             else:
                 candidate = self.model.mutator.sample_choices()
+
             is_pass, result = self._check_constraints(
                 random_subnet=candidate)
             if is_pass:
                 init_candidates.append(candidate)
                 candidates_resources.append(result)
             if idx % print_feq == 0:
+                candidate_nums = len(init_candidates)
+                if dist.is_initialized() and dist.is_available():
+                    candicate_tensor = torch.tensor(
+                        [candidate_nums], device=self.runner.model.device)
+                    dist.all_reduce(
+                        candicate_tensor, dist.ReduceOp.SUM, async_op=False)
+                    candidate_nums = candicate_tensor.item()
                 self.runner.logger.info(
-                    f'Current [sampleidx/candidates]:[{idx}/{len(init_candidates)}]')
+                    f'Current [sampleidx/candidates]:[{idx*self.runner.world_size}/{candidate_nums}]')
         init_candidates = Candidates(init_candidates)
         init_candidates.update_resources(candidates_resources)
         init_candidates_all = all_gather_object(init_candidates)
@@ -421,7 +396,6 @@ class FaceEvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
             metrics = self.predictor.predict(self.model)
         else:
             if self.calibrate_sample_num > 0:
-                # import pdb; pdb.set_trace()
                 self.calibrate_bn_statistics(self.calibrate_dataloader,
                                              self.calibrate_sample_num)
             self.runner.model.eval()

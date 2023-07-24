@@ -46,4 +46,3 @@ _base_.model.architecture.input_resizer_cfg=None
 _base_.model.architecture.backbone.fp16=False
 _base_.model_wrapper_cfg.exclude_module=None
 
-randomness = dict(diff_rank_seed=True)
