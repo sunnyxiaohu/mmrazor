@@ -6,7 +6,7 @@ _base_.custom_imports.imports += [
     'projects.nas-mqbench.models.algorithms.qnas',
     'projects.nas-mqbench.models.quantizers.mutable_quantizer',
     'projects.nas-mqbench.engine.runner.qnas_loops',
-    'projects.nas-mqbench.models.fake_quants.batch_lsq',
+    'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_lsq',
 ]
 
 supernet = dict(
@@ -32,13 +32,14 @@ supernet = dict(
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),
-    # a_observer=dict(type='mmrazor.LSQObserver'),
-    a_observer=dict(type='mmrazor.MinMaxObserver'),
-    w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
+    a_observer=dict(type='mmrazor.LSQObserver'),
+    # a_observer=dict(type='mmrazor.MinMaxObserver'),
+    w_fake_quant=dict(type='mmrazor.DynamicLearnableFakeQuantize'),
     # a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    a_fake_quant=dict(type='mmrazor.BatchLearnableFakeQuantize', zero_point_trainable=True, extreme_estimator=0),
+    a_fake_quant=dict(type='mmrazor.DynamicLearnableFakeQuantize'),
     w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True),
     a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
+    # a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
 qmodel = dict(
@@ -63,7 +64,7 @@ qmodel = dict(
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_conv.BigNasConv2d',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_function.DynamicInputResizer',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_linear.DynamicLinear',
-                'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_norm.DynamicBatchNorm2d',                
+                'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_norm.DynamicBatchNorm2d',
             ],
             skipped_methods=[
                 'mmcls.models.heads.ClsHead._get_loss',
