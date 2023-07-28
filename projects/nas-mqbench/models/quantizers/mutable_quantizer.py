@@ -150,7 +150,7 @@ def wrap_depth_scope(prepared_model, dynamic_seq_names, node_name_to_scope, inpl
                 if node.op == 'call_module' or node.op == 'call_function':
                     for maybe_act in reversed(node.args):
                         if maybe_act.op == 'call_module' and isinstance(
-                                _get_attrs(prepared_model, maybe_act.target), dynamic_lsq.DynamicLearnableFakeQuantize):
+                                _get_attrs(prepared_model, maybe_act.target), LearnableFakeQuantize):
                             # print(maybe_act.name, depth_scope)
                             pos = len(dynamic_seq_names[(name, depth_mutable)][depth_scope]) - 1
                             if maybe_act not in dynamic_seq_names[(name, depth_mutable)][depth_scope]:

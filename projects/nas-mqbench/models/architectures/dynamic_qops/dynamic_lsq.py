@@ -117,6 +117,15 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         if quant_bits == self.FLOAT_BITS:
             return X
         # import pdb; pdb.set_trace()
+        org_static_enabled = self.static_enabled[0]
+        if index is not None:
+            local_scale = self.scale.data[:, index]
+        else:
+            local_scale = self.scale.data
+        # Check whether is initialized or not. We choose scale as indicator
+        # since zero_point may also be zero after initialized.
+        if torch.equal(local_scale, torch.ones_like(local_scale)):
+            self.static_enabled[0] = 1
         if self.static_enabled[0] == 1:
             self.activation_post_process(X.detach())
             _scale, _zero_point = \
@@ -139,6 +148,8 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             self.activation_post_process.reset_min_max_vals()                
         else:
             self.scale.data.clamp_(min=self.eps.item())
+
+        self.static_enabled[0] = org_static_enabled
 
         if self.fake_quant_enabled[0] == 1:
             scale = self.scale[:, index] if index is not None else self.scale
