@@ -96,9 +96,9 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         else:
             # TODO: handle 
             if abs(self.quant_min) == abs(self.quant_max):
-                quant_bits = int(math.sqrt(self.quant_max - self.quant_min + 2))
+                quant_bits = int(math.log(self.quant_max - self.quant_min + 2, 2))
             else:
-                quant_bits = int(math.sqrt(self.quant_max - self.quant_min + 1))
+                quant_bits = int(math.log(self.quant_max - self.quant_min + 1, 2))
             index = None                
         return quant_bits, index
 
@@ -213,3 +213,74 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
               self)._load_from_state_dict(state_dict, prefix, local_metadata,
                                           strict, missing_keys,
                                           unexpected_keys, error_msgs)
+
+
+@MODELS.register_module()
+class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
+    """This is implementation of BatchQuantizer.
+    More details can be found in: https://openreview.net/pdf?id=qQAtFdyDr-
+    Note that the differences between LSQ and BatchLSQ:
+        1. during training, instead of learning the scale and zero_point,
+        we use extreme value estimators to caputre the range variation in the
+        current batch, and learn a multiplicative residual delta_scale and
+        an additive residual delta_zero_point.
+        2. during test, we have to recalibrate the minmax statics by
+        enabling the observer updatable and forwarding a few batches fo data.
+    """
+
+    @torch.jit.export
+    def enable_val(self):
+        """Disables static observer accumulating data from input and doesn't
+        update the quantization parameters.
+
+        Forward path returns fake quantized X.
+        """
+        self.toggle_qparam_learning(enabled=False) \
+            .toggle_fake_quant(enabled=True) \
+            .toggle_observer_update(enabled=True)
+        self.activation_post_process.reset_min_max_vals()
+
+    @torch.jit.export
+    def observe_quant_params(self):
+        """Shows the quantization parameters."""
+        # print('LearnableFakeQuantize Scale: {}'.format(self.delta_scale.detach()))
+        # print('LearnableFakeQuantize Zero Point: {}'.format(
+        #     self.delta_zero_point.detach()))
+        raise NotImplementedError()
+
+    def forward(self, X):
+        """Forward computation.
+
+        Forward path returns fake quantized X.
+        """
+        quant_bits, index = self.get_dynamic_params()
+        if quant_bits == self.FLOAT_BITS:
+            return X
+        # import pdb; pdb.set_trace()
+        self.activation_post_process(X.detach())
+        _scale, _zero_point = \
+            self.activation_post_process.calculate_qparams()
+
+        # TODO: Support per-channel according the shape of inputs.
+        if self.fake_quant_enabled[0] == 1:
+            delta_scale = self.scale[:, index] if index is not None else self.scale
+            delta_zero_point = self.zero_point[:, index] if index is not None else self.zero_point
+            scale = _scale * delta_scale
+            zero_point = _zero_point + delta_zero_point
+            if self.use_grad_scaling:
+                grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
+            else:
+                grad_factor = 1.0
+            if self.qscheme in (torch.per_channel_symmetric,
+                                torch.per_channel_affine):
+                X = torch._fake_quantize_learnable_per_channel_affine(
+                    X, scale, zero_point, self.ch_axis,
+                    self.quant_min, self.quant_max, grad_factor)
+            else:
+                if not (self.quant_min <= zero_point <= self.quant_max):
+                    print(self.quant_min, zero_point, self.quant_max)
+                X = torch._fake_quantize_learnable_per_tensor_affine(
+                    X, scale, zero_point, self.quant_min,
+                    self.quant_max, grad_factor)
+
+        return X
