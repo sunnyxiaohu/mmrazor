@@ -176,15 +176,16 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             if key in state_dict:
                 val = state_dict[key]
                 local_val = getattr(self, name)
+                # import pdb; pdb.set_trace()
                 if local_val.shape == val.shape:
                     continue
 
                 if name == 'scale':
-                    self.scale.data.repeat(1, len(val))
+                    self.scale.data.repeat(val.size(0), 1)
                 else:
                     assert name == 'zero_point'
-                    self.zero_point.data.repeat(1, len(val))
-                state_dict[key] = val.view(1, -1).repeat(len(local_val), 1)
+                    self.zero_point.data.repeat(val.size(0), 1)
+                state_dict[key] = val.repeat(1, local_val.size(1))
                 # For torchscript module we need to update the attributes here
                 # since we do not call the `_load_from_state_dict` function
                 # defined module.py

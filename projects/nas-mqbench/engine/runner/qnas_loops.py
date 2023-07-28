@@ -184,7 +184,7 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
         """Launch validation."""
         self.runner.call_hook('before_val')
         self.runner.call_hook('before_val_epoch')
-        # import pdb; pdb.set_trace()
+
         all_metrics = dict()
         if self.model.current_stage == 'float':
             evaluate_once_func = self._evaluate_once
@@ -195,32 +195,44 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
             metrics = evaluate_once_func
             all_metrics.update(add_prefix(metrics, 'fix_subnet'))
         elif hasattr(self.model, 'sample_kinds'):
-            sample_kinds = ['max', 'min'] if self.model.current_stage == 'float' else ['max', 'qmax', 'min']
+            if self.model.current_stage == 'float':
+                sample_kinds = ['max', 'min']
+            else:
+                search_groups = self.model.mutator.search_groups
+                quant_bits = list(filter(lambda x: x[1][0].alias and 'quant_bits' in x[1][0].alias, search_groups.items()))
+                if len(quant_bits) == 0:
+                    sample_kinds = ['max', 'min']
+                else:
+                    sample_kinds = []
+                    for qb in quant_bits[1:]:
+                        assert qb[1][0].choices == quant_bits[0][1][0].choices
+                    for bit in quant_bits[0][1][0].choices:
+                        sample_kinds.extend([f'max_q{bit}', f'min_q{bit}'])
+
+            def qmaxmin(bit=32, is_max=True):
+                def sample(mutables):
+                    choice = mutables[0].max_choice if is_max else mutables[0].min_choice
+                    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
+                        assert bit in mutables[0].choices
+                        choice = bit
+                    return choice
+                return sample
+            # import pdb; pdb.set_trace()
             for kind in sample_kinds:  # self.model.sample_kinds:
                 if kind == 'max':
                     self.model.mutator.set_max_choices()
-                    metrics = evaluate_once_func(kind=kind)
-                    all_metrics.update(add_prefix(metrics, 'max_subnet'))
                 elif kind == 'min':
                     self.model.mutator.set_min_choices()
-                    metrics = evaluate_once_func(kind=kind)
-                    all_metrics.update(add_prefix(metrics, 'min_subnet'))
                 elif 'random' in kind:
                     self.model.mutator.set_choices(
                         self.model.mutator.sample_choices())
-                    metrics = evaluate_once_func(kind=kind)
-                    all_metrics.update(add_prefix(metrics, f'{kind}_subnet'))
-                elif 'qmax' in kind:
-                    def qmax(mutables):
-                        choice = mutables[0].max_choice
-                        if mutables[0].alias and 'quant_bits' in mutables[0].alias and choice == 32 and len(mutables[0].choices) >= 2:
-                            choice = mutables[0].choices[-2]
-                        return choice
+                elif kind in ['max_q32', 'min_q32', 'max_q8', 'min_q8', 'max_q4', 'min_q4']:
+                    is_max = kind.split('_')[0] == 'max'
+                    bit = int(kind.split('_')[1].replace('q', ''))
                     self.model.mutator.set_choices(
-                        self.model.mutator.sample_choices(kind=qmax))
-                    metrics = evaluate_once_func(kind=kind)
-                    all_metrics.update(add_prefix(metrics, 'qmax_subnet'))
-
+                        self.model.mutator.sample_choices(kind=qmaxmin(bit, is_max)))
+                metrics = evaluate_once_func(kind=kind)
+                all_metrics.update(add_prefix(metrics, f'{kind}_subnet'))
         self.runner.call_hook('after_val_epoch', metrics=all_metrics)
         self.runner.call_hook('after_val')
 
