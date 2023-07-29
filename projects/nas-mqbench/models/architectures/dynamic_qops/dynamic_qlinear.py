@@ -1,7 +1,8 @@
-from typing import Dict
+from typing import Any, Dict, Optional, Set, Tuple
 
 import torch
-import torch.nn as nn
+from torch import Tensor, nn
+
 import torch.nn.functional as F
 
 try:
@@ -26,8 +27,9 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
 
     def forward(self, input):
-        weight, bias = self.get_dynamic_params()
-        return F.linear(input, self.weight_fake_quant(weight), bias)
+        weight, bias = self.get_dynamic_params(
+            self.weight_fake_quant(self.weight), self.bias)
+        return F.linear(input, weight, bias)
 
     @classmethod
     def from_float(cls, mod):
@@ -50,3 +52,31 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
     def convert_from(cls, module):
         return cls.from_float(module)
 
+    def get_dynamic_params(self: nn.Linear, orig_weight, orig_bias) -> Tuple[Tensor, Optional[Tensor]]:
+        """Get dynamic parameters that will be used in forward process.
+
+        Returns:
+            Tuple[Tensor, Optional[Tensor]]: Sliced weight and bias.
+        """
+        if 'in_features' not in self.mutable_attrs and \
+                'out_features' not in self.mutable_attrs:
+            return orig_weight, orig_bias
+
+        if 'in_features' in self.mutable_attrs:
+            in_mask = self.mutable_attrs['in_features'].current_mask.to(
+                orig_weight.device)
+        else:
+            in_mask = torch.ones(orig_weight.size(1)).bool().to(
+                orig_weight.device)
+        if 'out_features' in self.mutable_attrs:
+
+            out_mask = self.mutable_attrs['out_features'].current_mask.to(
+                orig_weight.device)
+        else:
+            out_mask = torch.ones(orig_weight.size(0)).bool().to(
+                orig_weight.device)
+
+        weight = orig_weight[out_mask][:, in_mask]
+        bias = orig_bias[out_mask] if orig_bias is not None else None
+
+        return weight, bias

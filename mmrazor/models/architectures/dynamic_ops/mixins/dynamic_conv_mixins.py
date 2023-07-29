@@ -191,7 +191,7 @@ class DynamicConvMixin(DynamicChannelMixin):
             weight = weight.reshape(
                 [self.groups * out_per_group, in_per_group, *self.kernel_size])
 
-        bias = self.bias[out_mask] if self.bias is not None else None
+        bias = bias[out_mask] if bias is not None else None
         return weight, bias
 
     def forward_mixin(self: _ConvNd, x: Tensor) -> Tensor:
@@ -318,11 +318,11 @@ class BigNasConvMixin(DynamicConvMixin):
         mutable_kernel_size = self.mutable_attrs['kernel_size']
         current_kernel_size = self.get_current_choice(mutable_kernel_size)
 
-        n_dims = len(self.weight.shape) - 2
+        n_dims = len(weight.shape) - 2
         current_padding: Union[Tuple[int], Tuple[int, int]] = \
             _get_same_padding(current_kernel_size, n_dims)
 
-        _pair = _ntuple(len(self.weight.shape) - 2)
+        _pair = _ntuple(len(weight.shape) - 2)
         if _pair(current_kernel_size) == self.kernel_size:
             return weight, current_padding
 
@@ -379,11 +379,11 @@ class OFAConvMixin(BigNasConvMixin):
         mutable_kernel_size = self.mutable_attrs['kernel_size']
         current_kernel_size = self.get_current_choice(mutable_kernel_size)
 
-        n_dims = len(self.weight.shape) - 2
+        n_dims = len(weight.shape) - 2
         current_padding: Union[Tuple[int], Tuple[int, int]] = \
             _get_same_padding(current_kernel_size, n_dims)
 
-        _pair = _ntuple(len(self.weight.shape) - 2)
+        _pair = _ntuple(len(weight.shape) - 2)
         if _pair(current_kernel_size) == self.kernel_size:
             return weight, current_padding
 
@@ -472,7 +472,7 @@ class FuseConvMixin(DynamicConvMixin):
                 mutable_out_channels == self.out_channels:
             return weight, bias
 
-        weight = self.weight[:, 0:mutable_in_channels, :, :]
+        weight = weight[:, 0:mutable_in_channels, :, :]
         if self.groups == 1:
             cout, cin, k, _ = weight.shape
             fused_weight = torch.mm(choice,
@@ -489,10 +489,10 @@ class FuseConvMixin(DynamicConvMixin):
                 'Current `ChannelMutator` only support pruning the depth-wise '
                 '`nn.Conv2d` or `nn.Conv2d` module whose group number equals '
                 f'to one, but got {self.groups}.')
-        if (self.bias is not None):
-            fused_bias = torch.mm(choice, self.bias.unsqueeze(1)).squeeze(1)
+        if (bias is not None):
+            fused_bias = torch.mm(choice, bias.unsqueeze(1)).squeeze(1)
         else:
-            fused_bias = self.bias
+            fused_bias = bias
         return fused_weight, fused_bias
 
     def to_static_op(self: _ConvNd) -> nn.Conv2d:

@@ -1,15 +1,16 @@
-from typing import Dict
+from typing import Any, Callable, Iterable, Optional, Tuple, Union
 
 import copy
 from contextlib import contextmanager
 
 import math
 import torch
-import torch.nn as nn
 import torch.ao.nn.qat as nnqat
 import torch.nn.functional as F
+from torch import Tensor, nn
 from torch.nn import init
 from torch.nn.utils import fuse_conv_bn_weights
+from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.utils import _single, _pair, _triple
 from torch.nn.parameter import Parameter
 from typing import Callable
@@ -251,27 +252,27 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         # import pdb; pdb.set_trace()
         groups = self.groups
         if self.groups == self.in_channels == self.out_channels:
-            groups = input.size(1)        
-        weight, bias, padding = self.get_dynamic_params()
+            groups = input.size(1)
         assert self.bn.running_var is not None
-        running_mean, running_var, bn_weight, bn_bias = self.bn.get_dynamic_params()
-        running_std = torch.sqrt(running_var + self.bn.eps)
-        scale_factor = bn_weight / running_std
-        weight_shape = [1] * len(weight.shape)
+        running_std = torch.sqrt(self.bn.running_var + self.bn.eps)
+        scale_factor = self.bn.weight / running_std
+        weight_shape = [1] * len(self.weight.shape)
         weight_shape[0] = -1
-        bias_shape = [1] * len(weight.shape)
+        bias_shape = [1] * len(self.weight.shape)
         bias_shape[1] = -1
-        scaled_weight = self.weight_fake_quant(weight * scale_factor.reshape(weight_shape))
+        scaled_weight = self.weight * scale_factor.reshape(weight_shape)
+        scaled_weight, bias, padding, scale_factor = self.get_dynamic_params(
+            self.weight_fake_quant(scaled_weight), self.bias, scale_factor)
         # using zero bias here since the bias for original conv
         # will be added later
-        if self.bias is not None:
+        if bias is not None:
             zero_bias = torch.zeros_like(bias, dtype=input.dtype)
         else:
-            zero_bias = torch.zeros(weight.size(0), device=scaled_weight.device, dtype=input.dtype)
+            zero_bias = torch.zeros(scaled_weight.size(0), device=scaled_weight.device, dtype=input.dtype)
         conv = self.conv_func(input, scaled_weight, zero_bias,
                               self.stride, padding, self.dilation, groups)
         conv_orig = conv / scale_factor.reshape(bias_shape)
-        if self.bias is not None:
+        if bias is not None:
             conv_orig = conv_orig + bias.reshape(bias_shape)
         conv = self.bn(conv_orig)
         return conv
@@ -317,6 +318,28 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         else:
             traverse_children(mod._modules)
         return mod
+
+    def get_dynamic_params(
+            self: _ConvNd, orig_weight, orig_bias, scale_factor) -> Tuple[Tensor, Optional[Tensor], Tuple[int]]:
+        """Get dynamic parameters that will be used in forward process.
+
+        Returns:
+            Tuple[Tensor, Optional[Tensor], Tuple[int]]: Sliced weight, bias
+                and padding.
+        """
+        # slice in/out channel of weight according to
+        # mutable in_channels/out_channels
+        weight, bias = self._get_dynamic_params_by_mutable_channels(
+            orig_weight, orig_bias)
+
+        if 'out_channels' in self.mutable_attrs:
+            mutable_out_channels = self.mutable_attrs['out_channels']
+            out_mask = mutable_out_channels.current_mask.to(orig_weight.device)
+        else:
+            out_mask = torch.ones(orig_weight.size(0)).bool().to(orig_weight.device)
+        scale_factor = scale_factor[out_mask]
+        return weight, bias, self.padding, scale_factor
+
 
 class DynamicQConvBnReLU2d(DynamicQConvBn2d):
 
@@ -391,9 +414,10 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
         groups = self.groups
         if self.groups == self.in_channels == self.out_channels:
             groups = input.size(1)
-        weight, bias, padding = self.get_dynamic_params()
+        weight, bias, padding = self.get_dynamic_params(
+            self.weight_fake_quant(self.weight), self.bias)
         return F.relu(
-            self.conv_func(input, self.weight_fake_quant(weight), bias,
+            self.conv_func(input, weight, bias,
                            self.stride, padding, self.dilation, groups))
 
     def to_static_op(self):
@@ -405,3 +429,17 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
         else:
             traverse_children(mod._modules)
         return mod
+
+    def get_dynamic_params(
+            self: _ConvNd, orig_weight, orig_bias) -> Tuple[Tensor, Optional[Tensor], Tuple[int]]:
+        """Get dynamic parameters that will be used in forward process.
+
+        Returns:
+            Tuple[Tensor, Optional[Tensor], Tuple[int]]: Sliced weight, bias
+                and padding.
+        """
+        # slice in/out channel of weight according to
+        # mutable in_channels/out_channels
+        weight, bias = self._get_dynamic_params_by_mutable_channels(
+            orig_weight, orig_bias)
+        return weight, bias, self.padding

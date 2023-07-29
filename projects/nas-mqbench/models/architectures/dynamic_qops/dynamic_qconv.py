@@ -1,8 +1,9 @@
-from typing import Dict
+from typing import Any, Callable, Iterable, Optional, Tuple, Union
 
-import torch.nn as nn
-from typing import Callable
+import torch
 import torch.nn.functional as F
+from torch import Tensor, nn
+from torch.nn.modules.conv import _ConvNd
 
 try:
     import torch.nn.qat as nnqat
@@ -28,8 +29,9 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
         groups = self.groups
         if self.groups == self.in_channels == self.out_channels:
             groups = input.size(1)
-        weight, bias, padding = self.get_dynamic_params()
-        return self.conv_func(input, self.weight_fake_quant(weight), bias,
+        weight, bias, padding = self.get_dynamic_params(
+            self.weight_fake_quant(self.weight), self.bias)
+        return self.conv_func(input, weight, bias,
                               self.stride, padding, self.dilation, groups)
 
     @classmethod
@@ -59,3 +61,17 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
     @classmethod
     def convert_from(cls, module):
         return cls.from_float(module)
+
+    def get_dynamic_params(
+            self: _ConvNd, orig_weight, orig_bias) -> Tuple[Tensor, Optional[Tensor], Tuple[int]]:
+        """Get dynamic parameters that will be used in forward process.
+
+        Returns:
+            Tuple[Tensor, Optional[Tensor], Tuple[int]]: Sliced weight, bias
+                and padding.
+        """
+        # slice in/out channel of weight according to
+        # mutable in_channels/out_channels
+        weight, bias = self._get_dynamic_params_by_mutable_channels(
+            orig_weight, orig_bias)
+        return weight, bias, self.padding
