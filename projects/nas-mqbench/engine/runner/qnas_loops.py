@@ -219,8 +219,12 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
                 def sample(mutables):
                     choice = mutables[0].max_choice if is_max else mutables[0].min_choice
                     if mutables[0].alias and 'quant_bits' in mutables[0].alias:
-                        assert bit in mutables[0].choices
-                        choice = bit
+                        if bit in mutables[0].choices:
+                            choice = bit
+                        elif self.quant_bits is not None:
+                            pass
+                        else:
+                            assert bit in mutables[0].choices
                     return choice
                 return sample
             # import pdb; pdb.set_trace()
