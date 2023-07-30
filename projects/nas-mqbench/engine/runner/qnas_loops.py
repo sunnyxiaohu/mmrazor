@@ -160,7 +160,8 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
                  evaluator: Union[Evaluator, Dict, List],
                  evaluate_fixed_subnet: bool = False,
                  calibrate_sample_num: int = 4096,
-                 estimator_cfg: Optional[Dict] = dict(type='mmrazor.ResourceEstimator'),                 
+                 estimator_cfg: Optional[Dict] = dict(type='mmrazor.ResourceEstimator'),
+                 quant_bits = None,
                  fp16: bool = False) -> None:
         super().__init__(runner, dataloader, evaluator, fp16)
         if self.runner.distributed:
@@ -178,7 +179,8 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
         self.architecture.data_preprocessor = data_preprocessor
         self.evaluate_fixed_subnet = evaluate_fixed_subnet
         self.calibrate_sample_num = calibrate_sample_num
-        self.estimator = TASK_UTILS.build(estimator_cfg)        
+        self.estimator = TASK_UTILS.build(estimator_cfg)
+        self.quant_bits = quant_bits
 
     def run(self) -> dict:
         """Launch validation."""
@@ -204,9 +206,13 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
                     sample_kinds = ['max', 'min']
                 else:
                     sample_kinds = []
-                    for qb in quant_bits[1:]:
-                        assert qb[1][0].choices == quant_bits[0][1][0].choices
-                    for bit in quant_bits[0][1][0].choices:
+                    if self.quant_bits is None:
+                        for qb in quant_bits[1:]:
+                            assert qb[1][0].choices == quant_bits[0][1][0].choices
+                        choices = quant_bits[0][1][0].choices
+                    else:
+                        choices = self.quant_bits
+                    for bit in choices:
                         sample_kinds.extend([f'max_q{bit}', f'min_q{bit}'])
 
             def qmaxmin(bit=32, is_max=True):

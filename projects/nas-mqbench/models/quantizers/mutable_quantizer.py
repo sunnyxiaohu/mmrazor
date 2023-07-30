@@ -48,7 +48,8 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
     """
 
     def __init__(self, *args, tracer: Dict = dict(type='CustomTracer'),
-                 quant_bits=None, quant_bits_skipped_module_names=None, **kwargs):
+                 quant_bits=None, quant_bits_skipped_module_names=None,
+                 default_skipped_bit=32, **kwargs):
         if 'skipped_module_classes' in tracer:
             tracer['skipped_module_classes'] = str2class(tracer['skipped_module_classes'])
         super().__init__(*args, tracer=tracer, **kwargs)
@@ -56,6 +57,7 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
         if quant_bits_skipped_module_names is None:
             quant_bits_skipped_module_names = []
         self.quant_bits_skipped_module_names = quant_bits_skipped_module_names
+        self.default_skipped_bit = default_skipped_bit
 
     @property
     def backend(self):
@@ -120,7 +122,8 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
 
         if self.quant_bits:
             prepared = register_mutables_for_dynamic_fakequant(
-                prepared, tuple(self.quant_bits_skipped_module_names), self.quant_bits, True)
+                prepared, tuple(self.quant_bits_skipped_module_names), self.quant_bits,
+                self.default_skipped_bit, True)
         prepared = modify_fakequant_to_int8(
             prepared, tuple(self.quant_bits_skipped_module_names), True)
 
@@ -233,6 +236,7 @@ def wrap_depth_scope(prepared_model, dynamic_seq_names, node_name_to_scope, inpl
 def register_mutables_for_dynamic_fakequant(prepared_model,
                                             module_patterns: Tuple,
                                             quant_bits: List = None,
+                                            default_skipped_bit = 32,
                                             inplace: bool = True):
     """Register mutables for dynamic fakequant. It will follow the rules bellow
     to register mutables:
@@ -246,6 +250,7 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
         target_patterns (tuple): Fakequants before and inner the modules
             whose name in `module_patterns` will be modified.
         quant_bits (List): Quant bits for building mutables.
+        default_skipped_bit (int): If matched, the default skipped bit will be registered.
         inplace (bool): Can optionally do the operation in-place.
             Defaults to True.
 
@@ -278,17 +283,19 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
             maybe_dynamic = _get_attrs(prepared_model, node.target)
             # for activations
             if isinstance(maybe_dynamic, dynamic_lsq.DynamicLearnableFakeQuantize):
-                if maybe_dynamic.FLOAT_BITS not in quant_bits and maybe_dynamic in skipped_fake_quant:
-                    continue
-                qbits = OneShotMutableValue(alias=node.target + '.quant_bits', value_list=quant_bits)
+                this_bits = quant_bits
+                if maybe_dynamic in skipped_fake_quant:
+                    this_bits = [default_skipped_bit]
+                qbits = OneShotMutableValue(alias=node.target + '.quant_bits', value_list=this_bits)
                 maybe_dynamic.register_mutable_attr('quant_bits', qbits)
             # for weights
             elif hasattr(maybe_dynamic, 'weight_fake_quant') and isinstance(
                     maybe_dynamic.weight_fake_quant, dynamic_lsq.DynamicLearnableFakeQuantize):
                 maybe_dynamic = maybe_dynamic.weight_fake_quant
-                if maybe_dynamic.FLOAT_BITS not in quant_bits and maybe_dynamic in skipped_fake_quant:
-                    continue
-                qbits = OneShotMutableValue(alias=node.target + '.weight_fake_quant.quant_bits', value_list=quant_bits)
+                this_bits = quant_bits
+                if maybe_dynamic in skipped_fake_quant:
+                    this_bits = [default_skipped_bit]
+                qbits = OneShotMutableValue(alias=node.target + '.weight_fake_quant.quant_bits', value_list=this_bits)
                 maybe_dynamic.register_mutable_attr('quant_bits', qbits)
 
     new_graph.lint()
