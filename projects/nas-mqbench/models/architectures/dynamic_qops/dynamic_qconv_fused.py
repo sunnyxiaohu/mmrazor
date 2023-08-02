@@ -443,3 +443,15 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
         weight, bias = self._get_dynamic_params_by_mutable_channels(
             orig_weight, orig_bias)
         return weight, bias, self.padding
+
+def update_bn_stats(mod):
+    if type(mod) in set([DynamicQConvBnReLU2d, DynamicQConvBn2d, DynamicQConvReLU2d]):
+        mod.update_bn_stats()
+    else:
+        nniqat.update_bn_stats(mod)
+
+def freeze_bn_stats(mod):
+    if type(mod) in set([DynamicQConvBnReLU2d, DynamicQConvBn2d, DynamicQConvReLU2d]):
+        mod.freeze_bn_stats()
+    else:
+        nniqat.freeze_bn_stats(mod)

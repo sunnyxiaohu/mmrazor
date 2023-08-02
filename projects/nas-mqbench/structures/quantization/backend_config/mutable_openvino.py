@@ -36,7 +36,8 @@ except ImportError:
 from mmengine.utils import import_modules_from_strings
 from mmrazor.models.architectures.dynamic_ops import (BigNasConv2d,
                                                       DynamicBatchNorm2d,
-                                                      DynamicLinear)
+                                                      DynamicLinear,
+                                                      DynamicInputResizer)
 from mmrazor.structures.quantization.backend_config import get_openvino_backend_config
 
 custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_fused'
@@ -359,17 +360,31 @@ def get_mutableopenvino_backend_config() -> BackendConfig:
         weight_dtype=torch.qint8,
         bias_dtype=torch.float,
     )
+    non_weighted_op_qint8_dtype_config = DTypeConfig(
+        input_dtype=torch.quint8,
+        output_dtype=torch.quint8,
+    )
     conv_dtype_configs = [
         weighted_op_qint8_dtype_config,
     ]
     linear_dtype_configs = [
         weighted_op_qint8_dtype_config,
     ]
+    share_qparams_op_dtype_configs = [
+        non_weighted_op_qint8_dtype_config,
+    ]
+
+    def _get_share_qprams_op_backend_config(op):
+        return BackendPatternConfig(op) \
+            .set_observation_type(
+                ObservationType.OUTPUT_SHARE_OBSERVER_WITH_INPUT) \
+            .set_dtype_configs(share_qparams_op_dtype_configs)
 
     mutableopenvino_config = get_openvino_backend_config()
     mutableopenvino_config.set_name('mutableopenvino') \
         .set_backend_pattern_configs(_get_dynamicconv_configs(conv_dtype_configs)) \
-        .set_backend_pattern_configs(_get_dynamiclinear_configs(linear_dtype_configs))
+        .set_backend_pattern_configs(_get_dynamiclinear_configs(linear_dtype_configs)) \
+        .set_backend_pattern_config(_get_share_qprams_op_backend_config(DynamicInputResizer))
 
     return mutableopenvino_config
 

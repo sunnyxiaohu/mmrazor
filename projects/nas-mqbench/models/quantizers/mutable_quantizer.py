@@ -94,7 +94,7 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
         # get all the dynamic seq names.
         dynamic_seq_names = {}
         for name, module in model.named_modules():
-            if isinstance(module, DynamicSequential):
+            if isinstance(module, DynamicSequential) and 'depth' in module.mutable_attrs:
                 idx_nodes = {idx+1: [] for idx in range(module.pure_module_nums)}
                 dynamic_seq_names[(name, module.mutable_depth)] = idx_nodes
 

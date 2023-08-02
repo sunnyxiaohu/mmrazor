@@ -6,18 +6,17 @@ import torch
 from mmengine.evaluator import Evaluator
 from mmengine.logging import print_log
 from mmengine.runner import EpochBasedTrainLoop, TestLoop, ValLoop
+from mmengine.utils import import_modules_from_strings
 
 try:
     from torch.ao.quantization import (disable_observer, enable_fake_quant,
                                        enable_observer, disable_fake_quant)
-    from torch.nn.intrinsic.qat import freeze_bn_stats
 except ImportError:
     from mmrazor.utils import get_placeholder
 
     disable_observer = get_placeholder('torch>=1.13')
     enable_fake_quant = get_placeholder('torch>=1.13')
     enable_observer = get_placeholder('torch>=1.13')
-    freeze_bn_stats = get_placeholder('torch>=1.13')
 
 from mmengine.dist import all_reduce_params, is_distributed
 from torch.utils.data import DataLoader
@@ -33,6 +32,8 @@ from mmrazor.engine.runner.utils import CalibrateBNMixin
 
 TORCH_observers = register_torch_observers()
 TORCH_fake_quants = register_torch_fake_quants()
+custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_qconv_fused'
+dynamic_qconv_fused = import_modules_from_strings(custom_imports)
 
 
 @LOOPS.register_module()
@@ -86,7 +87,7 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
         model = getattr(model, 'module', model)        
         if (self.freeze_bn_begin > 0
                 and self._epoch + 1 >= self.freeze_bn_begin):
-            self.runner.model.apply(freeze_bn_stats)
+            self.runner.model.apply(dynamic_qconv_fused.freeze_bn_stats)
         if (self.qat_begin > 0
                 and self._epoch + 1 >= self.qat_begin):
             self.runner.model.apply(enable_param_learning)
