@@ -49,7 +49,7 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
 
     def __init__(self, *args, tracer: Dict = dict(type='CustomTracer'),
                  quant_bits=None, quant_bits_skipped_module_names=None,
-                 default_skipped_bit=32, **kwargs):
+                 default_skipped_bit=8, **kwargs):
         if 'skipped_module_classes' in tracer:
             tracer['skipped_module_classes'] = str2class(tracer['skipped_module_classes'])
         super().__init__(*args, tracer=tracer, **kwargs)

@@ -82,8 +82,9 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
     def register_mutable_attr(self, attr, mutable):
         assert hasattr(self, 'mutable_attrs')
         if attr == 'quant_bits':
-            self.scale.data = torch.ones(1, len(mutable.choices))
-            self.zero_point.data = torch.zeros(1, len(mutable.choices))
+            device = self.scale.device
+            self.scale.data = torch.ones(1, len(mutable.choices)).to(device)
+            self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
             self.mutable_attrs['quant_bits'] = mutable
         else:
             raise NotImplementedError
@@ -116,7 +117,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         quant_bits, index = self.get_dynamic_params()
         if quant_bits == self.FLOAT_BITS:
             return X
-        # import pdb; pdb.set_trace()
+
         org_static_enabled = self.static_enabled[0]
         if index is not None:
             local_scale = self.scale.data[:, index]
@@ -150,7 +151,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             self.scale.data.clamp_(min=self.eps.item())
 
         self.static_enabled[0] = org_static_enabled
-
+        # import pdb; pdb.set_trace()
         if self.fake_quant_enabled[0] == 1:
             scale = self.scale[:, index] if index is not None else self.scale
             zero_point = self.zero_point[:, index] if index is not None else self.zero_point
