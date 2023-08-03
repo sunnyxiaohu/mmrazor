@@ -261,8 +261,8 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         bias_shape = [1] * len(self.weight.shape)
         bias_shape[1] = -1
         scaled_weight = self.weight * scale_factor.reshape(weight_shape)
-        scaled_weight, bias, padding, scale_factor = self.get_dynamic_params(
-            self.weight_fake_quant(scaled_weight), self.bias, scale_factor)
+        scaled_weight, bias, padding, scale_factor = self.get_dynamic_params(scaled_weight, self.bias, scale_factor)
+        scaled_weight = self.weight_fake_quant(scaled_weight)
         # using zero bias here since the bias for original conv
         # will be added later
         if bias is not None:

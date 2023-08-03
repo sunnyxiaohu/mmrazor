@@ -56,9 +56,13 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
     accepted_mutable_attrs = {'quant_bits'}
     FLOAT_BITS = 32
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, param_share_mode = 0, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-
+        # mode 0: Unshared
+        # mode 1: Full shared
+        # mode 2: Reparameter and partially shared
+        assert param_share_mode in [0, 1], f'Unexpected param_share_mode: {param_share_mode}'
+        self.param_share_mode = param_share_mode
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
 
     @property
@@ -83,8 +87,9 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         assert hasattr(self, 'mutable_attrs')
         if attr == 'quant_bits':
             device = self.scale.device
-            self.scale.data = torch.ones(1, len(mutable.choices)).to(device)
-            self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
+            if self.param_share_mode == 0:
+                self.scale.data = torch.ones(1, len(mutable.choices)).to(device)
+                self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
             self.mutable_attrs['quant_bits'] = mutable
         else:
             raise NotImplementedError
@@ -100,7 +105,9 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                 quant_bits = int(math.log(self.quant_max - self.quant_min + 2, 2))
             else:
                 quant_bits = int(math.log(self.quant_max - self.quant_min + 1, 2))
-            index = None                
+            index = None
+        if self.param_share_mode == 1:
+            index = None
         return quant_bits, index
 
     @torch.jit.export
@@ -146,7 +153,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                 self.scale.data.copy_(_scale)
                 self.zero_point.data.copy_(_zero_point)
 
-            self.activation_post_process.reset_min_max_vals()                
+            self.activation_post_process.reset_min_max_vals()
         else:
             self.scale.data.clamp_(min=self.eps.item())
 
@@ -154,7 +161,16 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         # import pdb; pdb.set_trace()
         if self.fake_quant_enabled[0] == 1:
             scale = self.scale[:, index] if index is not None else self.scale
-            zero_point = self.zero_point[:, index] if index is not None else self.zero_point
+            if index is None:
+                if 'quant_bits' in self.mutable_attrs and len(self.mutable_attrs['quant_bits'].choices) > 1:
+                    assert not self.zero_point_trainable
+                    self.activation_post_process(X.detach())
+                    _, _zero_point = self.activation_post_process.calculate_qparams()
+                    _zero_point = _zero_point.to(self.zero_point.device)
+                    self.activation_post_process.reset_min_max_vals()
+                zero_point = self.zero_point
+            else:
+                zero_point = self.zero_point[:, index]
             if self.use_grad_scaling:
                 grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
             else:

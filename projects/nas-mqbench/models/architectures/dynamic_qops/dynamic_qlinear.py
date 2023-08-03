@@ -27,8 +27,8 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
 
     def forward(self, input):
-        weight, bias = self.get_dynamic_params(
-            self.weight_fake_quant(self.weight), self.bias)
+        weight, bias = self.get_dynamic_params(self.weight, self.bias)
+        weight = self.weight_fake_quant(weight)
         return F.linear(input, weight, bias)
 
     @classmethod

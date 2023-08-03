@@ -33,14 +33,13 @@ supernet = dict(
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),
-    a_observer=dict(type='mmrazor.BatchLSQObserver'),
-    # a_observer=dict(type='mmrazor.MinMaxObserver'),
+    a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.DynamicLearnableFakeQuantize'),
     # a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
+    a_fake_quant=dict(type='mmrazor.DynamicLearnableFakeQuantize'),
     w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True),
-    # a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
-    a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1)
+    a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
+    # a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
 qmodel = dict(

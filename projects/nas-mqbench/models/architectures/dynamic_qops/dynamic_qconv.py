@@ -29,8 +29,8 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
         groups = self.groups
         if self.groups == self.in_channels == self.out_channels:
             groups = input.size(1)
-        weight, bias, padding = self.get_dynamic_params(
-            self.weight_fake_quant(self.weight), self.bias)
+        weight, bias, padding = self.get_dynamic_params(self.weight, self.bias)
+        weight = self.weight_fake_quant(weight)
         return self.conv_func(input, weight, bias,
                               self.stride, padding, self.dilation, groups)
 

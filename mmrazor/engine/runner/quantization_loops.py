@@ -30,6 +30,9 @@ from mmrazor.registry import LOOPS
 TORCH_observers = register_torch_observers()
 TORCH_fake_quants = register_torch_fake_quants()
 
+from mmengine.utils import import_modules_from_strings
+custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_qconv_fused'
+dynamic_qconv_fused = import_modules_from_strings(custom_imports)
 
 @LOOPS.register_module()
 class QATEpochBasedLoop(EpochBasedTrainLoop):
@@ -84,7 +87,7 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
 
         if (self.freeze_bn_begin > 0
                 and self._epoch + 1 >= self.freeze_bn_begin):
-            self.runner.model.apply(freeze_bn_stats)
+            self.runner.model.apply(dynamic_qconv_fused.freeze_bn_stats)
 
     def prepare_for_val(self):
         """Toggle the state of the observers and fake quantizers before
@@ -95,7 +98,14 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
     def run(self):
         """Launch training."""
         self.runner.call_hook('before_train')
-
+        self.runner.model.module.mutator.set_min_choices()
+        self.runner.val_loop.calibrate_bn_statistics(self.runner.train_dataloader,
+                                                     model = self.runner.model.module.architecture.architecture,
+                                                     calibrate_sample_num = 4096)
+        # self.prepare_for_run_epoch()
+        # self.prepare_for_val()
+        # self.runner.model.apply(enable_static_estimate)
+        # self.runner.val_loop.run()
         while self._epoch < self._max_epochs:
             self.prepare_for_run_epoch()
             self.run_epoch()
@@ -171,7 +181,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
         training."""
         if (self.freeze_bn_begin > 0
                 and self._epoch + 1 >= self.freeze_bn_begin):
-            self.runner.model.apply(freeze_bn_stats)
+            self.runner.model.apply(dynamic_qconv_fused.freeze_bn_stats)
 
         self.runner.model.apply(enable_param_learning)
 

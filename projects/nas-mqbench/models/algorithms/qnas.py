@@ -85,7 +85,8 @@ class QNAS(BaseAlgorithm):
         self.sample_kinds = ['max', 'min']
         for i in range(num_random_samples):
             self.sample_kinds.append('random' + str(i))
-
+        # import pdb; pdb.set_trace()
+        self.sample_kinds = ['max']
         self.drop_path_rate = drop_path_rate
         self.backbone_dropout_stages = backbone_dropout_stages
         self._optim_wrapper_count_status_reinitialized = False
@@ -232,9 +233,15 @@ class QNASDDP(MMDistributedDataParallel):
                 device_ids = [int(os.environ['LOCAL_RANK'])]
         super().__init__(device_ids=device_ids, **kwargs)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        # self.module.architecture.qmodels = self.module.architecture._build_qmodels(
-        #     self.module.architecture.architecture)
-        self.module.architecture.sync_qparams('tensor')
+        # After moving all model parameters and buffers to the GPU
+        # (`model.cuda()`), the buffers in model are different.
+        # Hackly, we rebuild qmodels and the corresonding modules based on the architecture
+        # that have aleady moved to GPU, so that the buffers can be shared among qmodels
+        # and the architecture.
+        self.module.architecture.qmodels = self.module.architecture._build_qmodels(
+            self.module.architecture.architecture)
+        self.module.mutator.prepare_from_supernet(self.module.architecture)
+        self.module.sync_qparams('tensor')
         self.module.architecture.reset_observer_and_fakequant_statistics(self)
 
     def train_step(self, data: List[dict],
@@ -255,9 +262,9 @@ class QNASDDP(MMDistributedDataParallel):
             with optim_wrapper.optim_context(
                     self
             ), distiller.student_recorders:  # type: ignore
-                _ = self(batch_inputs, data_samples, mode=mode)
+                hard_loss = self(batch_inputs, data_samples, mode=mode)
+                # subnet_losses.update(hard_loss)
                 soft_loss = distiller.compute_distill_losses()
-
                 subnet_losses.update(soft_loss)
 
                 parsed_subnet_losses, _ = self.module.parse_losses(
@@ -275,12 +282,14 @@ class QNASDDP(MMDistributedDataParallel):
 
         batch_inputs, data_samples = self.module.data_preprocessor(
             data, True).values()
-
+        # import pdb; pdb.set_trace()
         total_losses = dict()
+        self.module.mutator.set_min_choices()
         for kind in self.module.sample_kinds:
             # update the max subnet loss.
             if kind == 'max':
-                self.module.mutator.set_max_choices()
+                # self.module.mutator.set_max_choices()
+                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qmax))
                 # qnas_backbone.set_dropout(
                 #     dropout_stages=self.module.backbone_dropout_stages,
                 #     drop_path_rate=self.module.drop_path_rate)
@@ -296,7 +305,8 @@ class QNASDDP(MMDistributedDataParallel):
                     add_prefix(max_subnet_losses, 'max_subnet'))
             # update the min subnet loss.
             elif kind == 'min':
-                self.module.mutator.set_min_choices()
+                # self.module.mutator.set_min_choices()
+                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qmin))
                 # qnas_backbone.set_dropout(
                 #     dropout_stages=self.module.backbone_dropout_stages,
                 #     drop_path_rate=0.)
@@ -305,8 +315,8 @@ class QNASDDP(MMDistributedDataParallel):
                     add_prefix(min_subnet_losses, 'min_subnet'))
             # update the random subnets loss.
             elif 'random' in kind:
-                self.module.mutator.set_choices(
-                    self.module.mutator.sample_choices())
+                # self.module.mutator.set_choices(self.module.mutator.sample_choices())
+                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qrandom))
                 # qnas_backbone.set_dropout(
                 #     dropout_stages=self.module.backbone_dropout_stages,
                 #     drop_path_rate=0.)
@@ -343,3 +353,57 @@ class QNASDDP(MMDistributedDataParallel):
         """
 
         self.module.sync_qparams(src_mode)
+
+
+def qmax(mutables):
+    """Sample choice for mutables except `quant_bits`"""
+    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
+        choice = mutables[0].max_choice
+    else:
+        choice = mutables[0].current_choice
+    return choice
+
+def qrandom(mutables):
+    """Sample choice only for `quant_bits` mutables"""
+    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
+        # strategy0: all the kinds adopt the same quant_bits (bad)
+        choice = mutables[0].sample_choice()
+        # strategy1: all the kinds except the `max` kind adopt the same quant_bits
+        # stragety2: all the kinds adopt the same quant_bitsabsorb quant_bits less than 8bit
+        # while(choice < 8):
+        #     choice = mutables[0].sample_choice()
+    else:
+        choice = mutables[0].current_choice
+    return choice
+
+def qmin(mutables):
+    """Sample choice for mutables except `quant_bits`"""
+    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
+        choice = mutables[0].min_choice
+    else:
+        choice = mutables[0].current_choice
+    return choice
+
+def nonqmax(mutables):
+    """Sample choice for mutables except `quant_bits`"""
+    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
+        choice = mutables[0].current_choice
+    else:
+        choice = mutables[0].max_choice
+    return choice
+
+def nonqmin(mutables):
+    """Sample choice for mutables except `quant_bits`"""
+    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
+        choice = mutables[0].current_choice
+    else:
+        choice = mutables[0].min_choice
+    return choice
+
+def nonqrandom(mutables):
+    """Sample choice for mutables except `quant_bits`"""
+    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
+        choice = mutables[0].current_choice
+    else:
+        choice = mutables[0].sample_choice()
+    return choice
