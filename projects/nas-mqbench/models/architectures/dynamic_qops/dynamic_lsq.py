@@ -167,6 +167,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                     self.activation_post_process(X.detach())
                     _, _zero_point = self.activation_post_process.calculate_qparams()
                     _zero_point = _zero_point.to(self.zero_point.device)
+                    self.zero_point.data.copy_(_zero_point)
                     self.activation_post_process.reset_min_max_vals()
                 zero_point = self.zero_point
             else:
