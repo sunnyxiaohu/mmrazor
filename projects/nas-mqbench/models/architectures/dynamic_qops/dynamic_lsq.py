@@ -55,14 +55,17 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
     """
     accepted_mutable_attrs = {'quant_bits'}
     FLOAT_BITS = 32
+    BASE_BITS = 4
 
     def __init__(self, *args, param_share_mode = 0, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # mode 0: Unshared
         # mode 1: Full shared
         # mode 2: Reparameter and partially shared
-        assert param_share_mode in [0, 1], f'Unexpected param_share_mode: {param_share_mode}'
+        assert param_share_mode in [0, 1, 2], f'Unexpected param_share_mode: {param_share_mode}'
         self.param_share_mode = param_share_mode
+        if self.param_share_mode == 2:
+            self.scale_adelta = Parameter(torch.tensor([0.]))
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
 
     @property
@@ -90,9 +93,13 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             if self.param_share_mode == 0:
                 self.scale.data = torch.ones(1, len(mutable.choices)).to(device)
                 self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
+            if self.param_share_mode == 2:
+                self.scale_adelta.data = torch.zeros(1, len(mutable.choices)).to(device)
+                self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
             self.mutable_attrs['quant_bits'] = mutable
         else:
             raise NotImplementedError
+        self.BASE_BITS = self.mutable_attrs['quant_bits'].choices[0]
 
     def get_dynamic_params(self):
         if 'quant_bits' in self.mutable_attrs:
@@ -120,19 +127,27 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         """Forward computation.
 
         Forward path returns fake quantized X.
+        static_enabled transitate states, when param_share_mode==2:
+        1: init base scale -> 2: init adelta scale -> 0: by learning
         """
         quant_bits, index = self.get_dynamic_params()
         if quant_bits == self.FLOAT_BITS:
             return X
 
+        # Experimentally: 
+        #   for act:    mult = 1.0 / 4, maby because of BN?
+        #   for weight: mutlt = 1.0 / 10, it seems the range for weight is somewhat more stable.
+        mult = 1.0 / 2 ** (quant_bits - self.BASE_BITS)
+        # mult = 1.0 / (quant_bits - self.BASE_BITS + + 1)
         org_static_enabled = self.static_enabled[0]
-        if index is not None:
+        if index is not None and self.param_share_mode == 1:
             local_scale = self.scale.data[:, index]
         else:
             local_scale = self.scale.data
         # Check whether is initialized or not. We choose scale as indicator
         # since zero_point may also be zero after initialized.
-        if torch.equal(local_scale, torch.ones_like(local_scale)):
+        scale_initialized = not torch.equal(local_scale, torch.ones_like(local_scale))
+        if scale_initialized:
             self.static_enabled[0] = 1
         if self.static_enabled[0] == 1:
             self.activation_post_process(X.detach())
@@ -145,9 +160,14 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                                 torch.per_channel_affine):
                 self.scale.data.repeat(1, len(_scale))
                 self.zero_point.data.repeat(1, len(_zero_point))
+                if self.param_share_mode == 2:
+                    self.scale_adelta.data.repeat(1, len(_scale))
 
-            if index is not None:
+            if index is not None and self.param_share_mode == 1:
                 self.scale.data[:, index] = _scale
+                self.zero_point.data[:, index] = _zero_point
+            elif index is not None and self.param_share_mode == 2:
+                self.scale.data.copy_(_scale)
                 self.zero_point.data[:, index] = _zero_point
             else:
                 self.scale.data.copy_(_scale)
@@ -157,10 +177,23 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         else:
             self.scale.data.clamp_(min=self.eps.item())
 
+        # transitate to initialize scale_delta.
+        if scale_initialized and self.param_share_mode == 2:
+            local_scale = self.scale_adelta.data[:, index]
+            if torch.equal(local_scale, torch.zeros_like(local_scale)):
+                self.activation_post_process(X.detach())
+                _scale, _zero_point = \
+                    self.activation_post_process.calculate_qparams()
+                _scale = _scale.to(self.scale.device)
+                _zero_point = _zero_point.to(self.zero_point.device)
+                self.scale_adelta.data[:, index] = _scale - mult * self.scale.data
+                self.activation_post_process.reset_min_max_vals()
+            else:
+                self.scale_adelta.data.clamp_(min=self.eps.item())
+
         self.static_enabled[0] = org_static_enabled
         # import pdb; pdb.set_trace()
         if self.fake_quant_enabled[0] == 1:
-            scale = self.scale[:, index] if index is not None else self.scale
             if index is None:
                 if 'quant_bits' in self.mutable_attrs and len(self.mutable_attrs['quant_bits'].choices) > 1:
                     assert not self.zero_point_trainable
@@ -170,8 +203,23 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                     self.zero_point.data.copy_(_zero_point)
                     self.activation_post_process.reset_min_max_vals()
                 zero_point = self.zero_point
+                scale = self.scale
             else:
                 zero_point = self.zero_point[:, index]
+                if self.param_share_mode == 2:
+                    scale = self.scale
+                    idx = 0
+                    pre_bits = self.BASE_BITS
+                    # import pdb; pdb.set_trace()
+                    while(idx <= index):
+                        scale_adelta = self.scale_adelta[:, idx]
+                        quant_bits = self.mutable_attrs['quant_bits'].choices[idx]
+                        mult = 1.0 / 2 ** (quant_bits - pre_bits)
+                        scale = mult * scale + scale_adelta
+                        idx += 1
+                        pre_bits = quant_bits
+                else:
+                    scale = self.scale[:, index]
             if self.use_grad_scaling:
                 grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
             else:

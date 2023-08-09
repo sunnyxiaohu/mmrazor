@@ -1,8 +1,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import os
+import random
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
+from mmengine.logging import MessageHub
 from mmengine.model import BaseModel, MMDistributedDataParallel
 from mmengine.optim import OptimWrapper
 from mmengine.structures import BaseDataElement
@@ -86,7 +88,6 @@ class QNAS(BaseAlgorithm):
         for i in range(num_random_samples):
             self.sample_kinds.append('random' + str(i))
         # import pdb; pdb.set_trace()
-        self.sample_kinds = ['max']
         self.drop_path_rate = drop_path_rate
         self.backbone_dropout_stages = backbone_dropout_stages
         self._optim_wrapper_count_status_reinitialized = False
@@ -241,6 +242,8 @@ class QNASDDP(MMDistributedDataParallel):
         self.module.architecture.qmodels = self.module.architecture._build_qmodels(
             self.module.architecture.architecture)
         self.module.mutator.prepare_from_supernet(self.module.architecture)
+        self.module.qat_distiller.prepare_from_teacher(self.module.architecture.qmodels['loss'])
+        self.module.qat_distiller.prepare_from_student(self.module.architecture.qmodels['loss'])        
         self.module.sync_qparams('tensor')
         self.module.architecture.reset_observer_and_fakequant_statistics(self)
 
@@ -254,6 +257,8 @@ class QNASDDP(MMDistributedDataParallel):
             mode = 'loss'
         else:
             raise ValueError(f'Unsupported current_stage: {self.module.current_stage}')
+        self.message_hub = MessageHub.get_current_instance()
+        cur_epoch = self.message_hub.get_info('epoch')
 
         def distill_step(
                 batch_inputs: torch.Tensor, data_samples: List[BaseDataElement]
@@ -263,9 +268,9 @@ class QNASDDP(MMDistributedDataParallel):
                     self
             ), distiller.student_recorders:  # type: ignore
                 hard_loss = self(batch_inputs, data_samples, mode=mode)
-                # subnet_losses.update(hard_loss)
-                soft_loss = distiller.compute_distill_losses()
-                subnet_losses.update(soft_loss)
+                subnet_losses.update(hard_loss)
+                # soft_loss = distiller.compute_distill_losses()
+                # subnet_losses.update(soft_loss)
 
                 parsed_subnet_losses, _ = self.module.parse_losses(
                     subnet_losses)
@@ -289,7 +294,7 @@ class QNASDDP(MMDistributedDataParallel):
             # update the max subnet loss.
             if kind == 'max':
                 # self.module.mutator.set_max_choices()
-                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qmax))
+                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
                 # qnas_backbone.set_dropout(
                 #     dropout_stages=self.module.backbone_dropout_stages,
                 #     drop_path_rate=self.module.drop_path_rate)
@@ -306,7 +311,7 @@ class QNASDDP(MMDistributedDataParallel):
             # update the min subnet loss.
             elif kind == 'min':
                 # self.module.mutator.set_min_choices()
-                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qmin))
+                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
                 # qnas_backbone.set_dropout(
                 #     dropout_stages=self.module.backbone_dropout_stages,
                 #     drop_path_rate=0.)
@@ -316,7 +321,7 @@ class QNASDDP(MMDistributedDataParallel):
             # update the random subnets loss.
             elif 'random' in kind:
                 # self.module.mutator.set_choices(self.module.mutator.sample_choices())
-                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qrandom))
+                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
                 # qnas_backbone.set_dropout(
                 #     dropout_stages=self.module.backbone_dropout_stages,
                 #     drop_path_rate=0.)
@@ -355,34 +360,25 @@ class QNASDDP(MMDistributedDataParallel):
         self.module.sync_qparams(src_mode)
 
 
-def qmax(mutables):
-    """Sample choice for mutables except `quant_bits`"""
-    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
-        choice = mutables[0].max_choice
-    else:
-        choice = mutables[0].current_choice
-    return choice
+def qsample(epoch, kind='max'):
+    """Sample choice for mutables except `quant_bits`"""    
+    assert kind in ['max', 'min'] or 'random' in kind
+    step = 5
+    def sample_wrapper(mutables):
+        if mutables[0].alias and 'quant_bits' in mutables[0].alias:
+            current_idx = epoch // step + 1
+            choices = mutables[0].choices[:current_idx]
+            if kind == 'max':
+                choice = choices[-1]
+            elif kind == 'min':
+                choice = choices[0]
+            elif 'random' in kind:
+                choice = random.choice(choices)
+        else:
+            choice = mutables[0].current_choice
+        return choice
+    return sample_wrapper
 
-def qrandom(mutables):
-    """Sample choice only for `quant_bits` mutables"""
-    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
-        # strategy0: all the kinds adopt the same quant_bits (bad)
-        choice = mutables[0].sample_choice()
-        # strategy1: all the kinds except the `max` kind adopt the same quant_bits
-        # stragety2: all the kinds adopt the same quant_bitsabsorb quant_bits less than 8bit
-        # while(choice < 8):
-        #     choice = mutables[0].sample_choice()
-    else:
-        choice = mutables[0].current_choice
-    return choice
-
-def qmin(mutables):
-    """Sample choice for mutables except `quant_bits`"""
-    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
-        choice = mutables[0].min_choice
-    else:
-        choice = mutables[0].current_choice
-    return choice
 
 def nonqmax(mutables):
     """Sample choice for mutables except `quant_bits`"""
