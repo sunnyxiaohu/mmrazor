@@ -104,7 +104,6 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
                                                      calibrate_sample_num = 4096)
         # self.prepare_for_run_epoch()
         # self.prepare_for_val()
-        # self.runner.model.apply(enable_static_estimate)
         # self.runner.val_loop.run()
         while self._epoch < self._max_epochs:
             self.prepare_for_run_epoch()

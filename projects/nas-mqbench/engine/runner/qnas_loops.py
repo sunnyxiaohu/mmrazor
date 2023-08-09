@@ -114,6 +114,12 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
         self.runner.call_hook('before_train_epoch')
         self.runner.model.train()
         # import pdb; pdb.set_trace()
+        if self._epoch < 5:
+            self.runner.model.module.sample_kinds = ['min']
+        else:
+            self.runner.model.module.sample_kinds = ['max', 'min', 'random0', 'random1']
+        # 1. from low-bit to high-bit
+        # 2. from high-bit to low-bit
         for idx, data_batch in enumerate(self.dataloader):
             if self.is_first_batch:
                 # lsq observer init
@@ -237,7 +243,7 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
                 elif 'random' in kind:
                     self.model.mutator.set_choices(
                         self.model.mutator.sample_choices())
-                elif kind in ['max_q32', 'min_q32', 'max_q8', 'min_q8', 'max_q4', 'min_q4']:
+                elif kind.startswith('max_q') or kind.startswith('min_q'):
                     is_max = kind.split('_')[0] == 'max'
                     bit = int(kind.split('_')[1].replace('q', ''))
                     self.model.mutator.set_choices(
