@@ -57,7 +57,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
     FLOAT_BITS = 32
     BASE_BITS = 4
 
-    def __init__(self, *args, param_share_mode = 0, **kwargs) -> None:
+    def __init__(self, *args, param_share_mode = 1, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # mode 0: Unshared
         # mode 1: Full shared
@@ -140,14 +140,15 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         mult = 1.0 / 2 ** (quant_bits - self.BASE_BITS)
         # mult = 1.0 / (quant_bits - self.BASE_BITS + + 1)
         org_static_enabled = self.static_enabled[0]
-        if index is not None and self.param_share_mode == 1:
+        if index is not None and self.param_share_mode == 0:
             local_scale = self.scale.data[:, index]
         else:
             local_scale = self.scale.data
         # Check whether is initialized or not. We choose scale as indicator
         # since zero_point may also be zero after initialized.
         scale_initialized = not torch.equal(local_scale, torch.ones_like(local_scale))
-        if scale_initialized:
+        scale_initialized = scale_initialized or not self.training
+        if not scale_initialized:
             self.static_enabled[0] = 1
         if self.static_enabled[0] == 1:
             self.activation_post_process(X.detach())
@@ -163,7 +164,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                 if self.param_share_mode == 2:
                     self.scale_adelta.data.repeat(1, len(_scale))
 
-            if index is not None and self.param_share_mode == 1:
+            if index is not None and self.param_share_mode == 0:
                 self.scale.data[:, index] = _scale
                 self.zero_point.data[:, index] = _zero_point
             elif index is not None and self.param_share_mode == 2:

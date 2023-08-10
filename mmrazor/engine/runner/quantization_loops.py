@@ -98,13 +98,14 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
     def run(self):
         """Launch training."""
         self.runner.call_hook('before_train')
-        self.runner.model.module.mutator.set_min_choices()
-        self.runner.val_loop.calibrate_bn_statistics(self.runner.train_dataloader,
-                                                     model = self.runner.model.module.architecture.architecture,
-                                                     calibrate_sample_num = 4096)
-        # self.prepare_for_run_epoch()
-        # self.prepare_for_val()
-        # self.runner.val_loop.run()
+        if hasattr(self.runner.model.module, 'mutator'):
+            self.runner.model.module.mutator.set_min_choices()
+            self.runner.val_loop.calibrate_bn_statistics(self.runner.train_dataloader,
+                                                         model = self.runner.model.module.architecture.architecture,
+                                                         calibrate_sample_num = 4096)
+        self.prepare_for_run_epoch()
+        self.prepare_for_val()
+        self.runner.val_loop.run()
         while self._epoch < self._max_epochs:
             self.prepare_for_run_epoch()
             self.run_epoch()
@@ -172,7 +173,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
             freeze_bn_begin=freeze_bn_begin,
             dynamic_intervals=dynamic_intervals)
 
-        self.is_first_batch = True
+        self._is_first_batch = True
         self.distributed = is_distributed()
 
     def prepare_for_run_epoch(self):
@@ -188,6 +189,10 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
         """Toggle the state of the observers and fake quantizers before
         validation."""
         self.runner.model.apply(enable_val)
+
+    @property
+    def is_first_batch(self):
+        return self._epoch == 0 and self._is_first_batch
 
     def run_epoch(self) -> None:
         """Iterate one epoch."""
@@ -211,7 +216,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
                         self.runner.model.parameters(), op='mean')
 
                 # Change back to param learning mode
-                self.is_first_batch = False
+                self._is_first_batch = False
                 self.runner.model.apply(enable_param_learning)
 
         self.runner.model.sync_qparams(src_mode='loss')
