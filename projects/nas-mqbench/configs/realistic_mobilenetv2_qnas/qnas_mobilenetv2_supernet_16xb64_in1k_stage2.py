@@ -10,7 +10,7 @@ optim_wrapper = dict(
         bypass_duplicate=True
     ))
 
-max_epochs = 20
+max_epochs = 100
 
 train_cfg = dict(
     _delete_=True,

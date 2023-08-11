@@ -163,8 +163,6 @@ def wrap_depth_scope(prepared_model, dynamic_seq_names, node_name_to_scope, inpl
 
     def module_call_wrapper(self, depth_scope, depth_mutable):
         _orig_module_call: Callable = self.forward
-        if getattr(self, '_already_patched', False):
-            return _orig_module_call
         self._DEPTH_SCOPE = depth_scope
         self._DEPTH_MUTABLE = depth_mutable
         self._already_patched = True
@@ -219,8 +217,9 @@ def wrap_depth_scope(prepared_model, dynamic_seq_names, node_name_to_scope, inpl
                     raise ValueError(f'Duplicated node: {node} in {memo[node]})')
                 if node.op == 'call_module':
                     module = _get_attrs(prepared_model, node.target)
-                    module.forward = MethodType(
-                        module_call_wrapper(module, idx, depth_mutable), module)
+                    if not getattr(module, '_already_patched', False):
+                        module.forward = MethodType(
+                            module_call_wrapper(module, idx, depth_mutable), module)
                 elif node.op == 'call_function':
                     # import pdb; pdb.set_trace()
                     new_func = function_call_wrapper(node.name, node.target, idx, depth_mutable)

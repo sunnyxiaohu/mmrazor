@@ -6,6 +6,8 @@ _base_.custom_imports.imports += [
     'projects.nas-mqbench.models.algorithms.qnas',
     'projects.nas-mqbench.models.quantizers.mutable_quantizer',
     'projects.nas-mqbench.engine.runner.qnas_loops',
+    'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_lsq',
+    'projects.nas-mqbench.models.observers.batch_lsq',
 ]
 
 supernet = dict(
@@ -32,8 +34,8 @@ supernet = dict(
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),
     a_observer=dict(type='mmrazor.LSQObserver'),
-    w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
+    w_fake_quant=dict(type='mmrazor.DynamicLearnableFakeQuantize'),
+    a_fake_quant=dict(type='mmrazor.DynamicLearnableFakeQuantize'),
     w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True),
     a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
 )
