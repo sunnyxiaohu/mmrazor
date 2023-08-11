@@ -60,9 +60,10 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
     def __init__(self, *args, param_share_mode = 1, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # mode 0: Unshared
-        # mode 1: Full shared
+        # mode 1: Full shared with all the bits sharing the same scale
         # mode 2: Reparameter and partially shared
-        assert param_share_mode in [0, 1, 2], f'Unexpected param_share_mode: {param_share_mode}'
+        # mode 3: Full shared with `S_{k+1} = 0.5*(1 - 1/(2^{k+1} - 1))*S_k`
+        assert param_share_mode in [0, 1, 2, 3], f'Unexpected param_share_mode: {param_share_mode}'
         self.param_share_mode = param_share_mode
         if self.param_share_mode == 2:
             self.scale_adelta = Parameter(torch.tensor([0.]))
@@ -113,7 +114,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             else:
                 quant_bits = int(math.log(self.quant_max - self.quant_min + 1, 2))
             index = None
-        if self.param_share_mode == 1:
+        if self.param_share_mode in [1, 3]:
             index = None
         return quant_bits, index
 
@@ -205,6 +206,11 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                     self.activation_post_process.reset_min_max_vals()
                 zero_point = self.zero_point
                 scale = self.scale
+                if self.param_share_mode == 3:
+                    pre_bits = self.BASE_BITS
+                    while(pre_bits <= quant_bits):
+                        scale = 0.5*(1 - 1.0/(2^(pre_bits + 1) - 1)) * scale
+                        pre_bits += 1
             else:
                 zero_point = self.zero_point[:, index]
                 if self.param_share_mode == 2:
