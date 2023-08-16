@@ -260,6 +260,7 @@ class DynamicLayerNorm(LayerNorm, DynamicLayerNormMixin):
                 input.dim()))
 
 
+@MODELS.register_module()
 class DynamicSyncBatchNorm(nn.SyncBatchNorm, DynamicBatchNormMixin):
     """DynamicOp for sync bn."""
 
@@ -285,10 +286,10 @@ class DynamicSyncBatchNorm(nn.SyncBatchNorm, DynamicBatchNormMixin):
         return nn.SyncBatchNorm
 
     def forward(self, input: Tensor) -> Tensor:
-        # currently only GPU input is supported
-        if not input.is_cuda:
-            raise ValueError(
-                'SyncBatchNorm expected input tensor to be on GPU')
+        # # currently only GPU input is supported
+        # if not input.is_cuda:
+        #     raise ValueError(
+        #         'SyncBatchNorm expected input tensor to be on GPU')
 
         self._check_input_dim(input)
         if hasattr(self, '_check_non_zero_input_channels'):

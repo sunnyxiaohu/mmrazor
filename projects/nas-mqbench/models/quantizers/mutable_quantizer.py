@@ -6,6 +6,7 @@ from inspect import signature
 import copy
 
 import torch
+from torch.nn.modules.batchnorm import _BatchNorm
 from mmengine.utils import import_modules_from_strings
 from mmrazor.registry import MODELS
 from mmrazor.models import OpenVINOQuantizer, LearnableFakeQuantize
@@ -280,8 +281,20 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
     for node in new_graph.nodes:
         if node.op == 'call_module':
             maybe_dynamic = _get_attrs(prepared_model, node.target)
+            # fp32 for BN when not fuse_bn
+            if isinstance(maybe_dynamic, _BatchNorm):
+                maybe_act = node.args[0]
+                if not (maybe_act.op == 'call_module' and isinstance(
+                        _get_attrs(prepared_model, maybe_act.target),
+                        LearnableFakeQuantize)):
+                    continue
+                qbits = OneShotMutableValue(alias=maybe_act.target + '.quant_bits', value_list=[32])
+                maybe_dynamic = _get_attrs(prepared_model, maybe_act.target)
+                maybe_dynamic.register_mutable_attr('quant_bits', qbits)
             # for activations
-            if isinstance(maybe_dynamic, dynamic_lsq.DynamicLearnableFakeQuantize):
+            elif isinstance(maybe_dynamic, dynamic_lsq.DynamicLearnableFakeQuantize):
+                if 'quant_bits' in maybe_dynamic.mutable_attrs:
+                    continue
                 this_bits = quant_bits
                 if maybe_dynamic in skipped_fake_quant:
                     this_bits = [default_skipped_bit]
