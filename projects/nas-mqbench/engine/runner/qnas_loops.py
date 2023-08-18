@@ -113,6 +113,10 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
         """Iterate one epoch."""
         self.runner.call_hook('before_train_epoch')
         self.runner.model.train()
+        if self._epoch < 5:
+            self.runner.model.module.sample_kinds = ['min']
+        else:
+            self.runner.model.module.sample_kinds = ['max', 'min', 'random0', 'random1']
         for idx, data_batch in enumerate(self.dataloader):
             if self.is_first_batch:
                 # lsq observer init

@@ -63,9 +63,10 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         # mode 1: Full shared with all the bits sharing the same scale
         # mode 2: Reparameter and partially shared
         # mode 3: Full shared with `S_{k+1} = 0.5*(1 - 1/(2^{k+1} - 1))*S_k`
-        assert param_share_mode in [0, 1, 2, 3], f'Unexpected param_share_mode: {param_share_mode}'
+        # mode 4: mode 2 with adelta constrained
+        assert param_share_mode in [0, 1, 2, 3, 4], f'Unexpected param_share_mode: {param_share_mode}'
         self.param_share_mode = param_share_mode
-        if self.param_share_mode == 2:
+        if self.param_share_mode in [2, 4]:
             self.scale_adelta = Parameter(torch.tensor([0.]))
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
 
@@ -94,7 +95,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             if self.param_share_mode == 0:
                 self.scale.data = torch.ones(1, len(mutable.choices)).to(device)
                 self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
-            if self.param_share_mode == 2:
+            if self.param_share_mode in [2, 4]:
                 self.scale_adelta.data = torch.zeros(1, len(mutable.choices)).to(device)
                 self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
             self.mutable_attrs['quant_bits'] = mutable
@@ -162,13 +163,13 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                                 torch.per_channel_affine):
                 self.scale.data.repeat(1, len(_scale))
                 self.zero_point.data.repeat(1, len(_zero_point))
-                if self.param_share_mode == 2:
+                if self.param_share_mode in [2, 4]:
                     self.scale_adelta.data.repeat(1, len(_scale))
 
             if index is not None and self.param_share_mode == 0:
                 self.scale.data[:, index] = _scale
                 self.zero_point.data[:, index] = _zero_point
-            elif index is not None and self.param_share_mode == 2:
+            elif index is not None and self.param_share_mode in [2, 4]:
                 self.scale.data.copy_(_scale)
                 self.zero_point.data[:, index] = _zero_point
             else:
@@ -180,7 +181,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             self.scale.data.clamp_(min=self.eps.item())
 
         # transitate to initialize scale_delta.
-        if scale_initialized and self.param_share_mode == 2:
+        if scale_initialized and self.param_share_mode in [2, 4]:
             local_scale = self.scale_adelta.data[:, index]
             if torch.equal(local_scale, torch.zeros_like(local_scale)):
                 self.activation_post_process(X.detach())
@@ -213,15 +214,23 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                         pre_bits += 1
             else:
                 zero_point = self.zero_point[:, index]
-                if self.param_share_mode == 2:
+                if self.param_share_mode in [2, 4]:
                     scale = self.scale
                     idx = 0
                     pre_bits = self.BASE_BITS
                     # import pdb; pdb.set_trace()
                     while(idx <= index):
-                        scale_adelta = self.scale_adelta[:, idx]
                         quant_bits = self.mutable_attrs['quant_bits'].choices[idx]
                         mult = 1.0 / 2 ** (quant_bits - pre_bits)
+                        if self.param_share_mode == 4:
+                            is_signed = int(self.dtype is torch.qint8)
+                            M = 0.3  # 0.7  # 0.05
+                            MQmax = M * (2** (pre_bits - is_signed) - 1)
+                            # import pdb; pdb.set_trace()
+                            adelta_m = scale * (MQmax - (1 - mult)) / (2 ** (quant_bits - is_signed) - 1)
+                            self.scale_adelta.data[:, idx] = torch.clamp(
+                                self.scale_adelta.data[:, idx], -adelta_m, adelta_m)
+                        scale_adelta = self.scale_adelta[:, idx]
                         scale = mult * scale + scale_adelta
                         idx += 1
                         pre_bits = quant_bits
