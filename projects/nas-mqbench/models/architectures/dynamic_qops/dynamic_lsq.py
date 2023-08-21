@@ -178,6 +178,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
 
             self.activation_post_process.reset_min_max_vals()
         else:
+            self.scale.data.abs_()
             self.scale.data.clamp_(min=self.eps.item())
 
         # transitate to initialize scale_delta.

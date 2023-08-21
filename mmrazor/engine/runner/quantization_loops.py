@@ -100,7 +100,7 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
         self.runner.call_hook('before_train')
 
         # Calibrate bn for float model only at the begining of the training process.
-        if hasattr(self.runner.model.module, 'mutator') and self._epoch == 0:
+        if hasattr(self.runner.model.module, 'mutator') and self._epoch == 0 and self._epoch + 1 == self.runner.val_loop.freeze_bn_begin:
             self.runner.model.module.mutator.set_min_choices()
             self.runner.val_loop.calibrate_bn_statistics(self.runner.train_dataloader,
                                                          model = self.runner.model.module.architecture.architecture,

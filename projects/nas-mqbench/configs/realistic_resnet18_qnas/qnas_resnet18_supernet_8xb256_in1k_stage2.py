@@ -21,7 +21,7 @@ train_cfg = dict(
     freeze_bn_begin=-1)
 
 # learning policy
-warm_epochs = 1
+warm_epochs = 5
 _base_.param_scheduler[0].end = warm_epochs
 _base_.param_scheduler[1].T_max = max_epochs - warm_epochs
 _base_.param_scheduler[1].begin = warm_epochs

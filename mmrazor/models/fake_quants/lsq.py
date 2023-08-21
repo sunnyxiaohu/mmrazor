@@ -236,6 +236,7 @@ class LearnableFakeQuantize(FakeQuantizeBase):
             self.scale.data.copy_(_scale)
             self.zero_point.data.copy_(_zero_point)
         else:
+            self.scale.data.abs_()
             self.scale.data.clamp_(min=self.eps.item())
 
         if self.fake_quant_enabled[0] == 1:
