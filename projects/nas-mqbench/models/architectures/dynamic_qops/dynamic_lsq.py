@@ -310,6 +310,10 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         2. during test, we have to recalibrate the minmax statics by
         enabling the observer updatable and forwarding a few batches fo data.
     """
+    def __init__(self, *args, residual_mode = 0, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.residual_mode = residual_mode
+        assert residual_mode in [0, 1], f'Unexpected residual_mode: {residual_mode}'
 
     @torch.jit.export
     def enable_val(self):
@@ -346,10 +350,14 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
 
         # TODO: Support per-channel according the shape of inputs.
         if self.fake_quant_enabled[0] == 1:
-            delta_scale = self.scale[:, index] if index is not None else self.scale
-            delta_zero_point = self.zero_point[:, index] if index is not None else self.zero_point
-            scale = _scale * delta_scale
-            zero_point = _zero_point + delta_zero_point
+            delta_mult = self.scale[:, index] if index is not None else self.scale
+            delta_add = self.zero_point[:, index] if index is not None else self.zero_point
+            if self.residual_mode == 0:
+                scale = _scale * delta_mult
+                zero_point = _zero_point + delta_add
+            elif self.residual_mode == 1:
+                scale = _scale * delta_mult + delta_add
+                zero_point = _zero_point
             if self.use_grad_scaling:
                 grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
             else:

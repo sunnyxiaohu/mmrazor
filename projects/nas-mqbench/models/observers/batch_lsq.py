@@ -63,8 +63,8 @@ class BatchLSQObserver(MinMaxObserver):
             self.min_val.copy_(min_val_cur)
             self.max_val.copy_(max_val_cur)
         else:
-            min_val = torch.min(min_val_cur, self.min_val)
-            max_val = torch.max(max_val_cur, self.max_val)
+            min_val = torch.stack([min_val_cur, self.min_val]).mean()
+            max_val = torch.stack([max_val_cur, self.max_val]).mean()
             self.min_val.copy_(min_val)
             self.max_val.copy_(max_val)
         return x_orig
