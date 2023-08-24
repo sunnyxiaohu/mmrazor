@@ -34,6 +34,8 @@ TORCH_observers = register_torch_observers()
 TORCH_fake_quants = register_torch_fake_quants()
 custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_qconv_fused'
 dynamic_qconv_fused = import_modules_from_strings(custom_imports)
+custom_imports = 'projects.nas-mqbench.models.observers.batch_lsq'
+batch_lsq = import_modules_from_strings(custom_imports)
 
 
 @LOOPS.register_module()
@@ -280,11 +282,13 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
     def _qat_evaluate_once(self, kind='') -> Dict:
         """Evaluate a subnet once with BN re-calibration."""
         qat_metrics = dict()
-
+        # import pdb; pdb.set_trace()
         if self.calibrate_sample_num > 0:
+            self.runner.model.apply(batch_lsq.update_estimator_mode_2)
             self.calibrate_bn_statistics(self.runner.train_dataloader,
                                          model = self.model,
                                          calibrate_sample_num = self.calibrate_sample_num)
+            self.runner.model.apply(batch_lsq.update_estimator_mode_0)
         self.model.eval()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch, self.model)
@@ -296,9 +300,11 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
             # self.runner.message_hub.log_scalars.pop(f'val/{ori_key}', None)
 
         if self.calibrate_sample_num > 0:
+            self.runner.model.apply(batch_lsq.update_estimator_mode_2)
             self.calibrate_bn_statistics(self.runner.train_dataloader,
                                          model = self.architecture,
                                          calibrate_sample_num = self.calibrate_sample_num)
+            self.runner.model.apply(batch_lsq.update_estimator_mode_0)
         self.architecture.eval()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch, self.architecture)
@@ -308,6 +314,7 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
             ori_key = 'original.' + key
             qat_metrics[ori_key] = value
             # self.runner.message_hub.log_scalars.pop(f'val/{qat_key}', None)
+        self.runner.model.apply(batch_lsq.update_estimator_mode_1)
 
         return qat_metrics
 
