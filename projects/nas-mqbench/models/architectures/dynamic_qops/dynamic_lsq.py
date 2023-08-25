@@ -136,11 +136,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         if quant_bits == self.FLOAT_BITS:
             return X
 
-        # Experimentally: 
-        #   for act:    mult = 1.0 / 4, maby because of BN?
-        #   for weight: mutlt = 1.0 / 10, it seems the range for weight is somewhat more stable.
         mult = 1.0 / 2 ** (quant_bits - self.BASE_BITS)
-        # mult = 1.0 / (quant_bits - self.BASE_BITS + + 1)
         org_static_enabled = self.static_enabled[0]
         if index is not None and self.param_share_mode == 0:
             local_scale = self.scale.data[:, index]
@@ -209,10 +205,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                 zero_point = self.zero_point
                 scale = self.scale
                 if self.param_share_mode == 3:
-                    pre_bits = self.BASE_BITS
-                    while(pre_bits <= quant_bits):
-                        scale = 0.5*(1 - 1.0/(2^(pre_bits + 1) - 1)) * scale
-                        pre_bits += 1
+                    scale = mult * scale
             else:
                 zero_point = self.zero_point[:, index]
                 if self.param_share_mode in [2, 4]:
@@ -310,6 +303,9 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         super().__init__(*args, **kwargs)
         self.residual_mode = residual_mode
         assert residual_mode in [0, 1], f'Unexpected residual_mode: {residual_mode}'
+        assert self.param_share_mode in [0, 1, 3, 4], f'Unexpected param_share_mode: {self.param_share_mode}'
+        if self.param_share_mode == 4:
+            self.scale_adelta.data = torch.tensor([1.])
 
     @torch.jit.export
     def enable_val(self):
@@ -331,6 +327,12 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         #     self.delta_zero_point.detach()))
         raise NotImplementedError()
 
+    def register_mutable_attr(self, attr, mutable):
+        super().register_mutable_attr(attr, mutable)
+        if self.param_share_mode == 4:
+            device = self.scale_adelta.device
+            self.scale_adelta.data = torch.ones_like(self.scale_adelta).to(device)
+
     def forward(self, X):
         """Forward computation.
 
@@ -346,14 +348,46 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
 
         # TODO: Support per-channel according the shape of inputs.
         if self.fake_quant_enabled[0] == 1:
-            delta_mult = self.scale[:, index] if index is not None else self.scale
+            self.scale.data.abs_()
+            self.scale.data.clamp_(min=self.eps.item())
             delta_add = self.zero_point[:, index] if index is not None else self.zero_point
-            if self.residual_mode == 0:
+            if self.param_share_mode == 3:
+                assert self.residual_mode == 0, f'Unsuported residual_mode: {self.residual_mode}'
+                M = 0.3
+                delta_mult = self.scale * (1 + M) ** (quant_bits - self.BASE_BITS)
                 scale = _scale * delta_mult
                 zero_point = _zero_point + delta_add
-            elif self.residual_mode == 1:
-                scale = _scale * delta_mult + delta_add
-                zero_point = _zero_point
+            elif self.param_share_mode == 4:
+                # import pdb; pdb.set_trace()
+                assert self.residual_mode == 0, f'Unsuported residual_mode: {self.residual_mode}'
+                idx = 0
+                while(idx < len(self.mutable_attrs['quant_bits'].choices)):
+                    idx_quant_bits = self.mutable_attrs['quant_bits'].choices[idx]
+                    M = 0.3  # 0.7  # 0.05
+                    idx_delta_mult = self.scale_adelta[:, idx]
+                    clip_m = idx_delta_mult * (1 + M) ** (quant_bits - idx_quant_bits)
+                    if idx == index:
+                        idx += 1
+                        continue
+                    elif idx > index:
+                        self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], min=clip_m)
+                    else:
+                        self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], max=clip_m)
+                    idx += 1
+                self.scale_adelta.data.abs_()
+                self.scale_adelta.data.clamp_(min=self.eps.item())
+                delta_mult = self.scale_adelta[:, index]
+                scale = _scale * delta_mult
+                zero_point = _zero_point + delta_add
+            else:
+                delta_mult = self.scale[:, index] if index is not None else self.scale
+                if self.residual_mode == 0:
+                    scale = _scale * delta_mult
+                    zero_point = _zero_point + delta_add
+                elif self.residual_mode == 1:
+                    scale = _scale * delta_mult + delta_add
+                    zero_point = _zero_point.float()
+
             if self.use_grad_scaling:
                 grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
             else:
