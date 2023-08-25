@@ -224,12 +224,9 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                         quant_bits = self.mutable_attrs['quant_bits'].choices[idx]
                         mult = 1.0 / 2 ** (quant_bits - pre_bits)
                         if self.param_share_mode == 4:
-                            is_signed = int(self.dtype is torch.qint8)
                             M = 0.3  # 0.7  # 0.05
-                            # MQmax = M * (2** (pre_bits - is_signed) - 1)
-                            # # import pdb; pdb.set_trace()
-                            # adelta_m = scale * (MQmax - (1 - mult)) / (2 ** (quant_bits - is_signed) - 1)
-                            adelta_m = scale * mult * M
+                            clip_m = mult * scale * M
+                            self.scale_adelta.data[:, idx] = torch.clamp(self.scale_adelta.data[:, idx], -clip_m, clip_m)
                         scale_adelta = self.scale_adelta[:, idx]
                         scale = mult * scale + scale_adelta
                         idx += 1
