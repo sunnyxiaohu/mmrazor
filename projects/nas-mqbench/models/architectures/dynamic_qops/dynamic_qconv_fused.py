@@ -244,7 +244,7 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         with substitute_bn_class_map():
             super().__init__(*args, **kwarg)
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
-        self._enable_slow_path_for_better_numerical_stability = False
+        self._enable_slow_path_for_better_numerical_stability = True
 
     def _forward_approximate(self, input):
         """Approximated method to fuse conv and bn. It requires only one forward pass.

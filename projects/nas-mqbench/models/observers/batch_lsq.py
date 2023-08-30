@@ -51,17 +51,11 @@ class BatchLSQObserver(MinMaxObserver):
     def __init__(self, *args, extreme_estimator=0, **kwargs):
         super().__init__(*args, **kwargs)
         self.extreme_estimator = extreme_estimator
-        # estimator_mode defines the way to estimate min_val and max_val
-        # 0: no estimate min_val and max_val
-        # 1: estimate min_val and max_val only by current batch
-        # 2: estimate min_val and max_val by avraging multiple batches.
-        self.register_buffer('estimator_mode',
-                             torch.tensor([1], dtype=torch.uint8))
 
 
     def forward(self, x_orig):
         """Records the running minimum, maximum and tensor_norm of ``x``."""
-        if x_orig.numel() == 0 or self.estimator_mode[0] == 0:
+        if x_orig.numel() == 0:
             return x_orig
         x = x_orig.detach()  # avoid keeping autograd tape
         x = x.to(self.min_val.dtype)
@@ -83,19 +77,7 @@ class BatchLSQObserver(MinMaxObserver):
         else:
             raise ValueError(f'Unsupported extreme estimator type: {self.extreme_estimator}')
 
-        if self.estimator_mode[0] == 1:
-            self.min_val.copy_(min_val_cur)
-            self.max_val.copy_(max_val_cur)
-        elif self.estimator_mode[0] == 2:
-            if self.min_val == float('inf') or self.max_val == float('-inf'):
-                min_val = min_val_cur
-                max_val = max_val_cur
-            else:
-                min_val = torch.stack([min_val_cur, self.min_val]).mean()
-                max_val = torch.stack([max_val_cur, self.max_val]).mean()
-            self.min_val.copy_(min_val)
-            self.max_val.copy_(max_val)
-        else:
-            raise ValueError(f'Unsupported estimator_mode: {self.estimator_mode}')
+        self.min_val.copy_(min_val_cur)
+        self.max_val.copy_(max_val_cur)
         return x_orig
 

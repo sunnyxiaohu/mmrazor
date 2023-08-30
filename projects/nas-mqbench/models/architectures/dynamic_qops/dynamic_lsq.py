@@ -64,7 +64,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         # mode 2: Reparameter and partially shared
         # mode 3: Full shared with `S_{k+1} = 0.5*(1 - 1/(2^{k+1} - 1))*S_k`
         # mode 4: mode 2 with adelta constrained
-        assert param_share_mode in [0, 1, 2, 3, 4], f'Unexpected param_share_mode: {param_share_mode}'
+        assert param_share_mode in [0, 1, 2, 3, 4, 5], f'Unexpected param_share_mode: {param_share_mode}'
         self.param_share_mode = param_share_mode
         if self.param_share_mode in [2, 4]:
             self.scale_adelta = Parameter(torch.tensor([0.]))
@@ -303,7 +303,7 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         super().__init__(*args, **kwargs)
         self.residual_mode = residual_mode
         assert residual_mode in [0, 1], f'Unexpected residual_mode: {residual_mode}'
-        assert self.param_share_mode in [0, 1, 3, 4], f'Unexpected param_share_mode: {self.param_share_mode}'
+        assert self.param_share_mode in [0, 1, 3, 4, 5], f'Unexpected param_share_mode: {self.param_share_mode}'
         if self.param_share_mode == 4:
             self.scale_adelta.data = torch.tensor([1.])
 
@@ -329,9 +329,11 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
 
     def register_mutable_attr(self, attr, mutable):
         super().register_mutable_attr(attr, mutable)
+        device = self.scale.device
         if self.param_share_mode == 4:
-            device = self.scale_adelta.device
             self.scale_adelta.data = torch.ones_like(self.scale_adelta).to(device)
+        if self.param_share_mode == 5:
+            self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
 
     def forward(self, X):
         """Forward computation.
@@ -351,9 +353,9 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
             self.scale.data.abs_()
             self.scale.data.clamp_(min=self.eps.item())
             delta_add = self.zero_point[:, index] if index is not None else self.zero_point
-            if self.param_share_mode == 3:
+            if self.param_share_mode in [3, 5]:
                 assert self.residual_mode == 0, f'Unsuported residual_mode: {self.residual_mode}'
-                M = 0.3
+                M = 0.2
                 delta_mult = self.scale * (1 + M) ** (quant_bits - self.BASE_BITS)
                 scale = _scale * delta_mult
                 zero_point = _zero_point + delta_add

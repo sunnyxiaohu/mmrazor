@@ -1,11 +1,15 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import logging
 import os
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
+import torch.distributed as dist
+from torch import Tensor
+from torch.nn.modules.batchnorm import _BatchNorm
 from mmengine.evaluator import Evaluator
 from mmengine.logging import print_log
-from mmengine.runner import EpochBasedTrainLoop, TestLoop, ValLoop
+from mmengine.runner import EpochBasedTrainLoop, TestLoop, ValLoop, autocast
 from mmengine.utils import import_modules_from_strings
 
 try:
@@ -24,11 +28,11 @@ from torch.utils.data import DataLoader
 from mmrazor.models import register_torch_fake_quants, register_torch_observers
 from mmrazor.models.fake_quants import (enable_param_learning,
                                         enable_static_estimate, enable_val)
-from mmrazor.models.utils import add_prefix
+from mmrazor.models.utils import add_prefix, get_module_device
 from mmrazor.structures import export_fix_subnet
 from mmrazor.registry import LOOPS, TASK_UTILS                                      
 from mmrazor.engine.runner import QATEpochBasedLoop
-from mmrazor.engine.runner.utils import CalibrateBNMixin
+from mmrazor.engine.runner.utils.calibrate_bn_mixin import AverageMeter
 
 TORCH_observers = register_torch_observers()
 TORCH_fake_quants = register_torch_fake_quants()
@@ -36,6 +40,153 @@ custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic
 dynamic_qconv_fused = import_modules_from_strings(custom_imports)
 custom_imports = 'projects.nas-mqbench.models.observers.batch_lsq'
 batch_lsq = import_modules_from_strings(custom_imports)
+
+
+class CalibrateMixin:
+    fp16: bool = False
+
+    @torch.no_grad()
+    def calibrate_bn_observer_statistics(self,
+                                dataloader: DataLoader,
+                                calibrate_sample_num: int = 2000,
+                                model = None) -> None:
+        if model is None:
+            model = self.runner.model
+
+        def record_bn_statistics_hook(bn_module: _BatchNorm, input: Tensor,
+                                      output: Tensor) -> None:
+            mean_average_meter: AverageMeter = bn_module.__mean_average_meter__
+            var_average_meter: AverageMeter = bn_module.__var_average_meter__
+
+            real_input = input[0]
+            mean = real_input.mean((0, 2, 3))
+            var = real_input.var((0, 2, 3), unbiased=True)
+
+            mean_average_meter.update(mean, real_input.size(0))
+            var_average_meter.update(var, real_input.size(0))
+
+        def record_observer_statistics_hook(observer_module, input: Tensor,
+                                            output: Tensor) -> None:
+            max_average_meter: AverageMeter = observer_module.__max_average_meter__
+            min_average_meter: AverageMeter = observer_module.__min_average_meter__
+
+            max_val = observer_module.max_val
+            min_val = observer_module.min_val
+            max_average_meter.update(max_val, 1)
+            min_average_meter.update(min_val, 1)
+
+        hook_handles = []
+
+        for name, module in model.named_modules():
+            if isinstance(module, _BatchNorm):
+                print_log('register `record_bn_statistics_hook` to module: '
+                          f'{name}', logger='current', level=logging.DEBUG)
+                module.__mean_average_meter__ = AverageMeter()
+                module.__var_average_meter__ = AverageMeter()
+                handle = module.register_forward_hook(
+                    record_bn_statistics_hook)
+                hook_handles.append(handle)
+            if isinstance(module, batch_lsq.BatchLSQObserver):
+                print_log('register `record_observer_statistics_hook` to module: '
+                          f'{name}', logger='current', level=logging.DEBUG)
+                module.__max_average_meter__ = AverageMeter()
+                module.__min_average_meter__ = AverageMeter()
+                handle = module.register_forward_hook(
+                    record_observer_statistics_hook)
+                hook_handles.append(handle)
+
+        model.train()
+        print_log('Start calibrating bn and observer statistics', logger='current')
+        print_log(f'Total sample number for calibration: {calibrate_sample_num}',
+                  logger='current')
+        remaining = calibrate_sample_num
+        for data_batch in dataloader:
+            # TODO: Handle remaining can not be divided evenly by total data_batch
+            # if len(data_batch) >= remaining:
+            #     data_batch = data_batch[:remaining]
+            if isinstance(data_batch, torch.Tensor):
+                data_batch_nums = len(data_batch)
+            else:
+                data_batch_nums = len(data_batch['inputs'])
+            if dist.is_initialized() and dist.is_available():
+                data_batch_tensor = torch.tensor(
+                    [data_batch_nums], device=get_module_device(model))
+                dist.all_reduce(
+                    data_batch_tensor, dist.ReduceOp.SUM, async_op=False)
+                data_batch_nums = data_batch_tensor.item()
+            remaining -= data_batch_nums
+
+            print_log(f'Remaining samples for calibration: {remaining}',
+                      logger='current', level=logging.DEBUG)
+            with autocast(enabled=self.fp16):
+                model.test_step(data_batch)
+
+            if remaining <= 0:
+                break
+
+        for name, module in model.named_modules():
+            if isinstance(module, _BatchNorm):
+                mean_average_meter = module.__mean_average_meter__
+                var_average_meter = module.__var_average_meter__
+                if mean_average_meter.count == 0 or \
+                        var_average_meter.count == 0:
+                    assert mean_average_meter.count == 0 and \
+                        var_average_meter.count == 0
+                    print_log(f'layer {name} is not chosen, ignored',
+                              logger='current', level=logging.DEBUG)
+                    continue
+
+                calibrated_bn_mean = mean_average_meter.avg
+                calibrated_bn_var = var_average_meter.avg
+
+                feature_dim = calibrated_bn_mean.size(0)
+
+                print_log(
+                    f'layer: {name}, '
+                    f'current feature dimension: {feature_dim}, '
+                    'number of samples for calibration: '
+                    f'{mean_average_meter.count}, '
+                    'l2 norm of calibrated running mean: '
+                    f'{calibrated_bn_mean.norm()}, '
+                    'l2 norm of calibrated running var: '
+                    f'{calibrated_bn_var.norm()}, '
+                    'l2 norm of original running mean: '
+                    f'{module.running_mean[:feature_dim].norm()}, '
+                    'l2 norm of original running var: '
+                    f'{module.running_var[:feature_dim].norm()}, ',
+                    logger='current', level=logging.DEBUG)
+
+                module.running_mean[:feature_dim].copy_(calibrated_bn_mean)
+                module.running_var[:feature_dim].copy_(calibrated_bn_var)
+
+                del module.__mean_average_meter__
+                del module.__var_average_meter__
+
+            if isinstance(module, batch_lsq.BatchLSQObserver):
+                max_average_meter = module.__max_average_meter__
+                min_average_meter = module.__min_average_meter__
+                if max_average_meter.count == 0 or \
+                        min_average_meter.count == 0:
+                    assert max_average_meter.count == 0 and \
+                        min_average_meter.count == 0
+                    print_log(f'layer {name} is not chosen, ignored',
+                              logger='current', level=logging.DEBUG)
+                    continue
+
+                calibrated_max_val = max_average_meter.avg
+                calibrated_min_val = min_average_meter.avg
+
+                module.max_val.copy_(calibrated_max_val)
+                module.min_val.copy_(calibrated_min_val)
+
+                del module.__max_average_meter__
+                del module.__min_average_meter__
+
+        print_log('Remove all hooks for calibration',
+                  logger='current', level=logging.DEBUG)
+        print_log('Calibrate bn and observer statistics done', logger='current')
+        for handle in hook_handles:
+            handle.remove()
 
 
 @LOOPS.register_module()
@@ -148,7 +299,7 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
 
 
 @LOOPS.register_module()
-class QNASValLoop(ValLoop, CalibrateBNMixin):
+class QNASValLoop(ValLoop, CalibrateMixin):
     """`ValLoop` for `QuantizationAwareTraining`
 
     Args:
@@ -255,9 +406,9 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
     def _evaluate_once(self, kind='') -> Dict:
         """Evaluate a subnet once with BN re-calibration."""
         if self.calibrate_sample_num > 0:
-            self.calibrate_bn_statistics(self.runner.train_dataloader,
-                                         model = self.architecture,
-                                         calibrate_sample_num = self.calibrate_sample_num)
+            self.calibrate_bn_observer_statistics(self.runner.train_dataloader,
+                                                  model = self.architecture,
+                                                  calibrate_sample_num = self.calibrate_sample_num)
         self.architecture.eval()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch, self.architecture)
@@ -284,11 +435,9 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
         qat_metrics = dict()
         # import pdb; pdb.set_trace()
         if self.calibrate_sample_num > 0:
-            self.runner.model.apply(batch_lsq.update_estimator_mode_2)
-            self.calibrate_bn_statistics(self.runner.train_dataloader,
-                                         model = self.model,
-                                         calibrate_sample_num = self.calibrate_sample_num)
-            self.runner.model.apply(batch_lsq.update_estimator_mode_0)
+            self.calibrate_bn_observer_statistics(self.runner.train_dataloader,
+                                                  model = self.model,
+                                                  calibrate_sample_num = self.calibrate_sample_num)
         self.model.eval()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch, self.model)
@@ -300,11 +449,9 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
             # self.runner.message_hub.log_scalars.pop(f'val/{ori_key}', None)
 
         if self.calibrate_sample_num > 0:
-            self.runner.model.apply(batch_lsq.update_estimator_mode_2)
-            self.calibrate_bn_statistics(self.runner.train_dataloader,
-                                         model = self.architecture,
-                                         calibrate_sample_num = self.calibrate_sample_num)
-            self.runner.model.apply(batch_lsq.update_estimator_mode_0)
+            self.calibrate_bn_observer_statistics(self.runner.train_dataloader,
+                                                  model = self.architecture,
+                                                  calibrate_sample_num = self.calibrate_sample_num)
         self.architecture.eval()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch, self.architecture)
@@ -314,7 +461,6 @@ class QNASValLoop(ValLoop, CalibrateBNMixin):
             ori_key = 'original.' + key
             qat_metrics[ori_key] = value
             # self.runner.message_hub.log_scalars.pop(f'val/{qat_key}', None)
-        self.runner.model.apply(batch_lsq.update_estimator_mode_1)
 
         return qat_metrics
 
