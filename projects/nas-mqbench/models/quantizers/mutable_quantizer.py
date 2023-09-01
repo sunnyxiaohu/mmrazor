@@ -50,7 +50,7 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
 
     def __init__(self, *args, tracer: Dict = dict(type='CustomTracer'),
                  quant_bits=None, quant_bits_skipped_module_names=None,
-                 default_skipped_bit=8, **kwargs):
+                 default_skipped_bit=8, nested_quant_bits_in_layer=False, **kwargs):
         if 'skipped_module_classes' in tracer:
             tracer['skipped_module_classes'] = str2class(tracer['skipped_module_classes'])
         super().__init__(*args, tracer=tracer, **kwargs)
@@ -59,6 +59,7 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
             quant_bits_skipped_module_names = []
         self.quant_bits_skipped_module_names = quant_bits_skipped_module_names
         self.default_skipped_bit = default_skipped_bit
+        self.nested_quant_bits_in_layer = nested_quant_bits_in_layer
 
     @property
     def backend(self):
@@ -124,7 +125,7 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
         if self.quant_bits:
             prepared = register_mutables_for_dynamic_fakequant(
                 prepared, tuple(self.quant_bits_skipped_module_names), self.quant_bits,
-                self.default_skipped_bit, True)
+                self.default_skipped_bit, True, nested_quant_bits_in_layer=self.nested_quant_bits_in_layer)
         prepared = modify_fakequant_to_int8(
             prepared, tuple(self.quant_bits_skipped_module_names), True)
 
@@ -219,6 +220,7 @@ def wrap_depth_scope(prepared_model, dynamic_seq_names, node_name_to_scope, inpl
                 if node.op == 'call_module':
                     module = _get_attrs(prepared_model, node.target)
                     if not getattr(module, '_already_patched', False):
+                        # Note that this is temporally support, that all the hooks also should be modified.
                         module.forward = MethodType(
                             module_call_wrapper(module, idx, depth_mutable), module)
                 elif node.op == 'call_function':
@@ -237,7 +239,8 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
                                             module_patterns: Tuple,
                                             quant_bits: List = None,
                                             default_skipped_bit = 32,
-                                            inplace: bool = True):
+                                            inplace: bool = True,
+                                            nested_quant_bits_in_layer = False):
     """Register mutables for dynamic fakequant. It will follow the rules bellow
     to register mutables:
     1. if quant_bits contains `FLOAT_BITS`, all the dynamic fakequant will use
@@ -253,6 +256,8 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
         default_skipped_bit (int): If matched, the default skipped bit will be registered.
         inplace (bool): Can optionally do the operation in-place.
             Defaults to True.
+        nested_quant_bits_in_layer: Nested quant_bits of  Activations(input) to the
+            corresponding layer, so that we could easily BitFlops.
 
     Returns:
         GraphModule: Prepared standalone module after modified.
@@ -303,12 +308,19 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
             # for weights
             elif hasattr(maybe_dynamic, 'weight_fake_quant') and isinstance(
                     maybe_dynamic.weight_fake_quant, dynamic_lsq.DynamicLearnableFakeQuantize):
-                maybe_dynamic = maybe_dynamic.weight_fake_quant
+                maybe_dynamicw = maybe_dynamic.weight_fake_quant
                 this_bits = quant_bits
-                if maybe_dynamic in skipped_fake_quant:
+                if maybe_dynamicw in skipped_fake_quant:
                     this_bits = [default_skipped_bit]
                 qbits = OneShotMutableValue(alias=node.target + '.weight_fake_quant.quant_bits', value_list=this_bits)
-                maybe_dynamic.register_mutable_attr('quant_bits', qbits)
+                maybe_dynamicw.register_mutable_attr('quant_bits', qbits)
+
+                if nested_quant_bits_in_layer:
+                    maybe_act = node.args[0]
+                    if not (maybe_act.op == 'call_module' and isinstance(
+                            _get_attrs(prepared_model, maybe_act.target), dynamic_lsq.DynamicLearnableFakeQuantize)):
+                        continue
+                    maybe_dynamic._ACT_QUANT_BITS = _get_attrs(prepared_model, maybe_act.target).mutable_attrs['quant_bits']
 
     new_graph.lint()
     prepared_model.graph = new_graph

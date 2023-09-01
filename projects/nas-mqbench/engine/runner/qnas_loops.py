@@ -1,16 +1,25 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import logging
 import os
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+import os.path as osp
+import random
+import time
+import warnings
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
+import numpy as np
 import torch
 import torch.distributed as dist
 from torch import Tensor
 from torch.nn.modules.batchnorm import _BatchNorm
+from torch.utils.data import DataLoader
+from mmengine import fileio
+from mmengine.dist import broadcast_object_list, all_reduce_params, is_distributed
 from mmengine.evaluator import Evaluator
 from mmengine.logging import print_log
 from mmengine.runner import EpochBasedTrainLoop, TestLoop, ValLoop, autocast
-from mmengine.utils import import_modules_from_strings
+from mmengine.utils import is_list_of, import_modules_from_strings
+
 
 try:
     from torch.ao.quantization import (disable_observer, enable_fake_quant,
@@ -22,16 +31,15 @@ except ImportError:
     enable_fake_quant = get_placeholder('torch>=1.13')
     enable_observer = get_placeholder('torch>=1.13')
 
-from mmengine.dist import all_reduce_params, is_distributed
-from torch.utils.data import DataLoader
-
 from mmrazor.models import register_torch_fake_quants, register_torch_observers
 from mmrazor.models.fake_quants import (enable_param_learning,
                                         enable_static_estimate, enable_val)
 from mmrazor.models.utils import add_prefix, get_module_device
-from mmrazor.structures import export_fix_subnet
-from mmrazor.registry import LOOPS, TASK_UTILS                                      
-from mmrazor.engine.runner import QATEpochBasedLoop
+from mmrazor.structures import Candidates, export_fix_subnet, export_fix_subnet
+from mmrazor.registry import LOOPS, TASK_UTILS
+from mmrazor.utils import SupportRandomSubnet
+from mmrazor.engine.runner import QATEpochBasedLoop, EvolutionSearchLoop
+from mmrazor.engine.runner.utils import check_subnet_resources, crossover
 from mmrazor.engine.runner.utils.calibrate_bn_mixin import AverageMeter
 
 TORCH_observers = register_torch_observers()
@@ -483,3 +491,90 @@ class QNASValLoop(ValLoop, CalibrateMixin):
             batch_idx=idx,
             data_batch=data_batch,
             outputs=outputs)
+
+
+def nonqmin(mutables):
+    """Sample choice for mutables except `quant_bits`"""
+    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
+        choice = mutables[0].current_choice
+    else:
+        choice = mutables[0].min_choice
+    return choice
+
+@LOOPS.register_module()
+class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
+    """Loop for evolution searching."""
+
+    def sample_candidates(self) -> None:
+        """Update candidate pool contains specified number of candicates."""
+        candidates_resources = []
+        init_candidates = len(self.candidates)
+        idx = 0
+        if self.runner.rank == 0:
+            while len(self.candidates) < self.num_candidates:
+                idx += 1
+                if idx == 1:
+                    candidate = self.model.mutator.sample_choices('max')
+                elif idx == 2:
+                    candidate = self.model.mutator.sample_choices('min')
+                else:
+                    candidate = self.model.mutator.sample_choices()
+                self.model.mutator.set_choices(candidate)
+                candidate = self.model.mutator.sample_choices(kind=nonqmin)
+                is_pass, result = self._check_constraints(
+                    random_subnet=candidate)
+                if is_pass:
+                    self.candidates.append(candidate)
+                    candidates_resources.append(result)
+            self.candidates = Candidates(self.candidates.data)
+        else:
+            self.candidates = Candidates([dict(a=0)] * self.num_candidates)
+
+        if len(candidates_resources) > 0:
+            self.candidates.update_resources(
+                candidates_resources,
+                start=len(self.candidates.data) - len(candidates_resources))
+            assert init_candidates + len(
+                candidates_resources) == self.num_candidates
+
+        # broadcast candidates to val with multi-GPUs.
+        broadcast_object_list(self.candidates.data)
+
+    @torch.no_grad()
+    def _val_candidate(self, use_predictor: bool = False) -> Dict:
+        """Run validation.
+
+        Args:
+            use_predictor (bool): Whether to use predictor to get metrics.
+                Defaults to False.
+        """
+        if use_predictor:
+            assert self.predictor is not None
+            metrics = self.predictor.predict(self.model)
+        else:
+            if self.calibrate_sample_num > 0:
+                self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
+                                                      self.calibrate_sample_num)
+            self.runner.model.eval()
+            for data_batch in self.dataloader:
+                outputs = self.runner.model.val_step(data_batch)
+                self.evaluator.process(
+                    data_samples=outputs, data_batch=data_batch)
+            metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
+        return metrics
+
+    def _check_constraints(
+            self, random_subnet: SupportRandomSubnet) -> Tuple[bool, Dict]:
+        """Check whether is beyond constraints.
+
+        Returns:
+            bool, result: The result of checking.
+        """
+        is_pass, results = check_subnet_resources(
+            model=self.model,
+            subnet=random_subnet,
+            estimator=self.estimator,
+            constraints_range=self.constraints_range,
+            export=False)
+
+        return is_pass, results

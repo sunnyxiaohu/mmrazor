@@ -19,7 +19,8 @@ def check_subnet_resources(
     model,
     subnet: SupportRandomSubnet,
     estimator: ResourceEstimator,
-    constraints_range: Dict[str, Any] = dict(flops=(0, 330))
+    constraints_range: Dict[str, Any] = dict(flops=(0, 330)),
+    export=True,
 ) -> Tuple[bool, Dict]:
     """Check whether is beyond resources constraints.
 
@@ -33,15 +34,16 @@ def check_subnet_resources(
     model.mutator.set_choices(subnet)
     # Support nested algorithm.
     model_to_check = model
-    while(isinstance(model_to_check, BaseAlgorithm)):
-        model_to_check = model_to_check.architecture
+    if export:
+        while(isinstance(model_to_check, BaseAlgorithm)):
+            model_to_check = model_to_check.architecture
 
-    _, sliced_model = export_fix_subnet(model_to_check, slice_weight=True)
+        _, model_to_check = export_fix_subnet(model_to_check, slice_weight=True)
 
-    if isinstance(sliced_model, BaseDetector):
-        results = estimator.estimate(model=sliced_model.backbone)
+    if isinstance(model_to_check, BaseDetector):
+        results = estimator.estimate(model=model_to_check.backbone)
     else:
-        results = estimator.estimate(model=sliced_model)
+        results = estimator.estimate(model=model_to_check)
 
     for k, v in constraints_range.items():
         if not isinstance(v, (list, tuple)):
