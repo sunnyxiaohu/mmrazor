@@ -405,20 +405,65 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
 
     @property
     def static_op_factory(self):
-        return nn.Conv2d
+        return nniqat.ConvBn2d
 
     @classmethod
     def convert_from(cls, module):
         return cls.from_float(module)
 
     def to_static_op(self):  
-        mod = self.to_float()
-        for attr, value in self.mutable_attrs.items():
-            mod.register_mutable_attr(attr, value)
-        if isinstance(mod, DynamicMixin):
-            mod = mod.to_static_op()
-        else:
-            traverse_children(mod._modules)
+        # cls = type(self)
+        # conv = cls._FLOAT_CONV_MODULE(  # type: ignore[attr-defined]
+        #     self.in_channels,
+        #     self.out_channels,
+        #     self.kernel_size,
+        #     self.stride,
+        #     self.padding,
+        #     self.dilation,
+        #     self.groups,
+        #     self.bias is not None,
+        #     self.padding_mode)
+        # conv.weight = torch.nn.Parameter(self.weight.detach())
+        # if self.bias is not None:
+        #     conv.bias = torch.nn.Parameter(self.bias.detach())
+
+        # bn = cls._FLOAT_BN_MODULE(
+        #     num_features=self.bn.num_features,
+        #     eps=self.bn.eps,
+        #     momentum=self.bn.momentum,
+        #     affine=self.bn.affine,
+        #     track_running_stats=self.bn.track_running_stats)
+        # if self.bn.running_mean is not None:
+        #     bn.running_mean.copy_(self.bn.running_mean)
+        #     bn.running_mean = bn.running_mean.to(
+        #         self.bn.running_mean.device)
+        # if self.bn.running_var is not None:
+        #     bn.running_var.copy_(self.bn.running_var)
+        #     bn.running_var = bn.running_var.to(
+        #         self.bn.running_var.device)
+        # if self.bn.weight is not None:
+        #     bn.weight = nn.Parameter(self.bn.weight)
+        # if self.bn.bias is not None:
+        #     bn.bias = nn.Parameter(self.bn.bias)
+
+        # modules = [conv, bn]
+        # if cls._FLOAT_RELU_MODULE:  # type: ignore[attr-defined]
+        #     relu = cls._FLOAT_RELU_MODULE()  # type: ignore[attr-defined]
+        #     modules.append(relu)
+        # mod = cls._FLOAT_MODULE(*modules)  # type: ignore[attr-defined]
+        # mod.train(self.training)
+
+        # for attr, value in self.mutable_attrs.items():
+        #     mod[0].register_mutable_attr(attr, value)
+        # if 'out_channels' in self.mutable_attrs:
+        #     mod[1].register_mutable_attr('num_features', self.mutable_attrs['out_channels'])
+        # elif 'in_channels' in self.mutable_attrs:
+        #     mod[1].register_mutable_attr('num_features', self.mutable_attrs['in_channels'])
+        mod = copy.deepcopy(self)
+        traverse_children(mod._modules)
+
+        # mod = self.static_op_factory._FLOAT_MODULE(*mod._modules.values())
+        # mod = self.static_op_factory.from_float(mod)
         return mod
 
     def get_dynamic_params(
@@ -461,15 +506,10 @@ class DynamicQConvBnReLU2d(DynamicQConvBn2d):
     def from_float(cls, mod):
         return super(DynamicQConvBnReLU2d, cls).from_float(mod)
 
-    def to_static_op(self):
-        mod = self.to_float()
-        for attr, value in self.mutable_attrs.items():
-            mod[0].register_mutable_attr(attr, value)
-        if isinstance(mod, DynamicMixin):
-            mod = mod.to_static_op()
-        else:
-            traverse_children(mod._modules)
-        return mod
+    @property
+    def static_op_factory(self):
+        return nniqat.ConvBnReLU2d
+
 
 class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
 
@@ -505,7 +545,7 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
 
     @property
     def static_op_factory(self):
-        return nn.Conv2d
+        return nniqat.ConvReLU2d
 
     @classmethod
     def convert_from(cls, module):
@@ -523,13 +563,8 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
                            self.stride, padding, self.dilation, groups))
 
     def to_static_op(self):
-        mod = self.to_float()
-        for attr, value in self.mutable_attrs.items():
-            mod[0].register_mutable_attr(attr, value)
-        if isinstance(mod, DynamicMixin):
-            mod = mod.to_static_op()
-        else:
-            traverse_children(mod._modules)
+        mod = copy.deepcopy(self)
+        traverse_children(mod._modules)
         return mod
 
     def get_dynamic_params(

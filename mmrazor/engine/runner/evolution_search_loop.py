@@ -322,13 +322,14 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
 
     def _save_best_fix_subnet(self):
         """Save best subnet in searched top-k candidates."""
+        best_random_subnet = self.top_k_candidates.subnets[0]
+        self.model.mutator.set_choices(best_random_subnet)
+        if self.calibrate_sample_num > 0:
+            self.calibrate_bn_statistics(self.calibrate_dataloader,
+                                         self.calibrate_sample_num)
+        best_fix_subnet, sliced_model = \
+            export_fix_subnet(self.model.architecture, slice_weight=True)
         if self.runner.rank == 0:
-            best_random_subnet = self.top_k_candidates.subnets[0]
-            self.model.mutator.set_choices(best_random_subnet)
-
-            best_fix_subnet, sliced_model = \
-                export_fix_subnet(self.model, slice_weight=True)
-
             timestamp_subnet = time.strftime('%Y%m%d_%H%M', time.localtime())
             model_name = f'subnet_{timestamp_subnet}.pth'
             save_path = osp.join(self.runner.work_dir, model_name)

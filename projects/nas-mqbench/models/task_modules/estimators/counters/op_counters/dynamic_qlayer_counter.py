@@ -53,7 +53,7 @@ class DynamicQConv2dCounter(BaseCounter):
 
         quant_bits = module.weight_fake_quant.mutable_attrs['quant_bits'].current_choice
         act_quant_bits = module._ACT_QUANT_BITS.current_choice
-        overall_flops = overall_flops * quant_bits * act_quant_bits / 64
+        overall_flops = overall_flops * quant_bits * act_quant_bits # / 64
         assert quant_bits <= 8 and act_quant_bits <= 8
         module.__flops__ += overall_flops
         module.__params__ += int(overall_params)
@@ -82,7 +82,7 @@ class DynamicQLinearCounter(BaseCounter):
         quant_bits = module.weight_fake_quant.mutable_attrs['quant_bits'].current_choice
         # import pdb; pdb.set_trace()
         act_quant_bits = module._ACT_QUANT_BITS.current_choice
-        overall_flops = np.prod(input.shape) * output_last_dim * quant_bits * act_quant_bits / 64
+        overall_flops = np.prod(input.shape) * output_last_dim * quant_bits * act_quant_bits # / 64
         assert quant_bits <= 8 and act_quant_bits <= 8
         module.__flops__ += overall_flops
         module.__params__ += int(get_model_parameters_number(module))

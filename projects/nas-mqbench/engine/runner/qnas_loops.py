@@ -35,7 +35,8 @@ from mmrazor.models import register_torch_fake_quants, register_torch_observers
 from mmrazor.models.fake_quants import (enable_param_learning,
                                         enable_static_estimate, enable_val)
 from mmrazor.models.utils import add_prefix, get_module_device
-from mmrazor.structures import Candidates, export_fix_subnet, export_fix_subnet
+from mmrazor.structures import Candidates, export_fix_subnet, convert_fix_subnet
+
 from mmrazor.registry import LOOPS, TASK_UTILS
 from mmrazor.utils import SupportRandomSubnet
 from mmrazor.engine.runner import QATEpochBasedLoop, EvolutionSearchLoop
@@ -274,10 +275,10 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
         """Iterate one epoch."""
         self.runner.call_hook('before_train_epoch')
         self.runner.model.train()
-        if self._epoch < 5:
-            self.runner.model.module.sample_kinds = ['min']
-        else:
-            self.runner.model.module.sample_kinds = ['max', 'min', 'random0', 'random1']
+        # if self._epoch < 5:
+        #     self.runner.model.module.sample_kinds = ['min']
+        # else:
+        #     self.runner.model.module.sample_kinds = ['max', 'min', 'random0', 'random1']
         for idx, data_batch in enumerate(self.dataloader):
             if self.is_first_batch:
                 # lsq observer init
@@ -578,3 +579,20 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
             export=False)
 
         return is_pass, results
+
+    def _save_best_fix_subnet(self):
+        """Save best subnet in searched top-k candidates."""
+        best_random_subnet = self.top_k_candidates.subnets[0]
+        self.model.mutator.set_choices(best_random_subnet)
+        best_fix_subnet, _ = \
+            export_fix_subnet(self.model.architecture, slice_weight=False)
+        if self.runner.rank == 0:
+            timestamp_subnet = time.strftime('%Y%m%d_%H%M', time.localtime())
+            save_name = f'subnet_{timestamp_subnet}.yaml'
+            best_fix_subnet = convert_fix_subnet(best_fix_subnet)
+            fileio.dump(best_fix_subnet,
+                        osp.join(self.runner.work_dir, save_name))
+            self.runner.logger.info(
+                f'Subnet config {save_name} saved in {self.runner.work_dir}.')
+
+            self.runner.logger.info('Search finished.')

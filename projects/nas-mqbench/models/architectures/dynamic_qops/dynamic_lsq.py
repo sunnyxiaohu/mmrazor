@@ -9,12 +9,6 @@ from mmrazor.registry import MODELS
 from mmrazor.models import LearnableFakeQuantize
 from mmrazor.models.architectures.dynamic_ops import DynamicMixin
 
-try:
-    from torch.ao.quantization import FakeQuantizeBase
-except ImportError:
-    from mmrazor.utils import get_placeholder
-    FakeQuantizeBase = get_placeholder('torch>=1.13')
-
 
 def update_qdype_qmin_qmax(fake_quant, bit):
     # TODO: calc qdype according quant_min, quant_max (rely on backend support)
@@ -325,7 +319,49 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         # print('LearnableFakeQuantize Scale: {}'.format(self.delta_scale.detach()))
         # print('LearnableFakeQuantize Zero Point: {}'.format(
         #     self.delta_zero_point.detach()))
-        raise NotImplementedError()
+        quant_bits, index = self.get_dynamic_params()
+        _scale, _zero_point = \
+            self.activation_post_process.calculate_qparams()
+        self.scale.data.abs_()
+        self.scale.data.clamp_(min=self.eps.item())
+        delta_add = self.zero_point[:, index] if index is not None else self.zero_point
+        if self.param_share_mode in [3, 5]:
+            assert self.residual_mode == 0, f'Unsuported residual_mode: {self.residual_mode}'
+            M = 0.2
+            delta_mult = self.scale * (1 + M) ** (quant_bits - self.BASE_BITS)
+            scale = _scale * delta_mult
+            zero_point = _zero_point + delta_add
+        elif self.param_share_mode == 4:
+            # import pdb; pdb.set_trace()
+            assert self.residual_mode == 0, f'Unsuported residual_mode: {self.residual_mode}'
+            idx = 0
+            while(idx < len(self.mutable_attrs['quant_bits'].choices)):
+                idx_quant_bits = self.mutable_attrs['quant_bits'].choices[idx]
+                M = 0.3  # 0.7  # 0.05
+                idx_delta_mult = self.scale_adelta[:, idx]
+                clip_m = idx_delta_mult * (1 + M) ** (quant_bits - idx_quant_bits)
+                if idx == index:
+                    idx += 1
+                    continue
+                elif idx > index:
+                    self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], min=clip_m)
+                else:
+                    self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], max=clip_m)
+                idx += 1
+            self.scale_adelta.data.abs_()
+            self.scale_adelta.data.clamp_(min=self.eps.item())
+            delta_mult = self.scale_adelta[:, index]
+            scale = _scale * delta_mult
+            zero_point = _zero_point + delta_add
+        else:
+            delta_mult = self.scale[:, index] if index is not None else self.scale
+            if self.residual_mode == 0:
+                scale = _scale * delta_mult
+                zero_point = _zero_point + delta_add
+            elif self.residual_mode == 1:
+                scale = _scale * delta_mult + delta_add
+                zero_point = _zero_point.float()
+        return scale, zero_point
 
     def register_mutable_attr(self, attr, mutable):
         super().register_mutable_attr(attr, mutable)
@@ -345,50 +381,10 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
             return X
         # import pdb; pdb.set_trace()
         self.activation_post_process(X.detach())
-        _scale, _zero_point = \
-            self.activation_post_process.calculate_qparams()
 
         # TODO: Support per-channel according the shape of inputs.
         if self.fake_quant_enabled[0] == 1:
-            self.scale.data.abs_()
-            self.scale.data.clamp_(min=self.eps.item())
-            delta_add = self.zero_point[:, index] if index is not None else self.zero_point
-            if self.param_share_mode in [3, 5]:
-                assert self.residual_mode == 0, f'Unsuported residual_mode: {self.residual_mode}'
-                M = 0.2
-                delta_mult = self.scale * (1 + M) ** (quant_bits - self.BASE_BITS)
-                scale = _scale * delta_mult
-                zero_point = _zero_point + delta_add
-            elif self.param_share_mode == 4:
-                # import pdb; pdb.set_trace()
-                assert self.residual_mode == 0, f'Unsuported residual_mode: {self.residual_mode}'
-                idx = 0
-                while(idx < len(self.mutable_attrs['quant_bits'].choices)):
-                    idx_quant_bits = self.mutable_attrs['quant_bits'].choices[idx]
-                    M = 0.3  # 0.7  # 0.05
-                    idx_delta_mult = self.scale_adelta[:, idx]
-                    clip_m = idx_delta_mult * (1 + M) ** (quant_bits - idx_quant_bits)
-                    if idx == index:
-                        idx += 1
-                        continue
-                    elif idx > index:
-                        self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], min=clip_m)
-                    else:
-                        self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], max=clip_m)
-                    idx += 1
-                self.scale_adelta.data.abs_()
-                self.scale_adelta.data.clamp_(min=self.eps.item())
-                delta_mult = self.scale_adelta[:, index]
-                scale = _scale * delta_mult
-                zero_point = _zero_point + delta_add
-            else:
-                delta_mult = self.scale[:, index] if index is not None else self.scale
-                if self.residual_mode == 0:
-                    scale = _scale * delta_mult
-                    zero_point = _zero_point + delta_add
-                elif self.residual_mode == 1:
-                    scale = _scale * delta_mult + delta_add
-                    zero_point = _zero_point.float()
+            scale, zero_point = self.observe_quant_params()
 
             if self.use_grad_scaling:
                 grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
