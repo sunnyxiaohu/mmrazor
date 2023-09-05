@@ -62,4 +62,4 @@ test_cfg = dict()
 # based on the actual training batch size.
 auto_scale_lr = dict(base_batch_size=1024)
 
-custom_hooks = [dict(type='EMAHook', momentum=5e-4, priority='ABOVE_NORMAL', update_buffers=True)]
+# custom_hooks = [dict(type='EMAHook', momentum=5e-4, priority='ABOVE_NORMAL', update_buffers=True)]
