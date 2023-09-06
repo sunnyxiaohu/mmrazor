@@ -1,4 +1,4 @@
-_base_ = ['./resnet18_8xb256-warmup-lbs-coslr-nwd_in1k.py']
+_base_ = ['./resnet18_8xb256-warmup-lbs-coslr_in1k.py']
 custom_imports = dict(
     imports =[
     'projects.nas-mqbench.models.quantizers.mutable_quantizer',

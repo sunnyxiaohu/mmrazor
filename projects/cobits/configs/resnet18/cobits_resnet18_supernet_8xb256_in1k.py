@@ -1,5 +1,5 @@
 _base_ = [
-    './resnet18_8xb256-warmup-lbs-coslr-nwd_in1k.py',
+    './resnet18_8xb256-warmup-lbs-coslr_in1k.py',
 ]
 
 custom_imports = dict(
