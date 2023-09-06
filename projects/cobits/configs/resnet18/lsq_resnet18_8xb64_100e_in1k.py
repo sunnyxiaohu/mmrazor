@@ -49,7 +49,7 @@ train_dataloader = dict(batch_size=64)
 
 optim_wrapper = dict(
     _delete_=True,
-    optimizer=dict(type='SGD', lr=0.004, momentum=0.9, weight_decay=0.0001))
+    optimizer=dict(type='SGD', lr=0.004, momentum=0.9, weight_decay=0.0001, nesterov=True))
 
 # learning policy
 max_epochs = 100

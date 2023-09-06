@@ -19,10 +19,10 @@ _base_.train_dataloader.dataset.pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='RandomResizedCrop', scale=224),
     dict(type='RandomFlip', prob=0.5, direction='horizontal'),
-    dict(type='ColorJitter', brightness=0.1254, saturation=0.5),
+    dict(type='ColorJitter', brightness=0.2, contrast=0.2, saturation=0.2),
     dict(type='PackClsInputs'),
 ]
 _base_.train_dataloader.batch_size = 256
 optim_wrapper = dict(
-    paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0.)
-)
+    _delete_=True,
+    optimizer=dict(type='SGD', lr=0.8, momentum=0.9, weight_decay=0.0001, nesterov=True))
