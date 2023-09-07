@@ -4,6 +4,11 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn.parameter import Parameter
+try:
+    from torch.ao.quantization import MinMaxObserver
+except ImportError:
+    from mmrazor.utils import get_placeholder
+    MinMaxObserver = get_placeholder('torch>=1.13')
 
 from mmrazor.registry import MODELS
 from mmrazor.models import LearnableFakeQuantize
@@ -117,7 +122,6 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
     def calculate_qparams(self):
         """Calculate the quantization parameters."""
         raise NotImplementedError()
-
 
     def forward(self, X):
         """Forward computation.
@@ -396,10 +400,27 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
                     X, scale, zero_point, self.ch_axis,
                     self.quant_min, self.quant_max, grad_factor)
             else:
-                # if not (self.quant_min <= zero_point <= self.quant_max):
-                #     print(self.quant_min, zero_point, self.quant_max)
+                if not (self.quant_min <= zero_point <= self.quant_max):
+                    print(self.quant_min, zero_point, self.quant_max)
                 X = torch._fake_quantize_learnable_per_tensor_affine(
                     X, scale, zero_point, self.quant_min,
                     self.quant_max, grad_factor)
 
         return X
+
+    def to_static_op(self) -> nn.Module:
+        quant_bits, index = self.get_dynamic_params()
+        if quant_bits == self.FLOAT_BITS:
+            return
+
+        scale, zero_point = self.observe_quant_params()
+        lsq = LearnableFakeQuantize(MinMaxObserver.with_args())
+        lsq.scale.data.copy_(scale.data)
+        lsq.zero_point.data.copy_(zero_point.data)
+        lsq.fake_quant_enabled.data.copy_(self.fake_quant_enabled.data)
+        lsq.static_enabled.data.copy_(self.static_enabled.data)
+        lsq.learning_enabled.copy_(self.learning_enabled.data)
+        lsq.eps.copy_(self.eps.data)
+        lsq.mixed_quant_min.data = torch.tensor(self.quant_min)
+        lsq.mixed_quant_max.data = torch.tensor(self.quant_max)
+        return lsq

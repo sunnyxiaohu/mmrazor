@@ -363,7 +363,7 @@ class QNASDDP(MMDistributedDataParallel):
 def qsample(epoch, kind='max'):
     """Sample choice for mutables except `quant_bits`"""    
     assert kind in ['max', 'min'] or 'random' in kind
-    step = 5
+    step = -1
     def sample_wrapper(mutables):
         if mutables[0].alias and 'quant_bits' in mutables[0].alias:
             if step == -1:

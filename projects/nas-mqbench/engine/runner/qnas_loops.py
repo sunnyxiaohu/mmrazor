@@ -36,6 +36,7 @@ from mmrazor.models.fake_quants import (enable_param_learning,
                                         enable_static_estimate, enable_val)
 from mmrazor.models.utils import add_prefix, get_module_device
 from mmrazor.structures import Candidates, export_fix_subnet, convert_fix_subnet
+from mmrazor.structures.subnet.fix_subnet import _load_fix_subnet_by_mutable
 
 from mmrazor.registry import LOOPS, TASK_UTILS
 from mmrazor.utils import SupportRandomSubnet
@@ -360,7 +361,7 @@ class QNASValLoop(ValLoop, CalibrateMixin):
             evaluate_once_func = self._qat_evaluate_once
 
         if self.evaluate_fixed_subnet:
-            metrics = evaluate_once_func
+            metrics = evaluate_once_func()
             all_metrics.update(add_prefix(metrics, 'fix_subnet'))
         elif hasattr(self.model, 'sample_kinds'):
             if self.model.current_stage == 'float':
@@ -506,6 +507,11 @@ def nonqmin(mutables):
 class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
     """Loop for evolution searching."""
 
+    def __init__(self, *args, export_fix_subnet=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.export_float_model = False
+        self.export_fix_subnet = export_fix_subnet
+
     def sample_candidates(self) -> None:
         """Update candidate pool contains specified number of candicates."""
         candidates_resources = []
@@ -555,7 +561,8 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         else:
             if self.calibrate_sample_num > 0:
                 self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
-                                                      self.calibrate_sample_num)
+                                                      model = self.model,
+                                                      calibrate_sample_num = self.calibrate_sample_num)
             self.runner.model.eval()
             for data_batch in self.dataloader:
                 outputs = self.runner.model.val_step(data_batch)
@@ -584,11 +591,39 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         """Save best subnet in searched top-k candidates."""
         best_random_subnet = self.top_k_candidates.subnets[0]
         self.model.mutator.set_choices(best_random_subnet)
-        best_fix_subnet, _ = \
-            export_fix_subnet(self.model.architecture, slice_weight=False)
+        if self.calibrate_sample_num > 0:
+            self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
+                                                  model = self.model,
+                                                  calibrate_sample_num = self.calibrate_sample_num)
+            self.model.sync_qparams(src_mode='predict')
+        best_fix_subnet, sliced_model = \
+            export_fix_subnet(self.model.architecture, slice_weight=True)
+        float_sliced_model = None
+        if self.export_float_model and self.calibrate_sample_num > 0:
+            self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
+                                                  model = self.model.architecture.architecture,
+                                                  calibrate_sample_num = self.calibrate_sample_num)
+            _, float_sliced_model = export_fix_subnet(self.model.architecture, slice_weight=True)
         if self.runner.rank == 0:
             timestamp_subnet = time.strftime('%Y%m%d_%H%M', time.localtime())
-            save_name = f'subnet_{timestamp_subnet}.yaml'
+            model_name = f'subnet_{timestamp_subnet}.pth'
+            save_path = osp.join(self.runner.work_dir, model_name)
+            torch.save({
+                'state_dict': sliced_model.state_dict(),
+                'meta': {}
+            }, save_path)
+            self.runner.logger.info(f'Subnet checkpoint {model_name} saved in '
+                                    f'{self.runner.work_dir}')
+            if self.export_float_model:
+                model_name = 'float_' + model_name
+                save_path = osp.join(self.runner.work_dir, model_name)
+                torch.save({
+                    'state_dict': float_sliced_model.state_dict(),
+                    'meta': {}
+                }, save_path)
+                self.runner.logger.info(f'Subnet checkpoint {model_name} saved in '
+                                        f'{self.runner.work_dir}')
+            save_name = 'best_fix_subnet.yaml'
             best_fix_subnet = convert_fix_subnet(best_fix_subnet)
             fileio.dump(best_fix_subnet,
                         osp.join(self.runner.work_dir, save_name))
@@ -596,3 +631,34 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 f'Subnet config {save_name} saved in {self.runner.work_dir}.')
 
             self.runner.logger.info('Search finished.')
+
+    def run(self) -> None:
+        """Launch searching."""
+        self.runner.call_hook('before_train')
+
+        self.runner.model.apply(enable_val)
+        if self.export_fix_subnet:
+            fix_subnet = fileio.load(self.export_fix_subnet)
+            _load_fix_subnet_by_mutable(self.model, fix_subnet)
+            fix_subnet = self.model.mutator.current_choices
+            _, result = self._check_constraints(random_subnet=fix_subnet)
+            self.candidates = Candidates([fix_subnet])
+            self.candidates.update_resources([result])
+            self.update_candidates_scores()
+            self.top_k_candidates = self.candidates
+            self._save_best_fix_subnet()
+            return
+
+        if self.predictor_cfg is not None:
+            self._init_predictor()
+
+        if self.resume_from:
+            self._resume()
+
+        while self._epoch < self._max_epochs:
+            self.run_epoch()
+            self._save_searcher_ckpt()
+
+        self._save_best_fix_subnet()
+
+        self.runner.call_hook('after_train')

@@ -105,7 +105,7 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
                 self.runner.model.module.mutator.set_min_choices()
             else:
                 self.runner.model.module.mutator.set_max_choices()
-            self.runner.val_loop.calibrate_bn_statistics(self.runner.train_dataloader,
+            self.runner.val_loop.calibrate_bn_observer_statistics(self.runner.train_dataloader,
                                                          model = self.runner.model.module.architecture.architecture,
                                                          calibrate_sample_num = 4096)
         self.prepare_for_run_epoch()
@@ -168,6 +168,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
             val_begin: int = 1,
             val_interval: int = 1,
             freeze_bn_begin: int = -1,
+            is_first_batch: bool = True,
             dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
         super().__init__(
             runner,
@@ -178,7 +179,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
             freeze_bn_begin=freeze_bn_begin,
             dynamic_intervals=dynamic_intervals)
 
-        self._is_first_batch = True
+        self._is_first_batch = is_first_batch
         self.distributed = is_distributed()
 
     def prepare_for_run_epoch(self):
