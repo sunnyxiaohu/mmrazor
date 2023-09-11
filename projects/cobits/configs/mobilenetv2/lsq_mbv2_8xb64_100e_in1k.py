@@ -34,7 +34,7 @@ model = dict(
     quantizer=dict(
         type='mmrazor.MutableOpenVINOQuantizer',
         quant_bits_skipped_module_names=[
-            'backbone.conv1',
+            'backbone.conv1.conv',
             'head.fc'
         ],
         global_qconfig=global_qconfig,

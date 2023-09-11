@@ -17,7 +17,7 @@ _base_.model.backbone.norm_cfg = dict(type='mmrazor.DynamicBatchNorm2d')
 _base_.model.init_cfg = dict(
     type='Pretrained',
     checkpoint=  # noqa: E251
-    'work_dirs/pretrained_models/mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k/20230830_061411/epoch_250.pth')
+    'work_dirs/pretrained_models/mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k/20230906_112051/epoch_250.pth')
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.BatchLSQObserver'),
@@ -41,7 +41,7 @@ qmodel = dict(
     quantizer=dict(
         type='mmrazor.MutableOpenVINOQuantizer',
         quant_bits_skipped_module_names=[
-            'backbone.conv1',
+            'backbone.conv1.conv',
             'head.fc'
         ],
         quant_bits=[4, 6, 8],
