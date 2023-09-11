@@ -5,7 +5,7 @@ custom_imports = dict(
     'projects.nas-mqbench.models.observers.batch_lsq',
 ])
 mbv2net = _base_.model
-float_checkpoint = 'work_dirs/pretrained_models/mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k/20230830_061411/epoch_250.pth'  # noqa: E501
+float_checkpoint = 'work_dirs/pretrained_models/mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k/20230906_112051/epoch_250.pth'  # noqa: E501
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),
