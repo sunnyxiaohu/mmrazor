@@ -50,6 +50,8 @@ custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic
 dynamic_qconv_fused = import_modules_from_strings(custom_imports)
 custom_imports = 'projects.nas-mqbench.models.observers.batch_lsq'
 batch_lsq = import_modules_from_strings(custom_imports)
+custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_lsq'
+dynamic_lsq = import_modules_from_strings(custom_imports)
 
 
 class CalibrateMixin:
@@ -62,6 +64,7 @@ class CalibrateMixin:
                                 model = None) -> None:
         if model is None:
             model = self.runner.model
+        model.apply(dynamic_lsq.unfix_calib_stats)
 
         def record_bn_statistics_hook(bn_module: _BatchNorm, input: Tensor,
                                       output: Tensor) -> None:
@@ -80,10 +83,11 @@ class CalibrateMixin:
             max_average_meter: AverageMeter = observer_module.__max_average_meter__
             min_average_meter: AverageMeter = observer_module.__min_average_meter__
 
+            real_input = input[0]
             max_val = observer_module.max_val
             min_val = observer_module.min_val
-            max_average_meter.update(max_val, 1)
-            min_average_meter.update(min_val, 1)
+            max_average_meter.update(max_val, real_input.size(0))
+            min_average_meter.update(min_val, real_input.size(0))
 
         hook_handles = []
 
@@ -197,6 +201,7 @@ class CalibrateMixin:
         print_log('Calibrate bn and observer statistics done', logger='current')
         for handle in hook_handles:
             handle.remove()
+        model.apply(dynamic_lsq.fix_calib_stats)
 
 
 @LOOPS.register_module()
@@ -229,6 +234,7 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
             val_interval: int = 1,
             qat_begin: int = 1,
             freeze_bn_begin: int = -1,
+            is_first_batch: bool = True,
             dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
         super().__init__(
             runner,
@@ -239,7 +245,7 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
             freeze_bn_begin=freeze_bn_begin,
             dynamic_intervals=dynamic_intervals)
 
-        self._is_first_batch = True
+        self._is_first_batch = is_first_batch
         self.distributed = is_distributed()
         self.qat_begin = qat_begin
 
@@ -258,13 +264,15 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
         else:
             self.runner.model.apply(enable_val)
             self.runner.model.apply(disable_fake_quant)
-            model.current_stage = 'float'     
+            model.current_stage = 'float'
+        self.runner.model.apply(dynamic_lsq.unfix_calib_stats)
         print_log(f'Switch current_stage: "{model.current_stage}"', logger='current')
 
     def prepare_for_val(self):
         """Toggle the state of the observers and fake quantizers before
         validation."""
         self.runner.model.apply(enable_val)
+        self.runner.model.apply(dynamic_lsq.fix_calib_stats)
 
     @property
     def is_first_batch(self):
@@ -636,7 +644,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         """Launch searching."""
         self.runner.call_hook('before_train')
 
-        self.runner.model.apply(enable_val)
+        self.prepare_for_val()
         if self.export_fix_subnet:
             fix_subnet = fileio.load(self.export_fix_subnet)
             _load_fix_subnet_by_mutable(self.model, fix_subnet)
@@ -662,3 +670,9 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         self._save_best_fix_subnet()
 
         self.runner.call_hook('after_train')
+
+    def prepare_for_val(self):
+        """Toggle the state of the observers and fake quantizers before
+        validation."""
+        self.runner.model.apply(enable_val)
+        self.runner.model.apply(dynamic_lsq.fix_calib_stats)

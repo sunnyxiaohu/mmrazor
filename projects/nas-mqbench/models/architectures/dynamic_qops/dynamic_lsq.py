@@ -15,6 +15,24 @@ from mmrazor.models import LearnableFakeQuantize
 from mmrazor.models.architectures.dynamic_ops import DynamicMixin
 
 
+def fix_calib_stats(mod):
+    """Fix learning of quantization parameters, if applicable. Example
+    usage::
+
+    # model is any PyTorch model model.apply(fix_calib_stats)
+    """
+    if isinstance(mod, DynamicBatchLearnableFakeQuantize):
+        mod.calib_stats_fixed[0] = 1
+
+def unfix_calib_stats(mod):
+    """Unfix learning of quantization parameters, if applicable. Example
+    usage::
+
+    # model is any PyTorch model model.apply(fix_calib_stats)
+    """
+    if isinstance(mod, DynamicBatchLearnableFakeQuantize):
+        mod.calib_stats_fixed[0] = 0
+
 def update_qdype_qmin_qmax(fake_quant, bit):
     # TODO: calc qdype according quant_min, quant_max (rely on backend support)
     # reduce_range is False by default.
@@ -304,6 +322,8 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         assert self.param_share_mode in [0, 1, 3, 4, 5], f'Unexpected param_share_mode: {self.param_share_mode}'
         if self.param_share_mode == 4:
             self.scale_adelta.data = torch.tensor([1.])
+        self.register_buffer('calib_stats_fixed',
+                             torch.tensor([0], dtype=torch.uint8))
 
     @torch.jit.export
     def enable_val(self):
@@ -326,8 +346,8 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         quant_bits, index = self.get_dynamic_params()
         _scale, _zero_point = \
             self.activation_post_process.calculate_qparams()
-        self.scale.data.abs_()
-        self.scale.data.clamp_(min=self.eps.item())
+        # self.scale.data.abs_()
+        # self.scale.data.clamp_(min=self.eps.item())
         delta_add = self.zero_point[:, index] if index is not None else self.zero_point
         if self.param_share_mode in [3, 5]:
             assert self.residual_mode == 0, f'Unsuported residual_mode: {self.residual_mode}'
@@ -365,6 +385,8 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
             elif self.residual_mode == 1:
                 scale = _scale * delta_mult + delta_add
                 zero_point = _zero_point.float()
+        scale.data.abs_()
+        scale.data.clamp_(min=self.eps.item())
         return scale, zero_point
 
     def register_mutable_attr(self, attr, mutable):
@@ -384,7 +406,8 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         if quant_bits == self.FLOAT_BITS:
             return X
         # import pdb; pdb.set_trace()
-        self.activation_post_process(X.detach())
+        if self.calib_stats_fixed[0] == 0:
+            self.activation_post_process(X.detach())
 
         # TODO: Support per-channel according the shape of inputs.
         if self.fake_quant_enabled[0] == 1:
