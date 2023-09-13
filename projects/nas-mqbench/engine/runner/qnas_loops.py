@@ -410,7 +410,7 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                     else:
                         choices = self.quant_bits
                     for bit in choices:
-                        sample_kinds.extend([f'max_q{bit}'], f'min_q{bit}'])
+                        sample_kinds.extend([f'max_q{bit}', f'min_q{bit}'])
 
             def qmaxmin(bit=32, is_max=True):
                 def sample(mutables):
