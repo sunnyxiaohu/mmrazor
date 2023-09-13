@@ -335,7 +335,7 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         self.toggle_qparam_learning(enabled=False) \
             .toggle_fake_quant(enabled=True) \
             .toggle_observer_update(enabled=True)
-        self.activation_post_process.reset_min_max_vals()
+        # self.activation_post_process.reset_min_max_vals()
 
     @torch.jit.export
     def observe_quant_params(self):

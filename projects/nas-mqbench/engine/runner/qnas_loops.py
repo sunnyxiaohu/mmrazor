@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import contextlib
 import logging
 import os
 import os.path as osp
@@ -54,6 +55,26 @@ custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic
 dynamic_lsq = import_modules_from_strings(custom_imports)
 
 
+@contextlib.contextmanager
+def adabn_context(model):
+    running_means = []
+    running_vars = []
+    num_batches_trackeds = []
+    for mod in model.modules():
+        if isinstance(mod, _BatchNorm) and mod.track_running_stats:
+            running_means.append(mod.running_mean.data.clone())
+            running_vars.append(mod.running_var.data.clone())
+            num_batches_trackeds.append(mod.num_batches_tracked.clone())
+            # mod.reset_running_stats()
+    yield
+    i = 0
+    for mod in model.modules():
+        if isinstance(mod, _BatchNorm) and mod.track_running_stats:
+            mod.running_mean.data.copy_(running_means[i])
+            mod.running_var.data.copy_(running_vars[i])
+            mod.num_batches_tracked.data.copy_(num_batches_trackeds[i])
+            i += 1
+
 class CalibrateMixin:
     fp16: bool = False
 
@@ -105,6 +126,7 @@ class CalibrateMixin:
                           f'{name}', logger='current', level=logging.DEBUG)
                 module.__max_average_meter__ = AverageMeter()
                 module.__min_average_meter__ = AverageMeter()
+                module.reset_min_max_vals()
                 handle = module.register_forward_hook(
                     record_observer_statistics_hook)
                 hook_handles.append(handle)
@@ -388,7 +410,7 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                     else:
                         choices = self.quant_bits
                     for bit in choices:
-                        sample_kinds.extend([f'max_q{bit}', f'min_q{bit}'])
+                        sample_kinds.extend([f'max_q{bit}'], f'min_q{bit}'])
 
             def qmaxmin(bit=32, is_max=True):
                 def sample(mutables):
@@ -402,7 +424,7 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                             assert bit in mutables[0].choices
                     return choice
                 return sample
-            # import pdb; pdb.set_trace()
+
             for kind in sample_kinds:  # self.model.sample_kinds:
                 if kind == 'max':
                     self.model.mutator.set_max_choices()
@@ -423,62 +445,64 @@ class QNASValLoop(ValLoop, CalibrateMixin):
 
     def _evaluate_once(self, kind='') -> Dict:
         """Evaluate a subnet once with BN re-calibration."""
-        if self.calibrate_sample_num > 0:
-            self.calibrate_bn_observer_statistics(self.runner.train_dataloader,
-                                                  model = self.architecture,
-                                                  calibrate_sample_num = self.calibrate_sample_num)
-        self.architecture.eval()
-        for idx, data_batch in enumerate(self.dataloader):
-            self.run_iter(idx, data_batch, self.architecture)
+        with adabn_context(self.architecture):
+            if self.calibrate_sample_num > 0:
+                self.calibrate_bn_observer_statistics(self.runner.train_dataloader,
+                                                      model = self.architecture,
+                                                      calibrate_sample_num = self.calibrate_sample_num)
+            self.architecture.eval()
+            for idx, data_batch in enumerate(self.dataloader):
+                self.run_iter(idx, data_batch, self.architecture)
 
-        _, sliced_model = export_fix_subnet(
-            self.architecture, slice_weight=True)
-        metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
-        resource_metrics = self.estimator.estimate(sliced_model)
-        # for mode in self.params_modes:
-        #     filename = f'{self.runner.log_dir}/subnet-{kind}_{mode}_params_boxplot_ep{self.runner.epoch}.png'
-        #     if mode == 'fuse_conv_bn':
-        #         from mqbench.cle_superacme.batch_norm_fold import fold_all_batch_norms
-        #         folded_pairs = fold_all_batch_norms(sliced_model, self.input_shapes)
-        #     elif mode == 'cle':
-        #         from mqbench.cle_superacme.cle import apply_cross_layer_equalization
-        #         apply_cross_layer_equalization(model=sliced_model, input_shape=self.input_shapes)
-        #     draw_params_boxplot(sliced_model, filename, topk_params=self.topk_params)
+            _, sliced_model = export_fix_subnet(
+                self.architecture, slice_weight=True)
+            metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
+            resource_metrics = self.estimator.estimate(sliced_model)
+            # for mode in self.params_modes:
+            #     filename = f'{self.runner.log_dir}/subnet-{kind}_{mode}_params_boxplot_ep{self.runner.epoch}.png'
+            #     if mode == 'fuse_conv_bn':
+            #         from mqbench.cle_superacme.batch_norm_fold import fold_all_batch_norms
+            #         folded_pairs = fold_all_batch_norms(sliced_model, self.input_shapes)
+            #     elif mode == 'cle':
+            #         from mqbench.cle_superacme.cle import apply_cross_layer_equalization
+            #         apply_cross_layer_equalization(model=sliced_model, input_shape=self.input_shapes)
+            #     draw_params_boxplot(sliced_model, filename, topk_params=self.topk_params)
 
-        metrics.update(resource_metrics)
+            metrics.update(resource_metrics)
         return metrics
 
     def _qat_evaluate_once(self, kind='') -> Dict:
         """Evaluate a subnet once with BN re-calibration."""
         qat_metrics = dict()
-        # import pdb; pdb.set_trace()
-        if self.calibrate_sample_num > 0:
-            self.calibrate_bn_observer_statistics(self.runner.train_dataloader,
-                                                  model = self.model,
-                                                  calibrate_sample_num = self.calibrate_sample_num)
-        self.model.eval()
-        for idx, data_batch in enumerate(self.dataloader):
-            self.run_iter(idx, data_batch, self.model)
-        metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
-        for key, value in metrics.items():
-            qat_key = 'qat.' + key
-            # ori_key = 'original.' + key
-            qat_metrics[qat_key] = value
-            # self.runner.message_hub.log_scalars.pop(f'val/{ori_key}', None)
+        with adabn_context(self.model):
+            if self.calibrate_sample_num > 0:
+                self.calibrate_bn_observer_statistics(self.runner.train_dataloader,
+                                                      model = self.model,
+                                                      calibrate_sample_num = self.calibrate_sample_num)
+            self.model.eval()
+            for idx, data_batch in enumerate(self.dataloader):
+                self.run_iter(idx, data_batch, self.model)
+            metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
+            for key, value in metrics.items():
+                qat_key = 'qat.' + key
+                # ori_key = 'original.' + key
+                qat_metrics[qat_key] = value
+                # self.runner.message_hub.log_scalars.pop(f'val/{ori_key}', None)
 
-        if self.calibrate_sample_num > 0:
-            self.calibrate_bn_observer_statistics(self.runner.train_dataloader,
-                                                  model = self.architecture,
-                                                  calibrate_sample_num = self.calibrate_sample_num)
-        self.architecture.eval()
-        for idx, data_batch in enumerate(self.dataloader):
-            self.run_iter(idx, data_batch, self.architecture)
-        metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
-        for key, value in metrics.items():
-            # qat_key = 'qat.' + key
-            ori_key = 'original.' + key
-            qat_metrics[ori_key] = value
-            # self.runner.message_hub.log_scalars.pop(f'val/{qat_key}', None)
+        with adabn_context(self.architecture):
+            if self.calibrate_sample_num > 0:
+                self.calibrate_bn_observer_statistics(self.runner.train_dataloader,
+                                                    model = self.architecture,
+                                                    calibrate_sample_num = self.calibrate_sample_num)
+            self.architecture.eval()
+            for idx, data_batch in enumerate(self.dataloader):
+                self.run_iter(idx, data_batch, self.architecture)
+            metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
+            for key, value in metrics.items():
+                # qat_key = 'qat.' + key
+                ori_key = 'original.' + key
+                qat_metrics[ori_key] = value
+                # self.runner.message_hub.log_scalars.pop(f'val/{qat_key}', None)
 
         return qat_metrics
 
@@ -567,16 +591,17 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
             assert self.predictor is not None
             metrics = self.predictor.predict(self.model)
         else:
-            if self.calibrate_sample_num > 0:
-                self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
-                                                      model = self.model,
-                                                      calibrate_sample_num = self.calibrate_sample_num)
-            self.runner.model.eval()
-            for data_batch in self.dataloader:
-                outputs = self.runner.model.val_step(data_batch)
-                self.evaluator.process(
-                    data_samples=outputs, data_batch=data_batch)
-            metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
+            with adabn_context(self.model):
+                if self.calibrate_sample_num > 0:
+                    self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
+                                                          model = self.model,
+                                                          calibrate_sample_num = self.calibrate_sample_num)
+                self.runner.model.eval()
+                for data_batch in self.dataloader:
+                    outputs = self.runner.model.val_step(data_batch)
+                    self.evaluator.process(
+                        data_samples=outputs, data_batch=data_batch)
+                metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
         return metrics
 
     def _check_constraints(
@@ -599,19 +624,21 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         """Save best subnet in searched top-k candidates."""
         best_random_subnet = self.top_k_candidates.subnets[0]
         self.model.mutator.set_choices(best_random_subnet)
-        if self.calibrate_sample_num > 0:
-            self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
-                                                  model = self.model,
-                                                  calibrate_sample_num = self.calibrate_sample_num)
-            self.model.sync_qparams(src_mode='predict')
-        best_fix_subnet, sliced_model = \
-            export_fix_subnet(self.model.architecture, slice_weight=True)
+        with adabn_context(self.model):
+            if self.calibrate_sample_num > 0:
+                self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
+                                                      model = self.model,
+                                                      calibrate_sample_num = self.calibrate_sample_num)
+                self.model.sync_qparams(src_mode='predict')
+            best_fix_subnet, sliced_model = \
+                export_fix_subnet(self.model.architecture, slice_weight=True)
         float_sliced_model = None
-        if self.export_float_model and self.calibrate_sample_num > 0:
-            self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
-                                                  model = self.model.architecture.architecture,
-                                                  calibrate_sample_num = self.calibrate_sample_num)
-            _, float_sliced_model = export_fix_subnet(self.model.architecture, slice_weight=True)
+        with adabn_context(self.model.architecture.architecture):
+            if self.export_float_model and self.calibrate_sample_num > 0:
+                self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
+                                                      model = self.model.architecture.architecture,
+                                                      calibrate_sample_num = self.calibrate_sample_num)
+                _, float_sliced_model = export_fix_subnet(self.model.architecture, slice_weight=True)
         if self.runner.rank == 0:
             timestamp_subnet = time.strftime('%Y%m%d_%H%M', time.localtime())
             model_name = f'subnet_{timestamp_subnet}.pth'
