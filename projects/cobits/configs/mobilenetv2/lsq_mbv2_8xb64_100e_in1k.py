@@ -2,7 +2,6 @@ _base_ = ['./mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k.py']
 custom_imports = dict(
     imports =[
     'projects.nas-mqbench.models.quantizers.mutable_quantizer',
-    'projects.nas-mqbench.models.observers.batch_lsq',
 ])
 mbv2net = _base_.model
 float_checkpoint = 'work_dirs/pretrained_models/mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k/20230906_112051/epoch_250.pth'  # noqa: E501
@@ -13,7 +12,7 @@ global_qconfig = dict(
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     w_qscheme=dict(
-        qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=True),
+        qdtype='qint8', bit=4, is_symmetry=True),
     a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True),
 )
 

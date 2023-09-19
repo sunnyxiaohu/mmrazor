@@ -50,7 +50,8 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
 
     def __init__(self, *args, tracer: Dict = dict(type='CustomTracer'),
                  quant_bits=None, quant_bits_skipped_module_names=None,
-                 default_skipped_bit=8, nested_quant_bits_in_layer=False, **kwargs):
+                 default_skipped_bit=8, nested_quant_bits_in_layer=False,
+                 fuse_fx=True, **kwargs):
         if 'skipped_module_classes' in tracer:
             tracer['skipped_module_classes'] = str2class(tracer['skipped_module_classes'])
         super().__init__(*args, tracer=tracer, **kwargs)
@@ -60,6 +61,7 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
         self.quant_bits_skipped_module_names = quant_bits_skipped_module_names
         self.default_skipped_bit = default_skipped_bit
         self.nested_quant_bits_in_layer = nested_quant_bits_in_layer
+        self.fuse_fx = fuse_fx
 
     @property
     def backend(self):
@@ -108,10 +110,11 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
         # todo: check freezebn
         self.sync_module_training_mode(graph_module, mode=True)
 
-        graph_module = _fuse_fx(
-            graph_module=graph_module,
-            is_qat=True,
-            backend_config=self.backend_config)
+        if self.fuse_fx:
+            graph_module = _fuse_fx(
+                graph_module=graph_module,
+                is_qat=True,
+                backend_config=self.backend_config)
 
         prepared = prepare(
             model=graph_module,

@@ -2,18 +2,16 @@ _base_ = ['./resnet18_8xb256-warmup-lbs-coslr_in1k.py']
 custom_imports = dict(
     imports =[
     'projects.nas-mqbench.models.quantizers.mutable_quantizer',
-    'projects.nas-mqbench.models.observers.batch_lsq',
 ])
 resnet = _base_.model
-float_checkpoint = 'https://download.openmmlab.com/mmclassification/v0/resnet/resnet18_8xb32_in1k_20210831-fbbb1da6.pth'  # noqa: E501
+float_checkpoint = 'work_dirs/pretrained_models/resnet18_8xb256-warmup-lbs-coslr-nwd_in1k/20230828_153341/epoch_100.pth'  # noqa: E501
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    w_qscheme=dict(
-        qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=True),
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True),
     a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True),
 )
 
