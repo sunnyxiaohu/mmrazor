@@ -320,8 +320,6 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         self.residual_mode = residual_mode
         assert residual_mode in [0, 1], f'Unexpected residual_mode: {residual_mode}'
         assert self.param_share_mode in [0, 1, 3, 4, 5], f'Unexpected param_share_mode: {self.param_share_mode}'
-        if self.param_share_mode == 4:
-            self.scale_adelta.data = torch.tensor([1.])
         self.register_buffer('calib_stats_fixed',
                              torch.tensor([0], dtype=torch.uint8))
 
@@ -355,26 +353,33 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
             delta_mult = self.scale * (1 + M) ** (quant_bits - self.BASE_BITS)
             scale = _scale * delta_mult
             zero_point = _zero_point + delta_add
-        elif self.param_share_mode == 4:
-            # import pdb; pdb.set_trace()
+        elif self.param_share_mode in [2, 4]:
             assert self.residual_mode == 0, f'Unsuported residual_mode: {self.residual_mode}'
-            idx = 0
-            while(idx < len(self.mutable_attrs['quant_bits'].choices)):
-                idx_quant_bits = self.mutable_attrs['quant_bits'].choices[idx]
-                M = 0.3  # 0.7  # 0.05
-                idx_delta_mult = self.scale_adelta[:, idx]
-                clip_m = idx_delta_mult * (1 + M) ** (quant_bits - idx_quant_bits)
-                if idx == index:
-                    idx += 1
-                    continue
-                elif idx > index:
-                    self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], min=clip_m)
-                else:
-                    self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], max=clip_m)
-                idx += 1
-            self.scale_adelta.data.abs_()
-            self.scale_adelta.data.clamp_(min=self.eps.item())
-            delta_mult = self.scale_adelta[:, index]
+            # idx = 0
+            # while(idx < len(self.mutable_attrs['quant_bits'].choices)):
+            #     idx_quant_bits = self.mutable_attrs['quant_bits'].choices[idx]
+            #     M = 0.3  # 0.7  # 0.05
+            #     idx_delta_mult = self.scale_adelta[:, idx]
+            #     clip_m = idx_delta_mult * (1 + M) ** (quant_bits - idx_quant_bits)
+            #     if idx == index:
+            #         idx += 1
+            #         continue
+            #     elif idx > index:
+            #         self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], min=clip_m)
+            #     else:
+            #         self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], max=clip_m)
+            #     idx += 1
+            # self.scale_adelta.data.abs_()
+            # self.scale_adelta.data.clamp_(min=self.eps.item())
+            delta_mult = self.scale
+            if self.param_share_mode == 4:
+                quant_bits = self.mutable_attrs['quant_bits'].choices[index]
+                m = (quant_bits - self.BASE_BITS)
+                M1, M2 = 0.05, 0.3  # 0.7  # 0.05
+                clip_m1 = ((1 + M1) ** m - 1) * delta_mult
+                clip_m2 = ((1 + M2) ** m - 1) * delta_mult
+                self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], clip_m1, clip_m2)
+            delta_mult = delta_mult + self.scale_adelta[:, index]
             scale = _scale * delta_mult
             zero_point = _zero_point + delta_add
         else:

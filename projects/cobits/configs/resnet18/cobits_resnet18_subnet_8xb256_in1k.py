@@ -33,7 +33,7 @@ optim_wrapper = dict(
     optimizer=dict(type='SGD', lr=0.002, momentum=0.9, weight_decay=0.0001))
 
 # learning policy
-max_epochs = 50
+max_epochs = 75
 warm_epochs = 1
 # learning policy
 param_scheduler = [

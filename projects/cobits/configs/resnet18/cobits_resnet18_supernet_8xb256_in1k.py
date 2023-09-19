@@ -27,8 +27,8 @@ global_qconfig = dict(
     a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
     # w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True),
     # a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, residual_mode=0, param_share_mode=5),
-    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, residual_mode=0, param_share_mode=5)
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, residual_mode=0, param_share_mode=4),
+    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, residual_mode=0, param_share_mode=4)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
 qmodel = dict(
@@ -109,10 +109,33 @@ model_wrapper_cfg = dict(
     broadcast_buffers=False,
     find_unused_parameters=True)
 
+# learning policy
+max_epochs = 25
+warm_epochs = 1
+param_scheduler = [
+    # warm up learning rate scheduler
+    dict(
+        type='LinearLR',
+        start_factor=0.025,
+        by_epoch=True,
+        begin=0,
+        # about 2500 iterations for ImageNet-1k
+        end=warm_epochs,
+        # update by iter
+        convert_to_iter_based=True),
+    # main learning rate scheduler
+    dict(
+        type='CosineAnnealingLR',
+        T_max=max_epochs-warm_epochs,
+        by_epoch=True,
+        begin=warm_epochs,
+        end=max_epochs,
+    ),
+]
 train_cfg = dict(
     _delete_=True,
     type='mmrazor.QNASEpochBasedLoop',
-    max_epochs=100,
+    max_epochs=max_epochs,
     val_interval=5,
     qat_begin=1,
     freeze_bn_begin=-1)

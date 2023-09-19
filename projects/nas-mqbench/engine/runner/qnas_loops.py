@@ -559,7 +559,6 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 else:
                     candidate = self.model.mutator.sample_choices()
                 self.model.mutator.set_choices(candidate)
-                candidate = self.model.mutator.sample_choices(kind=nonqmin)
                 is_pass, result = self._check_constraints(
                     random_subnet=candidate)
                 if is_pass:
