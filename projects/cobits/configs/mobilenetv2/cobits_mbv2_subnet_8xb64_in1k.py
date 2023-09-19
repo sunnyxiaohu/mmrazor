@@ -31,9 +31,8 @@ train_dataloader = dict(batch_size=64)
 optim_wrapper = dict(optimizer=dict(type='SGD', lr=0.01))
 
 # learning policy
-max_epochs = 90
+max_epochs = 50
 warm_epochs = 1
-# learning policy
 param_scheduler = [
     # warm up learning rate scheduler
     dict(
