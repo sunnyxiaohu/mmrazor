@@ -4,7 +4,7 @@ custom_imports = dict(
     'projects.nas-mqbench.models.quantizers.mutable_quantizer',
 ])
 resnet = _base_.model
-float_checkpoint = 'work_dirs/pretrained_models/resnet18_8xb256-warmup-lbs-coslr-nwd_in1k/20230828_153341/epoch_100.pth'  # noqa: E501
+float_checkpoint = 'https://download.openmmlab.com/mmclassification/v0/resnet/resnet18_8xb32_in1k_20210831-fbbb1da6.pth'  # noqa: E501
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),
@@ -84,7 +84,7 @@ train_cfg = dict(
     _delete_=True,
     type='mmrazor.LSQEpochBasedLoop',
     max_epochs=max_epochs,
-    val_interval=1,
+    val_interval=5,
     freeze_bn_begin=-1)
 val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop')
 

@@ -31,6 +31,7 @@ except ImportError:
 custom_imports = 'projects.nas-mqbench.structures.quantization.backend_config.mutable_openvino'
 mutableopenvino = import_modules_from_strings(custom_imports)
 BackendConfigs['mutableopenvino'] = mutableopenvino.get_mutableopenvino_backend_config()
+BackendConfigs['mutableopenvino_onlyweight'] = mutableopenvino.get_mutableopenvino_onlyweight_backend_config()
 custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_lsq'
 dynamic_lsq = import_modules_from_strings(custom_imports)
 
@@ -51,9 +52,11 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
     def __init__(self, *args, tracer: Dict = dict(type='CustomTracer'),
                  quant_bits=None, quant_bits_skipped_module_names=None,
                  default_skipped_bit=8, nested_quant_bits_in_layer=False,
-                 fuse_fx=True, **kwargs):
+                 only_quant_weights=False, **kwargs):
         if 'skipped_module_classes' in tracer:
             tracer['skipped_module_classes'] = str2class(tracer['skipped_module_classes'])
+        self.only_quant_weights = only_quant_weights
+
         super().__init__(*args, tracer=tracer, **kwargs)
         self.quant_bits = quant_bits
         if quant_bits_skipped_module_names is None:
@@ -61,13 +64,15 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
         self.quant_bits_skipped_module_names = quant_bits_skipped_module_names
         self.default_skipped_bit = default_skipped_bit
         self.nested_quant_bits_in_layer = nested_quant_bits_in_layer
-        self.fuse_fx = fuse_fx
 
     @property
     def backend(self):
         """The backend to deploy, also the key of the corresponding backend
         config."""
-        return 'mutableopenvino'
+        if self.only_quant_weights:
+            return 'mutableopenvino_onlyweight'
+        else:
+            return 'mutableopenvino'
 
     @property
     def support_a_modes(self):
@@ -105,17 +110,15 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
         self.swap_ff_with_fxff(model)
         traced_graph = self.tracer.trace(model, concrete_args=concrete_args)
         graph_module = build_graphmodule(model, traced_graph)
-        # import pdb; pdb.set_trace()
         # set the training modes of all modules to True to `_fuse_fx` correctly
         # todo: check freezebn
         self.sync_module_training_mode(graph_module, mode=True)
 
-        if self.fuse_fx:
+        if not self.only_quant_weights:
             graph_module = _fuse_fx(
                 graph_module=graph_module,
                 is_qat=True,
                 backend_config=self.backend_config)
-
         prepared = prepare(
             model=graph_module,
             qconfig_mapping=self.qconfig_mapping,
@@ -135,6 +138,15 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
         prepared = wrap_depth_scope(
             prepared, dynamic_seq_names, self.tracer.node_name_to_scope, True)
         return prepared
+
+    @property
+    def module_prev_wo_fakequant(self):
+        """Configurate the modules that their previous nodes are redundant
+        fakequants."""
+        redundant = super().module_prev_wo_fakequant
+        if self.only_quant_weights:
+            redundant = redundant + (_BatchNorm,)
+        return redundant
 
 def wrap_depth_scope(prepared_model, dynamic_seq_names, node_name_to_scope, inplace: bool = True):
     # Since fx.trace can not handle nested nodes. e.g., we have `DynamicSequential`
@@ -289,18 +301,8 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
     for node in new_graph.nodes:
         if node.op == 'call_module':
             maybe_dynamic = _get_attrs(prepared_model, node.target)
-            # fp32 for BN when not fuse_bn
-            if isinstance(maybe_dynamic, _BatchNorm):
-                maybe_act = node.args[0]
-                if not (maybe_act.op == 'call_module' and isinstance(
-                        _get_attrs(prepared_model, maybe_act.target),
-                        LearnableFakeQuantize)):
-                    continue
-                qbits = OneShotMutableValue(alias=maybe_act.target + '.quant_bits', value_list=[32])
-                maybe_dynamic = _get_attrs(prepared_model, maybe_act.target)
-                maybe_dynamic.register_mutable_attr('quant_bits', qbits)
             # for activations
-            elif isinstance(maybe_dynamic, dynamic_lsq.DynamicLearnableFakeQuantize):
+            if isinstance(maybe_dynamic, dynamic_lsq.DynamicLearnableFakeQuantize):
                 if 'quant_bits' in maybe_dynamic.mutable_attrs:
                     continue
                 this_bits = quant_bits
