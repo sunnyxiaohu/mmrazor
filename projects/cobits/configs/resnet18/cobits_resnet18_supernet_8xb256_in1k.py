@@ -44,7 +44,7 @@ qmodel = dict(
             'backbone.conv1',
             'head.fc'
         ],
-        quant_bits=[4, 6, 8],
+        quant_bits=[3,4,5,6],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
@@ -141,7 +141,7 @@ train_cfg = dict(
     freeze_bn_begin=-1)
 
 # total calibrate_sample_num = 256 * 8 * 2
-val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536, quant_bits=[4, 8])
+val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536, quant_bits=[3,4,5,6])
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
 default_hooks = dict(

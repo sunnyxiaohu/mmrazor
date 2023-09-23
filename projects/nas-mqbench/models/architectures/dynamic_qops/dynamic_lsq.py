@@ -319,7 +319,7 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         super().__init__(*args, **kwargs)
         self.residual_mode = residual_mode
         assert residual_mode in [0, 1], f'Unexpected residual_mode: {residual_mode}'
-        assert self.param_share_mode in [0, 1, 3, 4, 5], f'Unexpected param_share_mode: {self.param_share_mode}'
+        assert self.param_share_mode in [0, 1, 2, 4, 5], f'Unexpected param_share_mode: {self.param_share_mode}'
         self.register_buffer('calib_stats_fixed',
                              torch.tensor([0], dtype=torch.uint8))
 

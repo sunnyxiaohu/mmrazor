@@ -19,7 +19,8 @@ _base_.train_dataloader.dataset.pipeline = [
     dict(type='LoadImageFromFile'),
     dict(type='RandomResizedCrop', scale=224),
     dict(type='RandomFlip', prob=0.5, direction='horizontal'),
-    dict(type='ColorJitter', brightness=0.2, contrast=0.2, saturation=0.2),
+    # dict(type='ColorJitter', brightness=0.2, contrast=0.2, saturation=0.2),
+    dict(type='ColorJitter', brightness=0.1254, saturation=0.5),
     dict(type='PackClsInputs'),
 ]
 _base_.train_dataloader.batch_size = 256
