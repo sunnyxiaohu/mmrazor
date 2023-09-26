@@ -83,6 +83,8 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         # mode 4: mode 2 with adelta constrained
         assert param_share_mode in [0, 1, 2, 3, 4, 5], f'Unexpected param_share_mode: {param_share_mode}'
         self.param_share_mode = param_share_mode
+        if self.param_share_mode == 1:
+            assert not self.zero_point_trainable
         if self.param_share_mode in [2, 4]:
             self.scale_adelta = Parameter(torch.tensor([0.]))
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
@@ -102,8 +104,38 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
     def to_static_op(self) -> nn.Module:
         # quant_bits, index = self.get_dynamic_params()
         # if quant_bits == self.FLOAT_BITS:
-        #     return 
+        #     return
         raise NotImplementedError()
+
+    @torch.jit.export
+    def observe_quant_params(self):
+        quant_bits, index = self.get_dynamic_params()
+
+        zero_point = self.zero_point[:, index] if index is not None else self.zero_point
+        # if index is None and not self.zero_point_trainable:
+        #     self.activation_post_process(X.detach())
+        #     _, zero_point = self.activation_post_process.calculate_qparams()
+        #     self.activation_post_process.reset_min_max_vals()
+
+        scale = self.scale
+        if self.param_share_mode in [3, 5]:
+            M = 0.2 if self.param_share_mode == 5 else 0.0
+            mult = (1 + M) * 1.0 / 2 ** (quant_bits - self.BASE_BITS)
+            scale = mult * scale
+        elif self.param_share_mode in [2, 4]:
+            mult = 1.0 / 2 ** (quant_bits - self.BASE_BITS)
+            if self.param_share_mode == 4:
+                quant_bits = self.mutable_attrs['quant_bits'].choices[index]
+                M1, M2 = 0.05, 0.3  # 0.7  # 0.05
+                clip_m1 = mult * scale * M1
+                clip_m2 = mult * scale * M2
+                self.scale_adelta.data[:, index] = torch.clamp(self.scale_adelta.data[:, index], clip_m1, clip_m2)
+            scale = scale * mult + self.scale_adelta[:, index]
+        else:
+            scale = self.scale[:, index] if index is not None else self.scale
+        scale.data.abs_()
+        scale.data.clamp_(min=self.eps.item())
+        return scale, zero_point
 
     def register_mutable_attr(self, attr, mutable):
         assert hasattr(self, 'mutable_attrs')
@@ -114,6 +146,8 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                 self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
             if self.param_share_mode in [2, 4]:
                 self.scale_adelta.data = torch.zeros(1, len(mutable.choices)).to(device)
+                self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
+            if self.param_share_mode == 5:
                 self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
             self.mutable_attrs['quant_bits'] = mutable
         else:
@@ -152,96 +186,53 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         if quant_bits == self.FLOAT_BITS:
             return X
 
-        mult = 1.0 / 2 ** (quant_bits - self.BASE_BITS)
         org_static_enabled = self.static_enabled[0]
-        if index is not None and self.param_share_mode == 0:
-            local_scale = self.scale.data[:, index]
-        else:
-            local_scale = self.scale.data
+        scale, zero_point = self.observe_quant_params()
+        # if index is not None and self.param_share_mode == 0:
+        #     local_scale = self.scale.data[:, index]
+        # else:
+        #     local_scale = self.scale.data
         # Check whether is initialized or not. We choose scale as indicator
         # since zero_point may also be zero after initialized.
-        scale_initialized = not torch.equal(local_scale, torch.ones_like(local_scale))
+        scale_initialized = not torch.equal(scale, torch.ones_like(scale))
         scale_initialized = scale_initialized or not self.training
         if not scale_initialized:
             self.static_enabled[0] = 1
         if self.static_enabled[0] == 1:
             self.activation_post_process(X.detach())
-            _scale, _zero_point = \
+            scale, zero_point = \
                 self.activation_post_process.calculate_qparams()
-            _scale = _scale.to(self.scale.device)
-            _zero_point = _zero_point.to(self.zero_point.device)
+            self.activation_post_process.reset_min_max_vals()
+            scale = scale.to(self.scale.device)
+            zero_point = zero_point.to(self.zero_point.device)
+
+            if index is not None:
+                self.zero_point.data[:, index] = zero_point
+            else:
+                self.zero_point.data.copy_(zero_point)
+            M = 0.2 if self.param_share_mode == 5 else 0.0
+            mult = (1 + M) * 1.0 / 2 ** (quant_bits - self.BASE_BITS)
+            mult = 1.0 if self.param_share_mode == 1 else mult
+            _scale = scale / mult
+            self.scale.data.copy_(_scale)
 
             if self.qscheme in (torch.per_channel_symmetric,
                                 torch.per_channel_affine):
-                self.scale.data.repeat(1, len(_scale))
-                self.zero_point.data.repeat(1, len(_zero_point))
+                self.scale.data.repeat(1, len(scale))
+                self.zero_point.data.repeat(1, len(zero_point))
                 if self.param_share_mode in [2, 4]:
-                    self.scale_adelta.data.repeat(1, len(_scale))
-
-            if index is not None and self.param_share_mode == 0:
-                self.scale.data[:, index] = _scale
-                self.zero_point.data[:, index] = _zero_point
-            elif index is not None and self.param_share_mode in [2, 4]:
-                self.scale.data.copy_(_scale)
-                self.zero_point.data[:, index] = _zero_point
-            else:
-                self.scale.data.copy_(_scale)
-                self.zero_point.data.copy_(_zero_point)
-
-            self.activation_post_process.reset_min_max_vals()
-        else:
-            self.scale.data.abs_()
-            self.scale.data.clamp_(min=self.eps.item())
-
-        # transitate to initialize scale_delta.
-        if scale_initialized and self.param_share_mode in [2, 4]:
-            local_scale = self.scale_adelta.data[:, index]
-            if torch.equal(local_scale, torch.zeros_like(local_scale)):
-                self.activation_post_process(X.detach())
-                _scale, _zero_point = \
-                    self.activation_post_process.calculate_qparams()
-                _scale = _scale.to(self.scale.device)
-                _zero_point = _zero_point.to(self.zero_point.device)
-                self.scale_adelta.data[:, index] = _scale - mult * self.scale.data
-                self.activation_post_process.reset_min_max_vals()
-            else:
-                self.scale_adelta.data.clamp_(min=self.eps.item())
+                    self.scale_adelta.data.repeat(1, len(scale))
 
         self.static_enabled[0] = org_static_enabled
         # import pdb; pdb.set_trace()
         if self.fake_quant_enabled[0] == 1:
-            if index is None:
-                if 'quant_bits' in self.mutable_attrs and len(self.mutable_attrs['quant_bits'].choices) > 1:
-                    assert not self.zero_point_trainable
-                    self.activation_post_process(X.detach())
-                    _, _zero_point = self.activation_post_process.calculate_qparams()
-                    _zero_point = _zero_point.to(self.zero_point.device)
-                    self.zero_point.data.copy_(_zero_point)
-                    self.activation_post_process.reset_min_max_vals()
-                zero_point = self.zero_point
-                scale = self.scale
-                if self.param_share_mode == 3:
-                    scale = mult * scale
-            else:
-                zero_point = self.zero_point[:, index]
-                if self.param_share_mode in [2, 4]:
-                    scale = self.scale
-                    idx = 0
-                    pre_bits = self.BASE_BITS
-                    # import pdb; pdb.set_trace()
-                    while(idx <= index):
-                        quant_bits = self.mutable_attrs['quant_bits'].choices[idx]
-                        mult = 1.0 / 2 ** (quant_bits - pre_bits)
-                        if self.param_share_mode == 4:
-                            M = 0.3  # 0.7  # 0.05
-                            clip_m = mult * scale * M
-                            self.scale_adelta.data[:, idx] = torch.clamp(self.scale_adelta.data[:, idx], -clip_m, clip_m)
-                        scale_adelta = self.scale_adelta[:, idx]
-                        scale = mult * scale + scale_adelta
-                        idx += 1
-                        pre_bits = quant_bits
-                else:
-                    scale = self.scale[:, index]
+            scale, zero_point = self.observe_quant_params()
+            if index is None and not self.zero_point_trainable:
+                self.activation_post_process(X.detach())
+                _, zero_point = self.activation_post_process.calculate_qparams()
+                zero_point = zero_point.float()
+                self.activation_post_process.reset_min_max_vals()
+
             if self.use_grad_scaling:
                 grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
             else:
@@ -319,7 +310,6 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         super().__init__(*args, **kwargs)
         self.residual_mode = residual_mode
         assert residual_mode in [0, 1], f'Unexpected residual_mode: {residual_mode}'
-        assert self.param_share_mode in [0, 1, 2, 4, 5], f'Unexpected param_share_mode: {self.param_share_mode}'
         self.register_buffer('calib_stats_fixed',
                              torch.tensor([0], dtype=torch.uint8))
 
@@ -349,7 +339,7 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         delta_add = self.zero_point[:, index] if index is not None else self.zero_point
         if self.param_share_mode in [3, 5]:
             assert self.residual_mode == 0, f'Unsuported residual_mode: {self.residual_mode}'
-            M = 0.2
+            M = 0.2 if self.param_share_mode == 5 else 0.0
             delta_mult = self.scale * (1 + M) ** (quant_bits - self.BASE_BITS)
             scale = _scale * delta_mult
             zero_point = _zero_point + delta_add
@@ -399,8 +389,6 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         device = self.scale.device
         if self.param_share_mode == 4:
             self.scale_adelta.data = torch.ones_like(self.scale_adelta).to(device)
-        if self.param_share_mode == 5:
-            self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
 
     def forward(self, X):
         """Forward computation.

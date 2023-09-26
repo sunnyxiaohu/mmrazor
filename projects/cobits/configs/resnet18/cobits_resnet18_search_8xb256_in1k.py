@@ -9,13 +9,13 @@ train_cfg = dict(
     type='mmrazor.QNASEvolutionSearchLoop',
     dataloader=_base_.val_dataloader,
     evaluator=_base_.val_evaluator,
-    max_epochs=1,
-    num_candidates=1,
-    num_mutation=0,
-    num_crossover=0,
+    max_epochs=5,
+    num_candidates=20,
+    num_mutation=10,
+    num_crossover=10,
     calibrate_dataloader=_base_.train_dataloader,
     calibrate_sample_num=65536,
-    constraints_range=dict(flops=(0., 50000.)),
+    constraints_range=dict(flops=(0., 34684.)),
     score_key='accuracy/top1')
 
 val_cfg = dict(_delete_=True)

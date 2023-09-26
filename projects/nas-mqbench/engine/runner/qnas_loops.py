@@ -3,10 +3,12 @@ import contextlib
 import logging
 import os
 import os.path as osp
+import math
 import random
 import time
 import warnings
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from pulp import LpProblem, lpSum, LpVariable, LpInteger, LpMinimize, value, LpMaximize
 
 import numpy as np
 import torch
@@ -32,9 +34,13 @@ except ImportError:
     enable_fake_quant = get_placeholder('torch>=1.13')
     enable_observer = get_placeholder('torch>=1.13')
 
-from mmrazor.models import register_torch_fake_quants, register_torch_observers
+from mmrazor.models import (BaseAlgorithm, register_torch_fake_quants,
+                            register_torch_observers)
+from mmrazor.models.architectures.dynamic_ops import (DynamicConvMixin,
+                                                      DynamicLinearMixin)
 from mmrazor.models.fake_quants import (enable_param_learning,
                                         enable_static_estimate, enable_val)
+from mmrazor.models.task_modules.tracer.fx.graph_utils import _get_attrs
 from mmrazor.models.utils import add_prefix, get_module_device
 from mmrazor.structures import Candidates, export_fix_subnet, convert_fix_subnet
 from mmrazor.structures.subnet.fix_subnet import _load_fix_subnet_by_mutable
@@ -539,10 +545,85 @@ def nonqmin(mutables):
 class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
     """Loop for evolution searching."""
 
-    def __init__(self, *args, export_fix_subnet=None, **kwargs):
+    def __init__(self, *args, export_fix_subnet=None, ilp_solve=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.export_float_model = False
         self.export_fix_subnet = export_fix_subnet
+        self.ilp_solve = ilp_solve
+
+    def sample_ilp_once(self, w_alpha=1.0, act_alpha=1.0) -> None:
+        # import pdb; pdb.set_trace()
+        # 1. get all the spec_modules.
+        spec_modules = []
+        for name, mod in self.model.named_modules():
+            if isinstance(mod, (DynamicConvMixin, DynamicLinearMixin)):
+                spec_modules.append(name)
+        # 2. forward and get it's corresponding flops / params.
+        self.model.mutator.set_min_choices()
+        results = self.estimator.estimate_separation_modules(
+            model=self.model, flops_params_cfg=dict(spec_modules=spec_modules, seperate_return=True))
+        # filter results
+        filterd_results = {}
+        for key, val in results.items():
+            if val['flops'] != 0 or val['params'] != 0:
+                filterd_results[key] = val
+        # 3. build interger linear programming and solve it.
+        problem = LpProblem('Bit-width allocation', LpMaximize)
+        variables = {}
+        target, bitops, bitparams = 0, 0, 0
+        # TODO: infer prefix
+        prefix = 'architecture.qmodels.tensor.'
+        for name, mod in self.model.named_modules():
+            if name in filterd_results:
+                w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
+                act_quant_bits = mod._ACT_QUANT_BITS
+                for wb in w_quant_bits.choices:
+                    w_quant_bits.current_choice = wb
+                    w_scale, w_zero_point = mod.weight_fake_quant.observe_quant_params()
+                    for ab in act_quant_bits.choices:
+                        act_quant_bits.current_choice = ab
+                        key = f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}'
+                        variables[key] = LpVariable(key, 0, 1, LpInteger)
+                        act_scale, act_zero_point = _get_attrs(self.model,
+                            f"{prefix}{act_quant_bits.alias.split('.quant_bits')[0]}").observe_quant_params()
+                        # target
+                        target += (w_alpha * w_scale.item() * (2**wb-1) + act_alpha * act_scale.item() * (2**ab-1)) * variables[key]
+                        bitops += filterd_results[name]['flops'] / w_quant_bits.choices[0] / act_quant_bits.choices[0] * wb * ab * variables[key]
+                        bitparams += filterd_results[name]['params'] / w_quant_bits.choices[0] * wb * variables[key]
+                # constraint 1
+                problem += sum(variables[f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}']
+                                for wb in w_quant_bits.choices for ab in act_quant_bits.choices) == 1
+        problem += target
+        # constraint 2
+        if 'flops' in self.constraints_range:
+            problem += bitops >= self.constraints_range['flops'][0]
+            problem += bitops <= self.constraints_range['flops'][1]
+        # constraint 3
+        if 'params' in self.constraints_range:
+            problem += bitparams >= self.constraints_range['params'][0]
+            problem += bitparams <= self.constraints_range['params'][1]            
+        # TODO: constraint 4: avg_quant_bits for weight and act, seperately.
+        ret = problem.solve()
+        if ret != 1:
+            return None        
+        # 4. get results.
+        for name, mod in self.model.named_modules():
+            if name in filterd_results:
+                w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
+                act_quant_bits = mod._ACT_QUANT_BITS
+                chosen = False
+                for wb in w_quant_bits.choices:
+                    for ab in act_quant_bits.choices:
+                        key = f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}'
+                        if value(variables[key]) == 1.0:
+                            chosen = True
+                            break
+                    if chosen == True:
+                        break
+                act_quant_bits.current_choice = ab
+                w_quant_bits.current_choice = wb
+        candidate = self.model.mutator.current_choices
+        return candidate
 
     def sample_candidates(self) -> None:
         """Update candidate pool contains specified number of candicates."""
@@ -550,9 +631,17 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         init_candidates = len(self.candidates)
         idx = 0
         if self.runner.rank == 0:
+            if self.ilp_solve:
+                w_act_alphas = int(math.sqrt(self.num_candidates - init_candidates))
+                w_alphas = [(i+1.0) / w_act_alphas for i in range(w_act_alphas)]
+                w_act_alphas = [(i, j) for i in w_alphas for j in w_alphas]
             while len(self.candidates) < self.num_candidates:
                 idx += 1
-                if idx == 1:
+                if self.ilp_solve and idx <= len(w_act_alphas):
+                    candidate = self.sample_ilp_once(*w_act_alphas[idx-1])
+                    if candidate is None:
+                        continue
+                elif idx == 1:
                     candidate = self.model.mutator.sample_choices('max')
                 elif idx == 2:
                     candidate = self.model.mutator.sample_choices('min')

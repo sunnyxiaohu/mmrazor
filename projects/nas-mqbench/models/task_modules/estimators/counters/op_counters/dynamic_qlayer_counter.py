@@ -51,12 +51,12 @@ class DynamicQConv2dCounter(BaseCounter):
 
         overall_flops = overall_conv_flops + bias_flops
 
-        quant_bits = module.weight_fake_quant.mutable_attrs['quant_bits'].current_choice
+        w_quant_bits = module.weight_fake_quant.mutable_attrs['quant_bits'].current_choice
         act_quant_bits = module._ACT_QUANT_BITS.current_choice
-        overall_flops = overall_flops * quant_bits * act_quant_bits # / 64
-        assert quant_bits <= 8 and act_quant_bits <= 8
+        overall_flops = overall_flops * w_quant_bits * act_quant_bits # / 64
+        assert w_quant_bits <= 8 and act_quant_bits <= 8
         module.__flops__ += overall_flops
-        module.__params__ += int(overall_params)
+        module.__params__ += int(overall_params * w_quant_bits)
 
 @TASK_UTILS.register_module()
 class DynamicQConvBnReLU2dCounter(DynamicQConv2dCounter):
@@ -79,10 +79,10 @@ class DynamicQLinearCounter(BaseCounter):
         input = input[0]
         output_last_dim = output.shape[
             -1]  # pytorch checks dimensions, so here we don't care much
-        quant_bits = module.weight_fake_quant.mutable_attrs['quant_bits'].current_choice
+        w_quant_bits = module.weight_fake_quant.mutable_attrs['quant_bits'].current_choice
         # import pdb; pdb.set_trace()
         act_quant_bits = module._ACT_QUANT_BITS.current_choice
-        overall_flops = np.prod(input.shape) * output_last_dim * quant_bits * act_quant_bits # / 64
-        assert quant_bits <= 8 and act_quant_bits <= 8
+        overall_flops = np.prod(input.shape) * output_last_dim * w_quant_bits * act_quant_bits # / 64
+        assert w_quant_bits <= 8 and act_quant_bits <= 8
         module.__flops__ += overall_flops
-        module.__params__ += int(get_model_parameters_number(module))
+        module.__params__ += int(get_model_parameters_number(module) * w_quant_bits)
