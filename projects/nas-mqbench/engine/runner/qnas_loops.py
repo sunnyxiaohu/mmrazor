@@ -8,6 +8,7 @@ import random
 import time
 import warnings
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from collections import defaultdict, OrderedDict
 from pulp import LpProblem, lpSum, LpVariable, LpInteger, LpMinimize, value, LpMaximize
 
 import numpy as np
@@ -545,14 +546,14 @@ def nonqmin(mutables):
 class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
     """Loop for evolution searching."""
 
-    def __init__(self, *args, export_fix_subnet=None, ilp_solve=False, **kwargs):
+    def __init__(self, *args, export_fix_subnet=None, solve_mode='evo', **kwargs):
         super().__init__(*args, **kwargs)
         self.export_float_model = False
         self.export_fix_subnet = export_fix_subnet
-        self.ilp_solve = ilp_solve
+        self.solve_mode = solve_mode
+        assert solve_mode in ['evo', 'prob', 'ilp']
 
-    def sample_ilp_once(self, w_alpha=1.0, act_alpha=1.0) -> None:
-        # import pdb; pdb.set_trace()
+    def get_qrange_probs(self):
         # 1. get all the spec_modules.
         spec_modules = []
         for name, mod in self.model.named_modules():
@@ -567,32 +568,114 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         for key, val in results.items():
             if val['flops'] != 0 or val['params'] != 0:
                 filterd_results[key] = val
-        # 3. build interger linear programming and solve it.
-        problem = LpProblem('Bit-width allocation', LpMaximize)
-        variables = {}
-        target, bitops, bitparams = 0, 0, 0
+        filterd_mods = [(name, mod) for name, mod in self.model.named_modules() if name in filterd_results]
+        # get every FakeQaunt's qrange
+        qrange_results = defaultdict(int)
         # TODO: infer prefix
         prefix = 'architecture.qmodels.tensor.'
-        for name, mod in self.model.named_modules():
-            if name in filterd_results:
-                w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
-                act_quant_bits = mod._ACT_QUANT_BITS
-                for wb in w_quant_bits.choices:
-                    w_quant_bits.current_choice = wb
+        kinds = ['max', 'min']
+        kinds += ['random'] * 3
+        ignore_sqrange = {}
+        for kind in kinds:
+            self.model.mutator.set_choices(self.model.mutator.sample_choices(kind=kind))
+            with adabn_context(self.model):
+                if self.calibrate_sample_num > 0:
+                    self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
+                                                          model=self.model,
+                                                          calibrate_sample_num=self.calibrate_sample_num)
+                for name, mod in filterd_mods:
+                    w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
+                    act_quant_bits = mod._ACT_QUANT_BITS
+                    wb, ab = w_quant_bits.current_choice, act_quant_bits.current_choice
                     w_scale, w_zero_point = mod.weight_fake_quant.observe_quant_params()
-                    for ab in act_quant_bits.choices:
-                        act_quant_bits.current_choice = ab
-                        key = f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}'
-                        variables[key] = LpVariable(key, 0, 1, LpInteger)
-                        act_scale, act_zero_point = _get_attrs(self.model,
-                            f"{prefix}{act_quant_bits.alias.split('.quant_bits')[0]}").observe_quant_params()
-                        # target
-                        target += (w_alpha * w_scale.item() * (2**wb-1) + act_alpha * act_scale.item() * (2**ab-1)) * variables[key]
-                        bitops += filterd_results[name]['flops'] / w_quant_bits.choices[0] / act_quant_bits.choices[0] * wb * ab * variables[key]
-                        bitparams += filterd_results[name]['params'] / w_quant_bits.choices[0] * wb * variables[key]
-                # constraint 1
-                problem += sum(variables[f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}']
-                                for wb in w_quant_bits.choices for ab in act_quant_bits.choices) == 1
+                    act_scale, act_zero_point = _get_attrs(self.model,
+                        f"{prefix}{act_quant_bits.alias.split('.quant_bits')[0]}").observe_quant_params()
+                    key = f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}'
+                    if len(w_quant_bits.choices) <= 1:
+                        ignore_sqrange[w_quant_bits.alias] = w_scale.item() * (2**wb-1)
+                    else:
+                        qrange_results[w_quant_bits.alias] = w_scale.item() * (2**wb-1)
+                    if len(act_quant_bits.choices) <= 1:
+                        ignore_sqrange[act_quant_bits.alias] = act_scale.item() * (2**ab-1)
+                    else:
+                        qrange_results[act_quant_bits.alias] = act_scale.item() * (2**ab-1)
+        # import pdb; pdb.set_trace()
+        sorted_qrange = sorted(qrange_results.items(), key=lambda x: x[1])
+        # Note: we ignore these except fakequants
+        normalized_sqrange = {}
+        for x in sorted_qrange:
+            normalized_sqrange[x[0]] = x[1] / sum(qrange_results.values())
+        mean_nsqrange = np.mean(list(normalized_sqrange.values()))
+        median_nsqrange = np.median(list(normalized_sqrange.values()))
+        normalized_sqrange.update(ignore_sqrange)
+        # Suppose fakequant A and fakequant B,
+        # if qrange(A) > qrange(B), then the higher bit-width of A should get more selection prob
+        # if qrange(A) < qrange(B), then the lower bit-width of A should get less selection prob.
+
+        def adjust_function(fixed_point, ratio, input, ftype='linear'):
+            assert ftype in ['linear', 'exp', 'log']
+            if ftype == 'linear':
+                output = ratio * (input - fixed_point[0]) + fixed_point[1]
+            elif ftype == 'exp':
+                output = np.exp(ratio * (input - fixed_point[0])) + (1 - fixed_point[1])
+            return output
+
+        def normalize(results):
+            total = sum(results.values())
+            for k, v in results.items():
+                results[k] = v / total
+
+        prob_results = {}
+        belta = 1.0  # 00.0
+        for name, mod in filterd_mods:
+            w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
+            act_quant_bits = mod._ACT_QUANT_BITS
+            w_fixed_point = (np.mean(w_quant_bits.choices), 0.5)
+            act_fixed_point = (np.mean(act_quant_bits.choices), 0.5)
+            w_m = belta * (normalized_sqrange[w_quant_bits.alias] - median_nsqrange)
+            act_m = belta * (normalized_sqrange[act_quant_bits.alias] - median_nsqrange)
+            prob_results[w_quant_bits.alias] = OrderedDict()
+            prob_results[act_quant_bits.alias] = OrderedDict()
+            for wb in w_quant_bits.choices:
+                prob_results[w_quant_bits.alias][wb] = adjust_function(w_fixed_point, w_m, wb, ftype='exp')
+            for ab in act_quant_bits.choices:
+                prob_results[act_quant_bits.alias][ab] = adjust_function(act_fixed_point, act_m, ab, ftype='exp')
+            normalize(prob_results[w_quant_bits.alias])
+            normalize(prob_results[act_quant_bits.alias])                
+        return filterd_mods, filterd_results, prob_results
+
+    def sample_qrange_prob_once(self, filterd_mods, prob_results):
+        for name, mod in filterd_mods:
+            w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
+            act_quant_bits = mod._ACT_QUANT_BITS
+            w_quant_bits.current_choice = np.random.choice(
+                w_quant_bits.choices, p=list(prob_results[w_quant_bits.alias].values()))
+            act_quant_bits.current_choice = np.random.choice(
+                act_quant_bits.choices, p=list(prob_results[act_quant_bits.alias].values()))
+        candidate = self.model.mutator.current_choices
+        return candidate
+
+    def sample_ilp_once(self, filterd_mods, filterd_results, prob_results, w_alpha=1.0, act_alpha=1.0) -> None:
+        # 3. build interger linear programming and solve it.
+        problem = LpProblem('Bit-width allocation', LpMinimize)
+        variables = {}
+        target, bitops, bitparams = 0, 0, 0
+        for name, mod in filterd_mods:
+            w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
+            act_quant_bits = mod._ACT_QUANT_BITS
+            for wb in w_quant_bits.choices:
+                w_quant_bits.current_choice = wb
+                for ab in act_quant_bits.choices:
+                    act_quant_bits.current_choice = ab
+                    key = f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}'
+                    variables[key] = LpVariable(key, 0, 1, LpInteger)
+                    # target
+                    target += (w_alpha * prob_results[w_quant_bits.alias][wb] + act_alpha * prob_results[act_quant_bits.alias][ab]) * variables[key]
+                    bitops += filterd_results[name]['flops'] / w_quant_bits.choices[0] / act_quant_bits.choices[0] * wb * ab * variables[key]
+                    bitparams += filterd_results[name]['params'] / w_quant_bits.choices[0] * wb * variables[key]
+            # constraint 1
+            problem += sum(variables[f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}']
+                           for wb in w_quant_bits.choices for ab in act_quant_bits.choices) == 1
         problem += target
         # constraint 2
         if 'flops' in self.constraints_range:
@@ -605,23 +688,22 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         # TODO: constraint 4: avg_quant_bits for weight and act, seperately.
         ret = problem.solve()
         if ret != 1:
-            return None        
+            return None
         # 4. get results.
-        for name, mod in self.model.named_modules():
-            if name in filterd_results:
-                w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
-                act_quant_bits = mod._ACT_QUANT_BITS
-                chosen = False
-                for wb in w_quant_bits.choices:
-                    for ab in act_quant_bits.choices:
-                        key = f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}'
-                        if value(variables[key]) == 1.0:
-                            chosen = True
-                            break
-                    if chosen == True:
+        for name, mod in filterd_mods:
+            w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
+            act_quant_bits = mod._ACT_QUANT_BITS
+            chosen = False
+            for wb in w_quant_bits.choices:
+                for ab in act_quant_bits.choices:
+                    key = f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}'
+                    if value(variables[key]) == 1.0:
+                        chosen = True
                         break
-                act_quant_bits.current_choice = ab
-                w_quant_bits.current_choice = wb
+                if chosen is True:
+                    break
+            act_quant_bits.current_choice = ab
+            w_quant_bits.current_choice = wb
         candidate = self.model.mutator.current_choices
         return candidate
 
@@ -630,32 +712,35 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         candidates_resources = []
         init_candidates = len(self.candidates)
         idx = 0
-        if self.runner.rank == 0:
-            if self.ilp_solve:
-                w_act_alphas = int(math.sqrt(self.num_candidates - init_candidates))
-                w_alphas = [(i+1.0) / w_act_alphas for i in range(w_act_alphas)]
-                w_act_alphas = [(i, j) for i in w_alphas for j in w_alphas]
-            while len(self.candidates) < self.num_candidates:
-                idx += 1
-                if self.ilp_solve and idx <= len(w_act_alphas):
-                    candidate = self.sample_ilp_once(*w_act_alphas[idx-1])
-                    if candidate is None:
-                        continue
-                elif idx == 1:
-                    candidate = self.model.mutator.sample_choices('max')
-                elif idx == 2:
-                    candidate = self.model.mutator.sample_choices('min')
-                else:
-                    candidate = self.model.mutator.sample_choices()
-                self.model.mutator.set_choices(candidate)
-                is_pass, result = self._check_constraints(
-                    random_subnet=candidate)
-                if is_pass:
-                    self.candidates.append(candidate)
-                    candidates_resources.append(result)
-            self.candidates = Candidates(self.candidates.data)
-        else:
-            self.candidates = Candidates([dict(a=0)] * self.num_candidates)
+        if self.solve_mode == 'ilp':
+            w_act_alphas = int(math.sqrt(self.num_candidates - init_candidates))
+            w_alphas = [(i+1.0) / w_act_alphas for i in range(w_act_alphas)]
+            w_act_alphas = [(i, j) for i in w_alphas for j in w_alphas]
+            filterd_mods, filterd_results, prob_results = self.get_qrange_probs()
+        elif self.solve_mode == 'prob':
+            filterd_mods, _, prob_results = self.get_qrange_probs()
+        while len(self.candidates) < self.num_candidates:
+            idx += 1
+            if self.solve_mode == 'ilp' and idx <= len(w_act_alphas):
+                candidate = self.sample_ilp_once(
+                    filterd_mods, filterd_results, prob_results, *w_act_alphas[idx-1])
+                if candidate is None:
+                    continue
+            elif self.solve_mode == 'prob':
+                candidate = self.sample_qrange_prob_once(filterd_mods, prob_results)
+            elif idx == 1:
+                candidate = self.model.mutator.sample_choices('max')
+            elif idx == 2:
+                candidate = self.model.mutator.sample_choices('min')
+            else:
+                candidate = self.model.mutator.sample_choices()
+            self.model.mutator.set_choices(candidate)
+            is_pass, result = self._check_constraints(
+                random_subnet=candidate)
+            if is_pass:
+                self.candidates.append(candidate)
+                candidates_resources.append(result)
+        self.candidates = Candidates(self.candidates.data)
 
         if len(candidates_resources) > 0:
             self.candidates.update_resources(
@@ -715,8 +800,8 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         with adabn_context(self.model):
             if self.calibrate_sample_num > 0:
                 self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
-                                                      model = self.model,
-                                                      calibrate_sample_num = self.calibrate_sample_num)
+                                                      model=self.model,
+                                                      calibrate_sample_num=self.calibrate_sample_num)
                 self.model.sync_qparams(src_mode='predict')
             best_fix_subnet, sliced_model = \
                 export_fix_subnet(self.model.architecture, slice_weight=True)

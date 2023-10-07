@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional, Set, Tuple
 
+import copy
 import torch
 from torch import Tensor, nn
 
@@ -15,7 +16,15 @@ except ImportError:
 
 from mmrazor.models import BaseMutable
 from mmrazor.models.architectures.dynamic_ops import (DynamicLinear,
+                                                      DynamicMixin,
                                                       DynamicLinearMixin)
+
+def traverse_children(module: nn.Module) -> None:
+    for name, mutable in module.items():
+        if isinstance(mutable, DynamicMixin):
+            module[name] = mutable.to_static_op()
+        if hasattr(mutable, '_modules'):
+            traverse_children(mutable._modules)
 
 
 class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
@@ -52,12 +61,15 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
     def convert_from(cls, module):
         return cls.from_float(module)
 
-    def get_dynamic_params(self: nn.Linear, orig_weight, orig_bias) -> Tuple[Tensor, Optional[Tensor]]:
+    def get_dynamic_params(self: nn.Linear, orig_weight=None, orig_bias=None) -> Tuple[Tensor, Optional[Tensor]]:
         """Get dynamic parameters that will be used in forward process.
 
         Returns:
             Tuple[Tensor, Optional[Tensor]]: Sliced weight and bias.
         """
+        if orig_weight is None and orig_bias is None:
+            orig_weight, orig_bias = self.weight, self.bias
+
         if 'in_features' not in self.mutable_attrs and \
                 'out_features' not in self.mutable_attrs:
             return orig_weight, orig_bias
@@ -80,3 +92,8 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
         bias = orig_bias[out_mask] if orig_bias is not None else None
 
         return weight, bias
+
+    def to_static_op(self):
+        mod = copy.deepcopy(self)
+        traverse_children(mod._modules)
+        return mod

@@ -14,6 +14,7 @@ custom_imports = dict(
 _base_.data_preprocessor.type = 'mmcls.ClsDataPreprocessor'
 _base_.model.backbone.conv_cfg = dict(type='mmrazor.BigNasConv2d')
 _base_.model.backbone.norm_cfg = dict(type='mmrazor.DynamicBatchNorm2d')
+_base_.model.head.type = 'mmrazor.DynamicLinearClsHead'
 _base_.model.init_cfg = dict(
     type='Pretrained',
     checkpoint=  # noqa: E251

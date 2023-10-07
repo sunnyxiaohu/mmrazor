@@ -1,5 +1,6 @@
 from typing import Any, Callable, Iterable, Optional, Tuple, Union
 
+import copy
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
@@ -13,7 +14,15 @@ except ImportError:
 
 from mmrazor.models import BaseMutable
 from mmrazor.models.architectures.dynamic_ops import (BigNasConv2d,
+                                                      DynamicMixin,
                                                       DynamicConvMixin)
+
+def traverse_children(module: nn.Module) -> None:
+    for name, mutable in module.items():
+        if isinstance(mutable, DynamicMixin):
+            module[name] = mutable.to_static_op()
+        if hasattr(mutable, '_modules'):
+            traverse_children(mutable._modules)
 
 
 class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
@@ -63,15 +72,23 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
         return cls.from_float(module)
 
     def get_dynamic_params(
-            self: _ConvNd, orig_weight, orig_bias) -> Tuple[Tensor, Optional[Tensor], Tuple[int]]:
+            self: _ConvNd, orig_weight=None, orig_bias=None) -> Tuple[Tensor, Optional[Tensor], Tuple[int]]:
         """Get dynamic parameters that will be used in forward process.
 
         Returns:
             Tuple[Tensor, Optional[Tensor], Tuple[int]]: Sliced weight, bias
                 and padding.
         """
+        if orig_weight is None and orig_bias is None:
+            orig_weight, orig_bias = self.weight, self.bias
         # slice in/out channel of weight according to
         # mutable in_channels/out_channels
         weight, bias = self._get_dynamic_params_by_mutable_channels(
             orig_weight, orig_bias)
         return weight, bias, self.padding
+
+    def to_static_op(self):
+        # TODO(shiguang): also export DynamicQConv2d to static        
+        mod = copy.deepcopy(self)
+        traverse_children(mod._modules)
+        return mod

@@ -411,7 +411,7 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
     def convert_from(cls, module):
         return cls.from_float(module)
 
-    def to_static_op(self):  
+    def to_static_op(self):
         # cls = type(self)
         # conv = cls._FLOAT_CONV_MODULE(  # type: ignore[attr-defined]
         #     self.in_channels,

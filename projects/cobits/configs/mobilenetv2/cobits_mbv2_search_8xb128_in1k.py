@@ -15,7 +15,9 @@ train_cfg = dict(
     num_crossover=0,
     calibrate_dataloader=_base_.train_dataloader,
     calibrate_sample_num=65536,
-    constraints_range=dict(flops=(0., 6181)),
+    # w4a4: Flops: 5394.053 Params: 19.011
+    # w3a3: Flops: 3373.459 Params: 16.822
+    constraints_range=dict(flops=(0., 5395)),
     score_key='accuracy/top1')
 
 val_cfg = dict(_delete_=True)
