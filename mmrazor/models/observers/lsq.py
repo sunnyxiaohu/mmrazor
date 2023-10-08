@@ -40,7 +40,9 @@ class LSQObserverMixIn:
         activations, respectively.
         """
         scale = 2 * self.tensor_norm / math.sqrt(self.quant_max)
-        sync_tensor(scale)
+        # (shiguang): temporally plane
+        # sync across graphs with different nodes(name) from different mode will cause blocking.
+        # sync_tensor(scale)
         return scale
 
 
