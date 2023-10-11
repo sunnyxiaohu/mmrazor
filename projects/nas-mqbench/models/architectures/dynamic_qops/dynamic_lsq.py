@@ -108,7 +108,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         raise NotImplementedError()
 
     @torch.jit.export
-    def observe_quant_params(self):
+    def calculate_qparams(self):
         quant_bits, index = self.get_dynamic_params()
 
         zero_point = self.zero_point[:, index] if index is not None else self.zero_point
@@ -171,7 +171,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         return quant_bits, index
 
     @torch.jit.export
-    def calculate_qparams(self):
+    def observe_quant_params(self):
         """Calculate the quantization parameters."""
         raise NotImplementedError()
 
@@ -187,7 +187,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             return X
 
         org_static_enabled = self.static_enabled[0]
-        scale, zero_point = self.observe_quant_params()
+        scale, zero_point = self.calculate_qparams()
         # if index is not None and self.param_share_mode == 0:
         #     local_scale = self.scale.data[:, index]
         # else:
@@ -226,7 +226,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         self.static_enabled[0] = org_static_enabled
         # import pdb; pdb.set_trace()
         if self.fake_quant_enabled[0] == 1:
-            scale, zero_point = self.observe_quant_params()
+            scale, zero_point = self.calculate_qparams()
             if index is None and not self.zero_point_trainable:
                 self.activation_post_process(X.detach())
                 _, zero_point = self.activation_post_process.calculate_qparams()
@@ -326,7 +326,7 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         # self.activation_post_process.reset_min_max_vals()
 
     @torch.jit.export
-    def observe_quant_params(self):
+    def calculate_qparams(self):
         """Shows the quantization parameters."""
         # print('LearnableFakeQuantize Scale: {}'.format(self.delta_scale.detach()))
         # print('LearnableFakeQuantize Zero Point: {}'.format(
@@ -404,7 +404,7 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
 
         # TODO: Support per-channel according the shape of inputs.
         if self.fake_quant_enabled[0] == 1:
-            scale, zero_point = self.observe_quant_params()
+            scale, zero_point = self.calculate_qparams()
 
             if self.use_grad_scaling:
                 grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
@@ -429,7 +429,7 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         if quant_bits == self.FLOAT_BITS:
             return
 
-        scale, zero_point = self.observe_quant_params()
+        scale, zero_point = self.calculate_qparams()
         lsq = LearnableFakeQuantize(MinMaxObserver.with_args())
         lsq.scale.data.copy_(scale.data)
         lsq.zero_point.data.copy_(zero_point.data)
