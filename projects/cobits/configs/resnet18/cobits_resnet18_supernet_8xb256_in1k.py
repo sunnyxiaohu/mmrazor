@@ -28,8 +28,8 @@ global_qconfig = dict(
     a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
     # w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True),
     # a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, residual_mode=0, param_share_mode=4),
-    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, residual_mode=0, param_share_mode=4)
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, param_share_mode=4),
+    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, param_share_mode=4)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
 qmodel = dict(

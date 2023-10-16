@@ -1,5 +1,5 @@
 _base_ = [
-    './mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k.py',
+    './resnet18_8xb256-warmup-lbs-coslr_in1k.py',
 ]
 
 custom_imports = dict(
@@ -18,18 +18,17 @@ _base_.model.head.type = 'mmrazor.DynamicLinearClsHead'
 _base_.model.init_cfg = dict(
     type='Pretrained',
     checkpoint=  # noqa: E251
-    'work_dirs/pretrained_models/mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k/20230906_112051/epoch_250.pth')
+    'work_dirs/pretrained_models/resnet18_8xb256-warmup-lbs-coslr-nwd_in1k/20230828_153341/epoch_100.pth')
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.BatchLSQObserver'),
-    a_observer=dict(type='mmrazor.BatchLSQObserver'),
-    w_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
-    # a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
+    w_observer=dict(type='mmrazor.LSQObserver'),
+    a_observer=dict(type='mmrazor.LSQObserver'),
+    w_fake_quant=dict(type='mmrazor.DynamicLearnableFakeQuantize'),
+    a_fake_quant=dict(type='mmrazor.DynamicLearnableFakeQuantize'),
     # w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True),
     # a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, param_share_mode=4),
-    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, param_share_mode=4)
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, zero_point_trainable=False, param_share_mode=4),
+    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, zero_point_trainable=False, param_share_mode=4)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
 qmodel = dict(
@@ -42,7 +41,7 @@ qmodel = dict(
     quantizer=dict(
         type='mmrazor.MutableOpenVINOQuantizer',
         quant_bits_skipped_module_names=[
-            'backbone.conv1.conv',
+            'backbone.conv1',
             'head.fc'
         ],
         quant_bits=[3,4,5,6],
@@ -111,7 +110,7 @@ model_wrapper_cfg = dict(
     find_unused_parameters=True)
 
 # learning policy
-max_epochs = 25
+max_epochs = 10
 warm_epochs = 1
 param_scheduler = [
     # warm up learning rate scheduler
