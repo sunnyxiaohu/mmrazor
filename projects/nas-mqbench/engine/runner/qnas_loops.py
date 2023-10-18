@@ -25,16 +25,17 @@ from mmengine.logging import print_log
 from mmengine.runner import EpochBasedTrainLoop, TestLoop, ValLoop, autocast
 from mmengine.utils import is_list_of, import_modules_from_strings
 
-
 try:
     from torch.ao.quantization import (disable_observer, enable_fake_quant,
-                                       enable_observer, disable_fake_quant)
+                                       enable_observer, disable_fake_quant,
+                                       FakeQuantizeBase)
 except ImportError:
     from mmrazor.utils import get_placeholder
 
     disable_observer = get_placeholder('torch>=1.13')
     enable_fake_quant = get_placeholder('torch>=1.13')
     enable_observer = get_placeholder('torch>=1.13')
+    FakeQuantizeBase = get_placeholder('torch>=1.13')
 
 from mmrazor.models import (BaseAlgorithm, register_torch_fake_quants,
                             register_torch_observers, LearnableFakeQuantize)
@@ -798,7 +799,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         idx = 0
         if self.solve_mode == 'ilp':
             num_candidates = self.num_candidates - init_candidates
-            act_alphas = [(i+1.0) / num_candidates for i in range(num_candidates)]
+            act_alphas = [3*(i+1.0) / num_candidates for i in range(num_candidates)]
             w_act_alphas = [(1.0, 0.0), (0.0, 1.0)]
             w_act_alphas += [(1.0, i) for i in act_alphas]
             filterd_results, prob_results = self.get_qrange_probs()
@@ -922,8 +923,26 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                         osp.join(self.runner.work_dir, save_name))
             self.runner.logger.info(
                 f'Subnet config {save_name} saved in {self.runner.work_dir}.')
+            save_name = 'best_fix_subnet_by_module_name.yaml'
+            best_fix_subnet = self.convert_fix_subnet_by_module_name(sliced_model.qmodels)
+            fileio.dump(best_fix_subnet,
+                        osp.join(self.runner.work_dir, save_name))
+            self.runner.logger.info(
+                f'Subnet config {save_name} saved in {self.runner.work_dir}.')
 
             self.runner.logger.info('Search finished.')
+
+    def convert_fix_subnet_by_module_name(self, model):
+        fix_subnet = {}
+        for name, module in model.named_modules():
+            if isinstance(module, FakeQuantizeBase):
+                quant_info = {
+                    'bit': module.bitwidth,
+                    'quant_min': module.quant_min,
+                    'quant_max': module.quant_max,
+                }
+                fix_subnet[name] = quant_info
+        return fix_subnet
 
     def run(self) -> None:
         """Launch searching."""

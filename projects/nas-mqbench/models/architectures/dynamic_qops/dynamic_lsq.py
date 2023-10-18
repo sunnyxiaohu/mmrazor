@@ -33,27 +33,28 @@ def unfix_calib_stats(mod):
     if isinstance(mod, DynamicBatchLearnableFakeQuantize):
         mod.calib_stats_fixed[0] = 0
 
-def update_qdype_qmin_qmax(fake_quant, bit):
+def update_qdype_qmin_qmax(fake_quant, bit, quant_min=None, quant_max=None):
     # TODO: calc qdype according quant_min, quant_max (rely on backend support)
     # reduce_range is False by default.
-    qdtype = fake_quant.dtype
-    quant_min = fake_quant.quant_min
-    quant_max = fake_quant.quant_max
+    if quant_min is None or quant_max is None:
+        qdtype = fake_quant.dtype
+        quant_min = fake_quant.quant_min
+        quant_max = fake_quant.quant_max
 
-    is_symmetric_range = False
-    if abs(quant_min) == abs(quant_max):
-        is_symmetric_range = True
-    if qdtype == torch.quint8:
-        quant_min = 0
-        quant_max = 2**bit - 1
-    elif qdtype == torch.qint8:
-        quant_max = 2**(bit - 1) - 1
-        if is_symmetric_range:
-            quant_min = -2**(bit - 1) + 1
+        is_symmetric_range = False
+        if abs(quant_min) == abs(quant_max):
+            is_symmetric_range = True
+        if qdtype == torch.quint8:
+            quant_min = 0
+            quant_max = 2**bit - 1
+        elif qdtype == torch.qint8:
+            quant_max = 2**(bit - 1) - 1
+            if is_symmetric_range:
+                quant_min = -2**(bit - 1) + 1
+            else:
+                quant_min = -2**(bit - 1)
         else:
-            quant_min = -2**(bit - 1)
-    else:
-        raise ValueError(f'Only support qint8 and quint8, got {qdtype}')
+            raise ValueError(f'Only support qint8 and quint8, got {qdtype}')
     fake_quant.quant_max = \
         fake_quant.activation_post_process.quant_max = quant_max
     fake_quant.quant_min = \
@@ -364,6 +365,5 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         lsq.static_enabled.data.copy_(self.static_enabled.data)
         lsq.learning_enabled.copy_(self.learning_enabled.data)
         lsq.eps.copy_(self.eps.data)
-        lsq.mixed_quant_min.data = torch.tensor(self.quant_min)
-        lsq.mixed_quant_max.data = torch.tensor(self.quant_max)
+        update_qdype_qmin_qmax(lsq, self.bitwidth, quant_min=self.quant_min, quant_max=self.quant_max)
         return lsq

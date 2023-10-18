@@ -129,11 +129,6 @@ class LearnableFakeQuantize(FakeQuantizeBase):
         self.bitwidth = int(torch.log2(bitrange).item())
         self.register_buffer('eps',
                              torch.tensor([torch.finfo(torch.float32).eps]))
-        # For mixed-precision. It will update self.quant_min and self.quant_max
-        # when load_state_dict.
-        self.register_buffer('mixed_quant_min', torch.tensor(quant_min))
-        self.register_buffer('mixed_quant_max', torch.tensor(quant_max))
-        self.only_init_mixed_bit = only_init_mixed_bit
 
     @torch.jit.export
     def enable_param_learning(self):
@@ -274,21 +269,6 @@ class LearnableFakeQuantize(FakeQuantizeBase):
 
         Modified from https://github.com/pytorch/pytorch/blob/master/torch/ao/quantization/fake_quantize.py  # noqa:E501
         """
-        local_state = ['mixed_quant_min', 'mixed_quant_max']
-        for name in local_state:
-            key = prefix + name
-            if key in state_dict:
-                val = state_dict[key]
-                # import pdb; pdb.set_trace()
-                if name == 'mixed_quant_min':
-                    self.quant_min = val.data.item()
-                    self.activation_post_process.quant_min = self.quant_min
-                else:
-                    self.quant_max = val.data.item()
-                    self.activation_post_process.quant_max = self.quant_max
-
-        if self.only_init_mixed_bit:
-            return
         local_state = ['scale', 'zero_point']
         for name in local_state:
             key = prefix + name
