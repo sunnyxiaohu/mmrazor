@@ -42,8 +42,6 @@ def get_superacme_backend_config() -> BackendConfig:
         .set_observation_type(
             ObservationType.OUTPUT_SHARE_OBSERVER_WITH_INPUT) \
         .add_dtype_config(non_weighted_op_qint8_dtype_config)
-    relu6_config = BackendPatternConfig(torch.nn.ReLU6) \
-        .add_dtype_config(non_weighted_op_qint8_dtype_config)
     conv_dtype_configs = [
         weighted_op_qint8_dtype_config,
     ]

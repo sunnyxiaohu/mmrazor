@@ -99,6 +99,7 @@ class ONNXOptimUtils():
             
     @classmethod
     def replace_resize_op_with_upsample(cls, onnx_model,out2node):
+        # align with mqbench ,superacme backend only support upsample type resize op,it is fixed for yolx debug
         def get_constant_inputs(node, out2node):
             node_list = []
             for inp in node.input:
