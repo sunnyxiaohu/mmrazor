@@ -1,8 +1,25 @@
-### align with mnn exp
+# 基于SuperACME后端部署的QAT例子
 
-| framwork | dataset | quant_type | metric | original | detail |
-| --- | --- | --- | --- | --- | --- |
-| mmrazor | imagenet(5w) | ptq | 69.978/89.406 |  |  |
-| mnn | imagenet(5w) | from mmrazor | 69.98/89.29 |  |  |
-| mmrazor | imagenet(5w) | qat+lsq+epoch15 | 70.3900/89.5100 |  | update_weight_with_fakequant=True +no cliprange fakequant weight+std=58.64 |
-| mnn | imagenet(5w) | from mmrazor | 70.45/89.47 |  |  |
+## Usage
+### Setup Environment
+torch >= 1.3.1
+集群上准备有参考的conda环境，放在`/alg-ftp/ftp-upload/private/wangshiguang/envs/pt1.13`
+
+### QAT量化训练
+```bash
+PORT=29513 bash tools/dist_train.sh projects/superacme_backend/configs/qat/lsq_superac
+me_mv2_8xb32_10e_in1k.py 8 --cfg-options randomness.seed=777
+```
+
+### QAT部署与精度对齐
+```bash
+bash tools/dist_test.sh projects/superacme_backend/configs/qat/lsq_superac
+me_mv2_8xb32_10e_in1k.py $CKPT_FROM_QAT_TRAINING 1
+```
+
+## Results
+| framwork | bit-width | Q-Algorithm | dataset      | Top-1 | ddr_io | sram_io | params | ddr_occp | sram_occp | fps      |
+| ---      | ---       | ---         | ---          | ---   | ---    | ---     | ---    | ---      |  ---      | ---      |
+| torch    | FP32      | -           | imagenet(5w) | 71.86 | -      | -       | -      | -        |-          | -        | 
+| mmrazor | W8A8       | LSQ         | imagenet(1k) |  |  |  |  | | | |
+| sann    | W8A8  | from-mmrazor-LSQ | imagenet(1k) | - | 3.7103 | 1.3398 | 3.4932 | 4.6416 | 0.5742 | 1004.5927 | 

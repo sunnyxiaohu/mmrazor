@@ -2,6 +2,7 @@
 from typing import Dict, Optional, Tuple, Union
 
 import torch.nn
+from torch.utils.data import DataLoader
 
 from mmrazor.registry import TASK_UTILS
 from .base_estimator import BaseEstimator
@@ -77,7 +78,7 @@ class ResourceEstimator(BaseEstimator):
         as_strings: bool = False,
         flops_params_cfg: Optional[dict] = None,
         latency_cfg: Optional[dict] = None,
-    ):
+        dataloader: Optional[DataLoader] = None):
         super().__init__(input_shape, units, as_strings)
         if not isinstance(units, dict):
             raise TypeError('units for estimator should be a dict',
@@ -91,6 +92,7 @@ class ResourceEstimator(BaseEstimator):
         else:
             self.flops_params_cfg = dict()
         self.latency_cfg = latency_cfg if latency_cfg else dict()
+        self.dataloader = dataloader
 
     def estimate(self,
                  model: torch.nn.Module,

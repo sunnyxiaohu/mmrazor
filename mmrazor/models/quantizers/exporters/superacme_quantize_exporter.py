@@ -1,9 +1,8 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 
 from typing import List
-
 import numpy as np
-from google.protobuf.internal.containers import RepeatedScalarFieldContainer
+import json
 
 try:
     import onnx
@@ -17,7 +16,7 @@ except ImportError:
 from mmrazor.models.quantizers.exporters.base_quantize_exporter import BaseQuantizeExportor ,PERCHANNEL_FAKEQUANTIZER,PERTENSOR_FAKEQUANTIZER
 from mmengine import print_log
 
-import json
+
 class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
 
     def __init__(self, onnx_model, export_path) -> None:
@@ -157,14 +156,20 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
         return clip_ranges,nodes_to_be_removed
     
     
-    def post_process_clip_ranges(self, clip_ranges, graph, inp2node):
+    def post_process_clip_ranges(self, clip_ranges, graph, inp2node, outp2node):
         def find_the_closest_clip_range(node):
             if node.input[0] in clip_ranges:
                 return node.input[0]
-            elif node.op_type in ['Flatten', 'Resize', 'Relu', 'Clip','Concat', 'MaxPool'] and node.output[0] in inp2node:
-                return find_the_closest_clip_range(inp2node[node.output[0]][0][0])
-            else:
-                return None
+            # look forward
+            ret = None
+            if node.op_type in ['Flatten', 'Resize', 'Relu', 'Clip','Concat', 'MaxPool'] and node.output[0] in inp2node:
+                ret = find_the_closest_clip_range(inp2node[node.output[0]][0][0])
+            if ret is not None:
+                return ret
+            # look backward
+            if node.op_type in ['Flatten', 'Resize', 'Relu', 'Clip','Concat', 'MaxPool'] and node.input[0] in outp2node:
+                ret = find_the_closest_clip_range(outp2node[node.input[0]])
+            return ret
 
         for node in graph.node:
             if node.op_type in ['Flatten', 'Resize', 'Relu','Clip', 'Concat', 'MaxPool']:
@@ -173,8 +178,9 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
                     for i in range(len(node.input)):
                         clip_ranges[node.input[i]] = clip_ranges[tensor_name]
                         inputname = node.input[i]
-                        print_log(f'Pass <{tensor_name}> clip range to <{node.name}> input <{inputname}>.')
+                        print_log(f'Pass <{tensor_name}> clip range to <{node.name}> input <{inputname}>.')                  
         return clip_ranges
+
 
     def _collect_symbolic_constant_inputs(self, symbolic_nodes: List):
         """Collect these constant nodes which is the input of all the symbolic
@@ -194,6 +200,7 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
     def _remove_symbolic_related(self):
         """removeing symbolic related nodes and initializers in the original
         onnx model ."""
+        # import pdb; pdb.set_trace()
         symbolic_nodes = self.collect_symbolic_nodes(self.onnx_model)
         self.clip_ranges,nodes_to_be_removed = self.clip_and_collect_params(symbolic_nodes)
 
@@ -208,7 +215,8 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
                                                 symbolic_constant_inputs)
         
         self.optimizer.optimize(self.onnx_model)
-        self.clip_ranges = self.post_process_clip_ranges(self.clip_ranges, self.graph, self.input2node)
+        self.clip_ranges = self.post_process_clip_ranges(
+            self.clip_ranges, self.graph, self.input2node, self.output2node)
         
         self.context = {"ppl": self.clip_ranges}
 

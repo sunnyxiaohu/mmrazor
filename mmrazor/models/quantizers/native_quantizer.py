@@ -317,6 +317,7 @@ class TorchNativeQuantizer(BaseQuantizer):
                         enable_observer(new_child)
                         new_child.weight_fake_quant(new_child.weight)
                         disable_observer(new_child)
+                        new_child.weight_fake_quant.scale = weight_fakequant.scale
                     else:
                         new_child = float_child.to(device)
                     setattr(module, name, new_child)

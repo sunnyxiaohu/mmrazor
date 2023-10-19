@@ -1,12 +1,4 @@
 _base_ = ['mmcls::mobilenet_v2/mobilenet-v2_8xb32_in1k.py',]
-custom_imports = dict(
-    imports=[
-        'projects.common.engine.runner.superacme_quantization_loops',
-        'projects.superacme_backend.models.algorithms.quantization.superacme_architecture',
-        'projects.superacme_backend.models.quantizers.superacme_quantizer',
-        'projects.common.engine.hooks.export_qat_hook',
-    ],
-    allow_failed_imports=False)
 mv2 = _base_.model
 float_checkpoint = 'https://download.openmmlab.com/mmclassification/v0/mobilenet_v2/mobilenet_v2_batch256_imagenet_20200708-3b2dc3af.pth'  # noqa: E501
 
@@ -38,7 +30,7 @@ global_qconfig = dict(
 model = dict(
     _delete_=True,
     _scope_='mmrazor',
-    type='SuperAcmeArchitectureQuant',
+    type='MMArchitectureQuant',
     data_preprocessor=dict(
         type='mmcls.ClsDataPreprocessor',
         num_classes=1000,
@@ -67,20 +59,39 @@ param_scheduler = dict(
     _delete_=True, type='ConstantLR', factor=1.0, by_epoch=True)
 
 model_wrapper_cfg = dict(
-    type='mmrazor.SuperAcmeArchitectureQuantDDP',
+    type='mmrazor.MMArchitectureQuantDDP',
     broadcast_buffers=False,
     find_unused_parameters=True)
 
 # train, val, test setting
 train_cfg = dict(
     _delete_=True,
-    type='mmrazor.SuperAcmeLSQEpochBasedLoop',
+    type='mmrazor.LSQEpochBasedLoop',
     max_epochs=10,
     val_interval=1,
     freeze_bn_begin=1)
-val_cfg = dict(_delete_=True, type='mmrazor.SuperAcmeQATValLoop')
+val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop')
 
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
 default_hooks = dict(sync=dict(type='SyncBuffersHook'))
-custom_hooks = [dict(type='mmrazor.ExportQATHook', interval=1, by_epoch=True,save_best='qat.accuracy/top1')]
+
+test_cfg = dict(
+    _delete_=True,
+    type='mmrazor.SubnetExportValLoop',
+    evaluate_fixed_subnet=True,
+    calibrate_sample_num=0,
+    estimator_cfg=dict(
+        type='mmrazor.HERONResourceEstimator',
+        heronmodel_cfg=dict(
+            is_quantized=True,
+            work_dir='work_dirs/lsq_superacme_mv2_8xb32_10e_in1k',
+            mnn_quant_json='projects/common/heron_files/config_qat.json',
+            # Uncomment and adjust `num_infer` for QoR
+            num_infer=1000,
+            infer_metric=_base_.test_evaluator,
+            # Use netron to checkout outputs_mapping.
+            outputs_mapping = {
+                '/fc/Gemm_output_0': 'cls',
+            }
+        )))
