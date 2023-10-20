@@ -56,6 +56,13 @@ def get_superacme_backend_config() -> BackendConfig:
     share_qparams_op_dtype_configs = [
         non_weighted_op_qint8_dtype_config,
     ]
+    # (Shiguang): Avoid patterns like `Clip -> size -> view`,
+    # the dtype(int) of view will propogate to size and Clip, then
+    # no observers inserted.
+    size_config = BackendPatternConfig('size') \
+                .set_observation_type(
+                    ObservationType.OUTPUT_USE_DIFFERENT_OBSERVER_AS_INPUT) \
+                .set_dtype_configs(share_qparams_op_dtype_configs)
     # there might be things not supported in fx2trt, but it will error out
     # during fx2trt conversion and can support them after that
     return BackendConfig('superacme') \
@@ -66,7 +73,8 @@ def get_superacme_backend_config() -> BackendConfig:
         .set_backend_pattern_configs(
             _get_binary_op_configs(binary_op_dtype_configs)) \
         .set_backend_pattern_configs(
-            _get_share_qparams_op_configs(share_qparams_op_dtype_configs))
+            _get_share_qparams_op_configs(share_qparams_op_dtype_configs)) \
+        .set_backend_pattern_config(size_config)
 
 
 def get_superacme_backend_config_dict():

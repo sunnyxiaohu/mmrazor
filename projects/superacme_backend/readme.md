@@ -21,5 +21,6 @@ me_mv2_8xb32_10e_in1k.py $CKPT_FROM_QAT_TRAINING 1
 | framwork | bit-width | Q-Algorithm | dataset      | Top-1 | ddr_io | sram_io | params | ddr_occp | sram_occp | fps      |
 | ---      | ---       | ---         | ---          | ---   | ---    | ---     | ---    | ---      |  ---      | ---      |
 | torch    | FP32      | -           | imagenet(5w) | 71.86 | -      | -       | -      | -        |-          | -        | 
-| mmrazor | W8A8       | LSQ         | imagenet(1k) |  |  |  |  | | | |
-| sann    | W8A8  | from-mmrazor-LSQ | imagenet(1k) | - | 3.7103 | 1.3398 | 3.4932 | 4.6416 | 0.5742 | 1004.5927 | 
+| mmrazor | W8A8       | LSQ         | imagenet(5w) | 70.4  |  |  |  | | | |
+| mmrazor | W8A8       | LSQ         | imagenet(1k) | 69.5  |  |  |  | | | |
+| sann    | W8A8  | from-mmrazor-LSQ | imagenet(1k) | 70.2 | 3.7103 | 1.3398 | 3.4932 | 4.6416 | 0.5742 | 1004.5927 |
