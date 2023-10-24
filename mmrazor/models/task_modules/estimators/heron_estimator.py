@@ -63,7 +63,7 @@ class HERONResourceEstimator(ResourceEstimator):
             latency_cfg=latency_cfg,
             dataloader=dataloader)
         self.heronmodel_cfg = heronmodel_cfg
-        self.heronmodel = HERONModelWrapper(val_data=self.dataloader.dataset, **self.heronmodel_cfg)
+        self.heronmodel = TASK_UTILS.build(self.heronmodel_cfg, default_args=dict(val_data=self.dataloader.dataset))
 
     @torch.no_grad()
     def estimate(self,
@@ -96,8 +96,10 @@ class HERONResourceEstimator(ResourceEstimator):
         self.heronmodel.hir_convert()
         self.heronmodel.hir_profiler()
         if self.heronmodel.infer_metric is not None:
+            self.heronmodel.reset_data()
             fakequant_metrics = self.heronmodel.torch_fixed_inference()
-            print_log(f'torch fakequant metrics: {fakequant_metrics}')
+            print_log(f'torch fakequant metrics: {fakequant_metrics}', logger='current')
+            self.heronmodel.reset_data()
             metrics = self.heronmodel.fixed_inference()
             resource_metrics.update(metrics)
         heron_metircs = self.heronmodel.res_extract()
@@ -107,6 +109,7 @@ class HERONResourceEstimator(ResourceEstimator):
         return resource_metrics
 
 
+@TASK_UTILS.register_module()
 class HERONModelWrapper:
     """HERON Wrapper class.
     """
@@ -217,8 +220,8 @@ class HERONModelWrapper:
             if i >= self.num_infer:
                 break
             inputs, data_samples = data['inputs'], data['data_samples']
-            if not self.to_rgb:
-                inputs = inputs.flip(0)
+            # if not self.to_rgb:
+            #     inputs = inputs.flip(0)
             data = {'inputs': inputs.reshape(self.shape), 'data_samples': [data_samples]}
             # 1. mode = 'predict'
             outputs = self.model.val_step(data)
@@ -231,7 +234,7 @@ class HERONModelWrapper:
             # data_samples.set_pred_score(scores.squeeze()).set_pred_label(labels.squeeze())
             # self.infer_metric.process(inputs, [data_samples.to_dict()])
         metrics = self.infer_metric.evaluate(self.num_infer) if self.num_infer > 0 else {}
-        return metrics            
+        return metrics
 
     def fixed_inference(self):
         """Fixed point inference."""
@@ -259,7 +262,11 @@ class HERONModelWrapper:
             assert len(self.outputs_mapping) == 1, f'Unsuported outputs_mapping len.'
             assert len(self.outputs_mapping) == len(outputs), f'Unmatched outputs_mapping and outputs.'
             for k, v in outputs.items():
-                cls_score = torch.from_numpy(v.getNumpyData()).float()
+                v_np = v.getNumpyData()
+                output_data = MNN.Tensor(v_np.shape, MNN.Halide_Type_Float,
+                    v_np.astype(np.float32), MNN.Tensor_DimensionType_Caffe)
+                v.copyToHostTensor(output_data)
+                cls_score = torch.from_numpy(output_data.getNumpyData())
                 scores = F.softmax(cls_score, dim=1)
                 labels = scores.argmax(dim=1, keepdim=True).detach()
                 data_samples.set_pred_score(scores.squeeze()).set_pred_label(labels.squeeze())

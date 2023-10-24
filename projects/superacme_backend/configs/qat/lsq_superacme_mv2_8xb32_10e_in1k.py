@@ -84,9 +84,10 @@ test_cfg = dict(
     estimator_cfg=dict(
         type='mmrazor.HERONResourceEstimator',
         heronmodel_cfg=dict(
+            type='HERONModelWrapperv2',
             is_quantized=True,
             work_dir='work_dirs/lsq_superacme_mv2_8xb32_10e_in1k',
-            mnn_quant_json='projects/common/heron_files/config_qat.json',
+            mnn_quant_json='projects/superacme_backend/heron_files/config_qat.json',
             # Uncomment and adjust `num_infer` for QoR
             num_infer=1000,
             infer_metric=_base_.test_evaluator,
