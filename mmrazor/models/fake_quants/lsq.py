@@ -221,6 +221,8 @@ class LearnableFakeQuantize(FakeQuantizeBase):
 
         Forward path returns fake quantized X.
         """
+        if X.numel() == 0:
+            return X
         if self.static_enabled[0] == 1:
             self.activation_post_process(X.detach())
             _scale, _zero_point = \

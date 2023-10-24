@@ -7,6 +7,7 @@ import torch
 try:
     from torch.ao.quantization.fake_quantize import FakeQuantizeBase
     from torch.fx import Node
+    from mmengine import print_log
 except ImportError:
     from mmrazor.utils import get_placeholder
     FakeQuantizeBase = get_placeholder('torch>=1.13')
@@ -66,6 +67,12 @@ def recursive_find_erased_nodes(node, prepared_model):
         if isinstance(prev_node, Node):
             nodes_to_erase.extend(
                 recursive_find_erased_nodes(prev_node, prepared_model))
+        elif isinstance(prev_node,List) or isinstance(prev_node,Tuple):
+            for sub_prev_node in prev_node:
+                nodes_to_erase.extend(
+                recursive_find_erased_nodes(sub_prev_node, prepared_model))
+        else:
+            print_log('Currently only support prev_node type in (List,tupe),you can fix this above')
     for prev_node in node.kwargs.values():
         if isinstance(prev_node, Node):
             nodes_to_erase.extend(
