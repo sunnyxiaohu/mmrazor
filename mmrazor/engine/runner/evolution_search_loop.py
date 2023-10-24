@@ -123,7 +123,10 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         estimator_cfg = dict() if estimator_cfg is None else estimator_cfg
         if 'type' not in estimator_cfg:
             estimator_cfg['type'] = 'mmrazor.ResourceEstimator'
-        self.estimator = TASK_UTILS.build(estimator_cfg)
+        default_args = dict()
+        default_args['dataloader'] = self.dataloader
+        self.estimator = TASK_UTILS.build(
+            estimator_cfg, default_args=default_args)
 
         # initialize predictor
         self.use_predictor = False

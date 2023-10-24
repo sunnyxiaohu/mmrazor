@@ -71,14 +71,13 @@ class ResourceEstimator(BaseEstimator):
               mmrazor.engine.hooks.estimate_resources_hook for details.
     """
 
-    def __init__(
-        self,
-        input_shape: Tuple = (1, 3, 224, 224),
-        units: Dict = dict(flops='M', params='M', latency='ms'),
-        as_strings: bool = False,
-        flops_params_cfg: Optional[dict] = None,
-        latency_cfg: Optional[dict] = None,
-        dataloader: Optional[DataLoader] = None):
+    def __init__(self,
+                 input_shape: Tuple = (1, 3, 224, 224),
+                 units: Dict = dict(flops='M', params='M', latency='ms'),
+                 as_strings: bool = False,
+                 flops_params_cfg: Optional[dict] = None,
+                 latency_cfg: Optional[dict] = None,
+                 dataloader: Optional[DataLoader] = None):
         super().__init__(input_shape, units, as_strings)
         if not isinstance(units, dict):
             raise TypeError('units for estimator should be a dict',
