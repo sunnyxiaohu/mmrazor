@@ -9,11 +9,13 @@ from .quantization_loops import (LSQEpochBasedLoop, PTQLoop, QATEpochBasedLoop,
 from .slimmable_val_loop import SlimmableValLoop
 from .subnet_sampler_loop import GreedySamplerTrainLoop
 from .subnet_val_loop import SubnetValLoop
+from .qnas_loops import QNASEpochBasedLoop, QNASValLoop, QNASEvolutionSearchLoop
 
 __all__ = [
     'SingleTeacherDistillValLoop', 'DartsEpochBasedTrainLoop',
     'DartsIterBasedTrainLoop', 'SlimmableValLoop', 'EvolutionSearchLoop',
     'GreedySamplerTrainLoop', 'SubnetValLoop', 'SelfDistillValLoop',
     'ItePruneValLoop', 'AutoSlimGreedySearchLoop', 'QATEpochBasedLoop',
-    'PTQLoop', 'LSQEpochBasedLoop', 'QATValLoop'
+    'PTQLoop', 'LSQEpochBasedLoop', 'QATValLoop', 'QNASEpochBasedLoop',
+    'QNASValLoop', 'QNASEvolutionSearchLoop'
 ]

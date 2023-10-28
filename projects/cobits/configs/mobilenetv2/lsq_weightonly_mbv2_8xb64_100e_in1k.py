@@ -1,8 +1,5 @@
 _base_ = ['./mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k.py']
-custom_imports = dict(
-    imports =[
-    'projects.nas-mqbench.models.quantizers.mutable_quantizer',
-])
+
 mbv2net = _base_.model
 float_checkpoint = 'https://download.openmmlab.com/mmclassification/v0/mobilenet_v2/mobilenet_v2_batch256_imagenet_20200708-3b2dc3af.pth'  # noqa: E501
 
@@ -11,8 +8,7 @@ global_qconfig = dict(
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    w_qscheme=dict(
-        qdtype='qint8', bit=4, is_symmetry=True),
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True),
     a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True),
 )
 
@@ -31,7 +27,7 @@ model = dict(
     architecture=mbv2net,
     float_checkpoint=float_checkpoint,
     quantizer=dict(
-        type='mmrazor.MutableOpenVINOQuantizer',
+        type='mmrazor.WeightOnlyQuantizer',
         quant_bits_skipped_module_names=[
             'backbone.conv1.conv',
             'head.fc'

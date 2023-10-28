@@ -15,32 +15,6 @@ except ImportError:
     PerChannelMinMaxObserver = get_placeholder('torch>=1.13')
 
 
-def update_estimator_mode_0(mod):
-    """Enable validation, if applicable. Example usage::
-
-    # model is any PyTorch model model.apply(update_estimator_mode_0)
-    """
-    if isinstance(mod, (BatchLSQObserver, PerChannelBatchLSQObserver)):
-        mod.estimator_mode[0] = 0
-
-def update_estimator_mode_1(mod):
-    """Enable validation, if applicable. Example usage::
-
-    # model is any PyTorch model model.apply(update_estimator_mode_1)
-    """
-    if isinstance(mod, (BatchLSQObserver, PerChannelBatchLSQObserver)):
-        mod.estimator_mode[0] = 1
-
-def update_estimator_mode_2(mod):
-    """Enable validation, if applicable. Example usage::
-
-    # model is any PyTorch model model.apply(update_estimator_mode_2)
-    """
-    if isinstance(mod, (BatchLSQObserver, PerChannelBatchLSQObserver)):
-        mod.estimator_mode[0] = 2
-        mod.reset_min_max_vals()
-
-
 @MODELS.register_module()
 class BatchLSQObserver(MinMaxObserver):
     """LSQ observer.
@@ -48,10 +22,9 @@ class BatchLSQObserver(MinMaxObserver):
     Paper: Learned Step Size Quantization. <https://arxiv.org/abs/1902.08153>
     """
 
-    def __init__(self, *args, extreme_estimator=0, **kwargs):
+    def __init__(self, *args, extreme_estimator=1, **kwargs):
         super().__init__(*args, **kwargs)
         self.extreme_estimator = extreme_estimator
-
 
     def forward(self, x_orig):
         """Records the running minimum, maximum and tensor_norm of ``x``."""
@@ -80,6 +53,7 @@ class BatchLSQObserver(MinMaxObserver):
         self.min_val.copy_(min_val_cur)
         self.max_val.copy_(max_val_cur)
         return x_orig
+
 
 @MODELS.register_module()
 class PerChannelBatchLSQObserver(PerChannelMinMaxObserver):
@@ -111,9 +85,7 @@ class PerChannelBatchLSQObserver(PerChannelMinMaxObserver):
         y = y.to(self.min_val.dtype)
         y = torch.flatten(y, start_dim=1)
 
-        if self.extreme_estimator == 0:
-            min_val_cur, max_val_cur = torch.aminmax(x)
-        elif self.extreme_estimator == 1:
+        if self.extreme_estimator == 1:
             min_val_cur, max_val_cur = torch.aminmax(y, dim=1)
         elif self.extreme_estimator == 2:
             mean, var = y.mean(dim=1), y.var(dim=1)

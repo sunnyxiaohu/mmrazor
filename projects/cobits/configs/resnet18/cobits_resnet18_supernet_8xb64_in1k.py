@@ -18,7 +18,7 @@ _base_.model.head.type = 'mmrazor.DynamicLinearClsHead'
 _base_.model.init_cfg = dict(
     type='Pretrained',
     checkpoint=  # noqa: E251
-    'work_dirs/pretrained_models/resnet18_8xb256-warmup-lbs-coslr-nwd_in1k/20230828_153341/epoch_100.pth')
+'https://download.openmmlab.com/mmclassification/v0/resnet/resnet18_8xb32_in1k_20210831-fbbb1da6.pth')
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.BatchLSQObserver'),
@@ -97,8 +97,10 @@ model = dict(
                 preds_T=dict(recorder='fc', from_student=False)))),
     mutator=dict(type='mmrazor.NasMutator'))
 
+train_dataloader = dict(batch_size=64)
 optim_wrapper = dict(
-    optimizer=dict(lr=0.02, weight_decay=0.00001),
+    _delete_=True,
+    optimizer=dict(type='SGD', lr=0.004, momentum=0.9, weight_decay=0.0001, nesterov=True),
     paramwise_cfg=dict(
         # custom_keys={
         # 'architecture.qmodels': dict(lr_mult=0.1)},

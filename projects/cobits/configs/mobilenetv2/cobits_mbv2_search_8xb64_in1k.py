@@ -1,5 +1,5 @@
 _base_ = [
-    './cobits_mbv2_supernet_8xb128_in1k.py'
+    './cobits_mbv2_supernet_8xb64_in1k.py'
 ]
 _base_.custom_imports.imports += [
     'projects.nas-mqbench.models.task_modules.estimators.counters.op_counters.dynamic_qlayer_counter',
@@ -10,7 +10,7 @@ train_cfg = dict(
     dataloader=_base_.val_dataloader,
     evaluator=_base_.val_evaluator,
     max_epochs=1,
-    num_candidates=1,
+    num_candidates=10,
     num_mutation=0,
     num_crossover=0,
     calibrate_dataloader=_base_.train_dataloader,

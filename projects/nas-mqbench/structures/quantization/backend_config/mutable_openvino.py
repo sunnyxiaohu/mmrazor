@@ -40,7 +40,7 @@ from mmrazor.models.architectures.dynamic_ops import (BigNasConv2d,
                                                       DynamicInputResizer)
 from mmrazor.structures.quantization.backend_config import get_openvino_backend_config
 from mmrazor.structures.quantization.backend_config.common_operator_config_utils import (
-    _get_conv_configs, _get_linear_configs)
+    _get_binary_op_configs, _get_conv_configs, _get_linear_configs, _get_share_qparams_op_configs)
 
 custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_fused'
 dynamic_fused = import_modules_from_strings(custom_imports)
@@ -356,34 +356,67 @@ def get_mutableopenvino_backend_config() -> BackendConfig:
         https://github.com/pytorch/pytorch/tree/master/torch/ao/quantization/backend_config # noqa: E501
     """
     # dtype configs
-    weighted_op_qint8_dtype_config = DTypeConfig(
+    weighted_op_quint8_dtype_config = DTypeConfig(
         input_dtype=torch.quint8,
         output_dtype=torch.quint8,
         weight_dtype=torch.qint8,
         bias_dtype=torch.float,
     )
-    non_weighted_op_qint8_dtype_config = DTypeConfig(
+    non_weighted_op_quint8_dtype_config = DTypeConfig(
         input_dtype=torch.quint8,
         output_dtype=torch.quint8,
     )
+    weighted_op_qint8_dtype_config = DTypeConfig(
+        input_dtype=torch.qint8,
+        output_dtype=torch.qint8,
+        weight_dtype=torch.qint8,
+        bias_dtype=torch.float,
+    )
+    non_weighted_op_qint8_dtype_config = DTypeConfig(
+        input_dtype=torch.qint8,
+        output_dtype=torch.quint8,
+    )
     conv_dtype_configs = [
-        weighted_op_qint8_dtype_config,
+        weighted_op_qint8_dtype_config, weighted_op_quint8_dtype_config
     ]
     linear_dtype_configs = [
-        weighted_op_qint8_dtype_config,
+        weighted_op_qint8_dtype_config, weighted_op_quint8_dtype_config
     ]
+    binary_op_dtype_configs = [
+        weighted_op_qint8_dtype_config, weighted_op_quint8_dtype_config
+    ]    
     share_qparams_op_dtype_configs = [
-        non_weighted_op_qint8_dtype_config,
+        non_weighted_op_qint8_dtype_config, non_weighted_op_quint8_dtype_config
     ]
-
+    addmm_config = BackendPatternConfig(torch.addmm) \
+        .set_observation_type(
+            ObservationType.OUTPUT_USE_DIFFERENT_OBSERVER_AS_INPUT) \
+        .set_dtype_configs(linear_dtype_configs) \
+        ._set_input_type_to_index({
+            'bias': 0,
+            'input': 1,
+            'weight': 2,
+        })
+    cat_config = BackendPatternConfig(torch.cat) \
+        .set_observation_type(
+            ObservationType.OUTPUT_SHARE_OBSERVER_WITH_INPUT) \
+        .set_dtype_configs(share_qparams_op_dtype_configs)
     def _get_share_qprams_op_backend_config(op):
         return BackendPatternConfig(op) \
             .set_observation_type(
                 ObservationType.OUTPUT_SHARE_OBSERVER_WITH_INPUT) \
             .set_dtype_configs(share_qparams_op_dtype_configs)
 
-    mutableopenvino_config = get_openvino_backend_config()
-    mutableopenvino_config.set_name('mutableopenvino') \
+    mutableopenvino_config = BackendConfig('mutableopenvino') \
+        .set_backend_pattern_configs(_get_conv_configs(conv_dtype_configs)) \
+        .set_backend_pattern_config(addmm_config) \
+        .set_backend_pattern_config(cat_config) \
+        .set_backend_pattern_configs(
+            _get_linear_configs(linear_dtype_configs)) \
+        .set_backend_pattern_configs(
+            _get_binary_op_configs(binary_op_dtype_configs)) \
+        .set_backend_pattern_configs(
+            _get_share_qparams_op_configs(share_qparams_op_dtype_configs)) \
         .set_backend_pattern_configs(_get_dynamicconv_configs(conv_dtype_configs)) \
         .set_backend_pattern_configs(_get_dynamiclinear_configs(linear_dtype_configs)) \
         .set_backend_pattern_config(_get_share_qprams_op_backend_config(DynamicInputResizer))
@@ -405,30 +438,28 @@ def get_mutableopenvino_onlyweight_backend_config() -> BackendConfig:
         https://github.com/pytorch/pytorch/tree/master/torch/ao/quantization/backend_config # noqa: E501
     """
     # dtype configs
-    weighted_op_qint8_dtype_config = DTypeConfig(
+    weighted_op_quint8_dtype_config = DTypeConfig(
         input_dtype=torch.quint8,
         output_dtype=torch.quint8,
         weight_dtype=torch.qint8,
         bias_dtype=torch.float,
     )
-    non_weighted_op_qint8_dtype_config = DTypeConfig(
-        input_dtype=torch.quint8,
-        output_dtype=torch.quint8,
+    weighted_op_qint8_dtype_config = DTypeConfig(
+        input_dtype=torch.qint8,
+        output_dtype=torch.qint8,
+        weight_dtype=torch.qint8,
+        bias_dtype=torch.float,
     )
     conv_dtype_configs = [
-        weighted_op_qint8_dtype_config,
+        weighted_op_qint8_dtype_config, weighted_op_quint8_dtype_config
     ]
     linear_dtype_configs = [
-        weighted_op_qint8_dtype_config,
+        weighted_op_qint8_dtype_config, weighted_op_quint8_dtype_config
     ]
-    share_qparams_op_dtype_configs = [
-        non_weighted_op_qint8_dtype_config,
-    ]
-
     addmm_config = BackendPatternConfig(torch.addmm) \
         .set_observation_type(
             ObservationType.OUTPUT_USE_DIFFERENT_OBSERVER_AS_INPUT) \
-        .add_dtype_config(weighted_op_qint8_dtype_config) \
+        .set_dtype_configs(linear_dtype_configs) \
         ._set_input_type_to_index({
             'bias': 0,
             'input': 1,

@@ -1,15 +1,6 @@
 _base_ = [
-    './mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k.py',
+    './resnet18_8xb256-warmup-lbs-coslr_in1k.py',
 ]
-
-custom_imports = dict(
-    imports = [
-    'projects.nas-mqbench.models.algorithms.qnas',
-    'projects.nas-mqbench.models.quantizers.mutable_quantizer',
-    'projects.nas-mqbench.engine.runner.qnas_loops',
-    'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_lsq',
-    'projects.nas-mqbench.models.observers.batch_lsq',
-])
 
 _base_.data_preprocessor.type = 'mmcls.ClsDataPreprocessor'
 _base_.model.backbone.conv_cfg = dict(type='mmrazor.BigNasConv2d')
@@ -18,16 +9,13 @@ _base_.model.head.type = 'mmrazor.DynamicLinearClsHead'
 _base_.model.init_cfg = dict(
     type='Pretrained',
     checkpoint=  # noqa: E251
-    'work_dirs/pretrained_models/mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k/20230906_112051/epoch_250.pth')
+'https://download.openmmlab.com/mmclassification/v0/resnet/resnet18_8xb32_in1k_20210831-fbbb1da6.pth')
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.BatchLSQObserver'),
     a_observer=dict(type='mmrazor.BatchLSQObserver'),
     w_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
-    # a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
-    # w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True),
-    # a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True),
     w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, param_share_mode=4),
     a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, zero_point_trainable=True, extreme_estimator=1, param_share_mode=4)
 )
@@ -40,18 +28,16 @@ qmodel = dict(
     float_checkpoint=None,
     forward_modes=('tensor', 'predict', 'loss'),
     quantizer=dict(
-        type='mmrazor.MutableOpenVINOQuantizer',
+        type='mmrazor.WeightOnlyQuantizer',
         quant_bits_skipped_module_names=[
-            'backbone.conv1.conv',
+            'backbone.conv1',
             'head.fc'
         ],
         quant_bits=[3,4,5,6],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
-            # skipped_module_names=['input_resizer'],
             skipped_module_classes=[
-                # 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_container.DynamicSequential',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_conv.BigNasConv2d',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_function.DynamicInputResizer',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_linear.DynamicLinear',
@@ -97,11 +83,11 @@ model = dict(
                 preds_T=dict(recorder='fc', from_student=False)))),
     mutator=dict(type='mmrazor.NasMutator'))
 
+train_dataloader = dict(batch_size=64)
 optim_wrapper = dict(
-    optimizer=dict(lr=0.02, weight_decay=0.00001),
+    _delete_=True,
+    optimizer=dict(type='SGD', lr=0.004, momentum=0.9, weight_decay=0.0001, nesterov=True),
     paramwise_cfg=dict(
-        # custom_keys={
-        # 'architecture.qmodels': dict(lr_mult=0.1)},
         bypass_duplicate=True
     ),)
 
@@ -145,6 +131,4 @@ train_cfg = dict(
 val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536, quant_bits=[3,4,5,6])
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
-default_hooks = dict(
-    checkpoint=dict(save_best=None, max_keep_ckpts=1),
-    sync=dict(type='SyncBuffersHook'))
+default_hooks = dict(sync=dict(type='SyncBuffersHook'))

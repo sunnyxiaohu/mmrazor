@@ -7,6 +7,8 @@ from .openvino import (get_openvino_backend_config,
                        get_openvino_backend_config_dict)
 from .tensorrt import (get_tensorrt_backend_config,
                        get_tensorrt_backend_config_dict)
+from .weightonly import (get_weightonly_backend_config,
+                         get_weightonly_backend_config_dict)                       
 
 __all__ = [
     'BackendConfigs',
@@ -18,4 +20,6 @@ __all__ = [
     'get_openvino_backend_config_dict',
     'get_tensorrt_backend_config',
     'get_tensorrt_backend_config_dict',
+    'get_weightonly_backend_config',
+    'get_weightonly_backend_config_dict'
 ]

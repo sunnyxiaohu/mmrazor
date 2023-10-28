@@ -9,7 +9,7 @@ import torch
 from torch.nn.modules.batchnorm import _BatchNorm
 from mmengine.utils import import_modules_from_strings
 from mmrazor.registry import MODELS
-from mmrazor.models import OpenVINOQuantizer, LearnableFakeQuantize
+from mmrazor.models import TorchNativeQuantizer, LearnableFakeQuantize
 from mmrazor.models.utils import str2class
 from mmrazor.models.mutables import OneShotMutableValue
 from mmrazor.models.architectures.dynamic_ops import (DynamicConvMixin,
@@ -37,7 +37,7 @@ dynamic_lsq = import_modules_from_strings(custom_imports)
 
 
 @MODELS.register_module()
-class MutableOpenVINOQuantizer(OpenVINOQuantizer):
+class MutableOpenVINOQuantizer(TorchNativeQuantizer):
     """Quantizer for quantizing and deploying to openvino backend.
 
     Each backend has its own features, for reducing the gap of quantized
@@ -126,12 +126,14 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
             node_name_to_scope=self.tracer.node_name_to_scope,
             example_inputs=self.example_inputs,
             backend_config=self.backend_config)
-        prepared = self.del_redundant_fakequant(prepared)
 
         if self.quant_bits:
             prepared = register_mutables_for_dynamic_fakequant(
                 prepared, tuple(self.quant_bits_skipped_module_names), self.quant_bits,
                 self.default_skipped_bit, True, nested_quant_bits_in_layer=self.nested_quant_bits_in_layer)
+
+        prepared = self.del_redundant_fakequant(prepared)
+
         prepared = modify_fakequant_to_int8(
             prepared, tuple(self.quant_bits_skipped_module_names), True)
 
@@ -143,10 +145,32 @@ class MutableOpenVINOQuantizer(OpenVINOQuantizer):
     def module_prev_wo_fakequant(self):
         """Configurate the modules that their previous nodes are redundant
         fakequants."""
-        redundant = super().module_prev_wo_fakequant
+        redundant = (torch.nn.ReLU6, torch.nn.Identity)
         if self.only_quant_weights:
             redundant = redundant + (_BatchNorm,)
         return redundant
+
+    @property
+    def module_next_wo_fakequant(self):
+        """Configurate the modules that their next nodes are redundant
+        fakequants."""
+        if not self.only_quant_weights:
+            return (torch.nn.MaxPool2d, )
+        else:
+            return ()
+
+    @property
+    def method_next_wo_fakequant(self):
+        """Configurate the methods that their next nodes are redundant
+        fakequants."""
+        return ('flatten', )
+
+    @property
+    def op_prev_wo_fakequant(self):
+        """Configurate the OPs that their previous nodes are redundant
+        fakequants."""
+        return ('output', )
+
 
 def wrap_depth_scope(prepared_model, dynamic_seq_names, node_name_to_scope, inplace: bool = True):
     # Since fx.trace can not handle nested nodes. e.g., we have `DynamicSequential`
@@ -303,6 +327,7 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
             maybe_dynamic = _get_attrs(prepared_model, node.target)
             # for activations
             if isinstance(maybe_dynamic, dynamic_lsq.DynamicLearnableFakeQuantize):
+                # multiple nodes may share the same fakequant.
                 if 'quant_bits' in maybe_dynamic.mutable_attrs:
                     continue
                 this_bits = quant_bits

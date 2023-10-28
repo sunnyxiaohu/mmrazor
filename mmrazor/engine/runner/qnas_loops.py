@@ -38,9 +38,12 @@ except ImportError:
     FakeQuantizeBase = get_placeholder('torch>=1.13')
 
 from mmrazor.models import (BaseAlgorithm, register_torch_fake_quants,
-                            register_torch_observers, LearnableFakeQuantize)
+                            register_torch_observers, LearnableFakeQuantize,
+                            BatchLSQObserver)
 from mmrazor.models.architectures.dynamic_ops import (DynamicConvMixin,
                                                       DynamicLinearMixin)
+from mmrazor.models.architectures.dynamic_qops import (freeze_bn_stats,
+    fix_calib_stats, unfix_calib_stats, DynamicLearnableFakeQuantize)                                                      
 from mmrazor.models.fake_quants import (enable_param_learning,
                                         enable_static_estimate, enable_val)
 from mmrazor.models.task_modules.tracer.fx.graph_utils import _get_attrs
@@ -56,12 +59,6 @@ from mmrazor.engine.runner.utils.calibrate_bn_mixin import AverageMeter
 
 TORCH_observers = register_torch_observers()
 TORCH_fake_quants = register_torch_fake_quants()
-custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_qconv_fused'
-dynamic_qconv_fused = import_modules_from_strings(custom_imports)
-custom_imports = 'projects.nas-mqbench.models.observers.batch_lsq'
-batch_lsq = import_modules_from_strings(custom_imports)
-custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_lsq'
-dynamic_lsq = import_modules_from_strings(custom_imports)
 
 
 @contextlib.contextmanager
@@ -94,7 +91,7 @@ class CalibrateMixin:
                                 model = None) -> None:
         if model is None:
             model = self.runner.model
-        model.apply(dynamic_lsq.unfix_calib_stats)
+        model.apply(unfix_calib_stats)
 
         def record_bn_statistics_hook(bn_module: _BatchNorm, input: Tensor,
                                       output: Tensor) -> None:
@@ -130,7 +127,7 @@ class CalibrateMixin:
                 handle = module.register_forward_hook(
                     record_bn_statistics_hook)
                 hook_handles.append(handle)
-            if isinstance(module, batch_lsq.BatchLSQObserver):
+            if isinstance(module, BatchLSQObserver):
                 print_log('register `record_observer_statistics_hook` to module: '
                           f'{name}', logger='current', level=logging.DEBUG)
                 module.__max_average_meter__ = AverageMeter()
@@ -207,7 +204,7 @@ class CalibrateMixin:
                 del module.__mean_average_meter__
                 del module.__var_average_meter__
 
-            if isinstance(module, batch_lsq.BatchLSQObserver):
+            if isinstance(module, BatchLSQObserver):
                 max_average_meter = module.__max_average_meter__
                 min_average_meter = module.__min_average_meter__
                 if max_average_meter.count == 0 or \
@@ -232,7 +229,7 @@ class CalibrateMixin:
         print_log('Calibrate bn and observer statistics done', logger='current')
         for handle in hook_handles:
             handle.remove()
-        model.apply(dynamic_lsq.fix_calib_stats)
+        model.apply(fix_calib_stats)
 
 
 @LOOPS.register_module()
@@ -287,7 +284,7 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
         model = getattr(model, 'module', model)        
         if (self.freeze_bn_begin > 0
                 and self._epoch + 1 >= self.freeze_bn_begin):
-            self.runner.model.apply(dynamic_qconv_fused.freeze_bn_stats)
+            self.runner.model.apply(freeze_bn_stats)
         if (self.qat_begin > 0
                 and self._epoch + 1 >= self.qat_begin):
             self.runner.model.apply(enable_param_learning)
@@ -296,14 +293,14 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
             self.runner.model.apply(enable_val)
             self.runner.model.apply(disable_fake_quant)
             model.current_stage = 'float'
-        self.runner.model.apply(dynamic_lsq.unfix_calib_stats)
+        self.runner.model.apply(unfix_calib_stats)
         print_log(f'Switch current_stage: "{model.current_stage}"', logger='current')
 
     def prepare_for_val(self):
         """Toggle the state of the observers and fake quantizers before
         validation."""
         self.runner.model.apply(enable_val)
-        self.runner.model.apply(dynamic_lsq.fix_calib_stats)
+        self.runner.model.apply(fix_calib_stats)
 
     @property
     def is_first_batch(self):
@@ -589,7 +586,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                         if hasattr(maybe_lsq, 'weight_fake_quant'):
                             # weights
                             maybe_lsq = maybe_lsq.weight_fake_quant
-                        if isinstance(maybe_lsq, dynamic_lsq.DynamicLearnableFakeQuantize):
+                        if isinstance(maybe_lsq, DynamicLearnableFakeQuantize):
                             # activation
                             quant_bits = maybe_lsq.mutable_attrs['quant_bits']
                             bit = quant_bits.current_choice
@@ -636,7 +633,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 if hasattr(maybe_lsq, 'weight_fake_quant'):
                     # weights
                     maybe_lsq = maybe_lsq.weight_fake_quant
-                if isinstance(maybe_lsq, dynamic_lsq.DynamicLearnableFakeQuantize):
+                if isinstance(maybe_lsq, DynamicLearnableFakeQuantize):
                     # activation
                     quant_bits = maybe_lsq.mutable_attrs['quant_bits']
                     fixed_point = (np.mean(quant_bits.choices), 0.5)
@@ -654,7 +651,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 if hasattr(maybe_lsq, 'weight_fake_quant'):
                     # weights
                     maybe_lsq = maybe_lsq.weight_fake_quant
-                if isinstance(maybe_lsq, dynamic_lsq.DynamicLearnableFakeQuantize):
+                if isinstance(maybe_lsq, DynamicLearnableFakeQuantize):
                     # activation
                     quant_bits = maybe_lsq.mutable_attrs['quant_bits']
                     quant_bits.current_choice = np.random.choice(
@@ -669,7 +666,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 if not hasattr(maybe_act_fq, 'op') or maybe_act_fq.op != 'call_module':
                     continue
                 maybe_act_fq = _get_attrs(prepared_model, maybe_act_fq.target)
-                if not isinstance(maybe_act_fq, dynamic_lsq.DynamicLearnableFakeQuantize):
+                if not isinstance(maybe_act_fq, DynamicLearnableFakeQuantize):
                     continue
                 quant_bits = maybe_act_fq.mutable_attrs['quant_bits']
                 if quant_bits.alias not in actfqnode2outputs:
@@ -769,7 +766,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 if hasattr(maybe_lsq, 'weight_fake_quant'):
                     # weights
                     maybe_lsq = maybe_lsq.weight_fake_quant
-                if isinstance(maybe_lsq, dynamic_lsq.DynamicLearnableFakeQuantize):
+                if isinstance(maybe_lsq, DynamicLearnableFakeQuantize):
                     # activation
                     quant_bits = maybe_lsq.mutable_attrs['quant_bits']
                     if quant_bits.alias not in others_prob_results:
@@ -979,4 +976,4 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         """Toggle the state of the observers and fake quantizers before
         validation."""
         self.runner.model.apply(enable_val)
-        self.runner.model.apply(dynamic_lsq.fix_calib_stats)
+        self.runner.model.apply(fix_calib_stats)

@@ -65,13 +65,13 @@ class OpenVINOQuantizer(TorchNativeQuantizer):
     def module_prev_wo_fakequant(self):
         """Configurate the modules that their previous nodes are redundant
         fakequants."""
-        return (torch.nn.ReLU6, torch.nn.Identity, torch.nn.MaxPool2d)
+        return (torch.nn.ReLU6, torch.nn.Identity)
 
     @property
     def module_next_wo_fakequant(self):
         """Configurate the modules that their next nodes are redundant
         fakequants."""
-        return ()
+        return (torch.nn.MaxPool2d, )
 
     @property
     def method_next_wo_fakequant(self):
