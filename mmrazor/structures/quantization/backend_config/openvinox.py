@@ -21,8 +21,8 @@ from .common_operator_config_utils import (_get_binary_op_configs,
                                            _get_dynamiclinear_configs)
 
 
-def get_snpe_backend_config() -> BackendConfig:
-    """Return the `BackendConfig` for the SNPE backend.
+def get_openvinox_backend_config() -> BackendConfig:
+    """Return the `BackendConfig` for the OpenVINO backend.
 
     Note:
         Learn more about BackendConfig, please refer to:
@@ -30,14 +30,14 @@ def get_snpe_backend_config() -> BackendConfig:
     """
     # dtype configs
     weighted_op_qint8_dtype_config = DTypeConfig(
-        input_dtype=torch.qint8,
-        output_dtype=torch.qint8,
+        input_dtype=torch.quint8,
+        output_dtype=torch.quint8,
         weight_dtype=torch.qint8,
         bias_dtype=torch.float,
     )
     non_weighted_op_qint8_dtype_config = DTypeConfig(
-        input_dtype=torch.qint8,
-        output_dtype=torch.qint8,
+        input_dtype=torch.quint8,
+        output_dtype=torch.quint8,
     )
 
     addmm_config = BackendPatternConfig(torch.addmm) \
@@ -75,10 +75,10 @@ def get_snpe_backend_config() -> BackendConfig:
     avgpool2d_config = BackendPatternConfig(torch.nn.AdaptiveAvgPool2d) \
                 .set_observation_type(
                     ObservationType.OUTPUT_USE_DIFFERENT_OBSERVER_AS_INPUT) \
-                .set_dtype_configs(share_qparams_op_dtype_configs)
+                .set_dtype_configs(share_qparams_op_dtype_configs)    
     # there might be things not supported in fx2trt, but it will error out
     # during fx2trt conversion and can support them after that
-    return BackendConfig('snpe') \
+    return BackendConfig('openvinox') \
         .set_backend_pattern_configs(_get_conv_configs(conv_dtype_configs)) \
         .set_backend_pattern_config(addmm_config) \
         .set_backend_pattern_config(cat_config) \
@@ -89,17 +89,19 @@ def get_snpe_backend_config() -> BackendConfig:
         .set_backend_pattern_configs(
             _get_share_qparams_op_configs(share_qparams_op_dtype_configs)) \
         .set_backend_pattern_configs(_get_dynamicconv_configs(conv_dtype_configs)) \
+        .set_backend_pattern_configs(_get_dynamiclinear_configs(linear_dtype_configs))  \
+        .set_backend_pattern_configs(_get_dynamicconv_configs(conv_dtype_configs)) \
         .set_backend_pattern_configs(_get_dynamiclinear_configs(linear_dtype_configs)) \
-        .set_backend_pattern_configs([size_config, avgpool2d_config])
+        .set_backend_pattern_configs([size_config, avgpool2d_config])        
 
 
-def get_snpe_backend_config_dict():
-    """Return the `BackendConfig` for the SNPE backend in dictionary
+def get_openvinox_backend_config_dict():
+    """Return the `BackendConfig` for the OpenVINO backend in dictionary
     form."""
-    return get_snpe_backend_config().to_dict()
+    return get_openvinox_backend_config().to_dict()
 
 
 __all__ = [
-    'get_snpe_backend_config',
-    'get_snpe_backend_config_dict',
+    'get_openvinox_backend_config',
+    'get_openvinox_backend_config_dict',
 ]

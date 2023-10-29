@@ -120,6 +120,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
                 scale = scale + self.scale_theta[:, index]
         scale.data.abs_()
         scale.data.clamp_(min=self.eps.item())
+        zero_point = torch.clamp(zero_point, self.quant_min, self.quant_max)
         return scale, zero_point.float()
 
     def register_mutable_attr(self, attr, mutable):
@@ -172,16 +173,20 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         if self.fake_quant_enabled[0] == 1:
             scale, zero_point = self.calculate_qparams()
 
-            if self.use_grad_scaling:
-                grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
-            else:
-                grad_factor = 1.0
             if self.qscheme in (torch.per_channel_symmetric,
                                 torch.per_channel_affine):
+                if self.use_grad_scaling:
+                    grad_factor = 1.0 / (X.numel() / X.shape[self.ch_axis] * self.quant_max)**0.5
+                else:
+                    grad_factor = 1.0
                 X = torch._fake_quantize_learnable_per_channel_affine(
                     X, scale, zero_point, self.ch_axis,
                     self.quant_min, self.quant_max, grad_factor)
             else:
+                if self.use_grad_scaling:
+                    grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
+                else:
+                    grad_factor = 1.0
                 if not (self.quant_min <= zero_point <= self.quant_max):
                     print(self.quant_min, zero_point, self.quant_max)
                 X = torch._fake_quantize_learnable_per_tensor_affine(
@@ -276,6 +281,7 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         zero_point = _zero_point + zp_add
         scale.data.abs_()
         scale.data.clamp_(min=self.eps.item())
+        zero_point = torch.clamp(zero_point, self.quant_min, self.quant_max)
         return scale, zero_point
 
     def register_mutable_attr(self, attr, mutable):
@@ -305,20 +311,23 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         if self.calib_stats_fixed[0] == 0:
             self.activation_post_process(X.detach())
 
-        # TODO: Support per-channel according the shape of inputs.
         if self.fake_quant_enabled[0] == 1:
             scale, zero_point = self.calculate_qparams()
 
-            if self.use_grad_scaling:
-                grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
-            else:
-                grad_factor = 1.0
             if self.qscheme in (torch.per_channel_symmetric,
                                 torch.per_channel_affine):
+                if self.use_grad_scaling:
+                    grad_factor = 1.0 / (X.numel() / X.shape[self.ch_axis] * self.quant_max)**0.5
+                else:
+                    grad_factor = 1.0
                 X = torch._fake_quantize_learnable_per_channel_affine(
                     X, scale, zero_point, self.ch_axis,
                     self.quant_min, self.quant_max, grad_factor)
             else:
+                if self.use_grad_scaling:
+                    grad_factor = 1.0 / (X.numel() * self.quant_max)**0.5
+                else:
+                    grad_factor = 1.0
                 if not (self.quant_min <= zero_point <= self.quant_max):
                     print(self.quant_min, zero_point, self.quant_max)
                 X = torch._fake_quantize_learnable_per_tensor_affine(

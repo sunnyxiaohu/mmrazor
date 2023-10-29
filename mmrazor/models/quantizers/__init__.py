@@ -6,9 +6,10 @@ from .openvino_quantizer import OpenVINOQuantizer
 from .tensorrt_quantizer import TensorRTQuantizer
 from .weightonly_quantizer import WeightOnlyQuantizer
 from .snpe_quantizer import SNPEQuantizer
+from .openvinox_quantizer import OpenVINOXQuantizer
 
 __all__ = [
     'BaseQuantizer', 'AcademicQuantizer', 'TorchNativeQuantizer',
     'TensorRTQuantizer', 'OpenVINOQuantizer', 'WeightOnlyQuantizer',
-    'SNPEQuantizer'
+    'SNPEQuantizer', 'OpenVINOXQuantizer'
 ]

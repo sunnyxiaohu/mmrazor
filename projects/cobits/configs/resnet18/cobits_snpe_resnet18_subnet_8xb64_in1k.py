@@ -1,12 +1,12 @@
-_base_ = './cobits_weightonly_resnet18_supernet_8xb64_in1k.py'
+_base_ = './cobits_snpe_resnet18_supernet_8xb64_in1k.py'
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True, zero_point_trainable=True),
-    a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True, zero_point_trainable=True),
+    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=False, zero_point_trainable=True),
+    a_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=False, zero_point_trainable=True),
 )
 _base_.qmodel.quantizer.global_qconfig = global_qconfig
 model = dict(

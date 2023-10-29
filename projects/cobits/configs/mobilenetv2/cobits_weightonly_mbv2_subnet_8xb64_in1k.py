@@ -1,4 +1,4 @@
-_base_ = './cobits_weightonly_resnet18_supernet_8xb64_in1k.py'
+_base_ = './cobits_weightonly_mbv2_supernet_8xb64_in1k.py'
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),
@@ -33,7 +33,6 @@ optim_wrapper = dict(optimizer=dict(lr=0.004))
 # learning policy
 max_epochs = 75
 warm_epochs = 1
-# learning policy
 param_scheduler = [
     # warm up learning rate scheduler
     dict(
