@@ -572,7 +572,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         prefix = 'architecture.qmodels.tensor'
         prepared_model = _get_attrs(self.model, prefix)
         kinds = ['max', 'min']
-        kinds += ['random'] * 3
+        kinds += ['random'] * 5
         for kind in kinds:
             self.model.mutator.set_choices(self.model.mutator.sample_choices(kind=kind))
             with adabn_context(self.model):
@@ -598,7 +598,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         filter_fns = [
             lambda x: 'activation_post_process_' in x[0],
             lambda x: 'activation_post_process_' not in x[0]
-            # lambda x: 'activation_post_process_' in x[0],
+            # lambda x: True,
         ]
         for fn in filter_fns:
             f_qrange_results = dict(filter(fn, qrange_results.items()))

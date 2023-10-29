@@ -647,11 +647,13 @@ def fuse_dynamic_conv_bn(is_qat, conv, bn):
         >>> # xdoctest: +SKIP
         >>> m2 = fuse_dynamic_conv_bn(m1, b1)
     """
+    from mmrazor.models.architectures.dynamic_ops import BigNasConv2d
+    from mmrazor.models.architectures.dynamic_qops import DynamicConvBn2d
     assert(conv.training == bn.training),\
         "Conv and BN both must be in the same mode (train or eval)."
 
     fused_module_class_map = {
-        BigNasConv2d: dynamic_fused.DynamicConvBn2d,
+        BigNasConv2d: DynamicConvBn2d,
     }
 
     if is_qat:
@@ -684,12 +686,14 @@ def fuse_dynamic_conv_bn_relu(is_qat, conv, bn, relu):
         >>> # xdoctest: +SKIP
         >>> m2 = fuse_dynamic_conv_bn_relu(m1, b1, r1)
     """
+    from mmrazor.models.architectures.dynamic_ops import BigNasConv2d
+    from mmrazor.models.architectures.dynamic_qops import DynamicConvBnReLU2d, DynamicConvReLU2d
     assert(conv.training == bn.training == relu.training),\
         "Conv and BN both must be in the same mode (train or eval)."
     fused_module : Optional[Type[nn.Sequential]] = None
     if is_qat:
         map_to_fused_module_train = {
-            BigNasConv2d: dynamic_fused.DynamicConvBnReLU2d,
+            BigNasConv2d: DynamicConvBnReLU2d,
         }
         assert bn.num_features == conv.out_channels, 'Output channel of Conv must match num_features of BatchNorm'
         assert bn.affine, 'Only support fusing BatchNorm with affine set to True'
@@ -701,7 +705,7 @@ def fuse_dynamic_conv_bn_relu(is_qat, conv, bn, relu):
             raise NotImplementedError("Cannot fuse train modules: {}".format((conv, bn, relu)))
     else:
         map_to_fused_module_eval = {
-            BigNasConv2d: dynamic_fused.DynamicConvReLU2d,
+            BigNasConv2d: DynamicConvReLU2d,
         }
         fused_module = map_to_fused_module_eval.get(type(conv), None)
         if fused_module is not None:

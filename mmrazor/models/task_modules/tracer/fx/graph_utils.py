@@ -543,8 +543,10 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
                 maybe_dynamicw.register_mutable_attr('quant_bits', qbits)
 
                 if nested_quant_bits_in_layer:
-                    act_fakequant = recursive_find_act_fakequant(prepared_model, node)
-                    maybe_dynamic._ACT_QUANT_BITS = act_fakequant.mutable_attrs['quant_bits']
+                    maybe_act = recursive_find_act_fakequant(prepared_model, node)
+                    print_log(
+                        f'Nested quant_bits with w_bits: {node.target} and a_bits: {maybe_act.target}', logger='current')
+                    maybe_dynamic._ACT_QUANT_BITS = _get_attrs(prepared_model, maybe_act.target).mutable_attrs['quant_bits']
 
     new_graph.lint()
     prepared_model.graph = new_graph
@@ -552,9 +554,10 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
 
 
 def recursive_find_act_fakequant(prepared_model, dynamic_node):
+    from mmrazor.models.architectures.dynamic_qops import DynamicLearnableFakeQuantize
     maybe_act = dynamic_node.args[0]
     # TODO(shiguang): more general.
     if not (maybe_act.op == 'call_module' and isinstance(
             _get_attrs(prepared_model, maybe_act.target), DynamicLearnableFakeQuantize)):
         return recursive_find_act_fakequant(prepared_model, maybe_act)
-    return  _get_attrs(prepared_model, maybe_act.target)
+    return maybe_act

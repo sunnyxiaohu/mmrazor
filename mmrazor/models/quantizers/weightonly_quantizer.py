@@ -66,10 +66,7 @@ class WeightOnlyQuantizer(TorchNativeQuantizer):
     match the backend's features in quantization.
 
     WeightOnly's some important features about quantization is as follows:
-    * support_w_mode = ('per_tensor', 'per_channel')
-    * support_a_mode = ('per_tensor')
-    * weight range should be symmetric, such as int 8 is [-127, 127] rather
-    than [-128, 127]
+    * only quantize weight-matrix layer. e.g., conv, linear.
     """
     def __init__(self, *args, tracer: Dict = dict(type='CustomTracer'),
                  quant_bits=None, quant_bits_skipped_module_names=None,
