@@ -5,8 +5,8 @@ global_qconfig = dict(
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True, zero_point_trainable=True),
-    a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True, zero_point_trainable=True),
+    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True),
+    a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
 )
 _base_.qmodel.quantizer.global_qconfig = global_qconfig
 model = dict(
@@ -28,7 +28,7 @@ model = dict(
     #     prefix='architecture.'))
 
 train_dataloader = dict(batch_size=64)
-optim_wrapper = dict(optimizer=dict(lr=0.004))
+optim_wrapper = dict(optimizer=dict(lr=0.002))
 
 # learning policy
 max_epochs = 75

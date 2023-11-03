@@ -591,7 +591,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                             quant_bits = maybe_lsq.mutable_attrs['quant_bits']
                             bit = quant_bits.current_choice
                             scale, zero_point = maybe_lsq.calculate_qparams()
-                            qrange_results[quant_bits.alias] += scale.item() * (2**bit - 1)                         
+                            qrange_results[quant_bits.alias] += scale.mean().item() * (2**bit - 1)
         # import pdb; pdb.set_trace()
         # normalize qrange_results
         belta, eps = 2.0, 10e-6
@@ -880,6 +880,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         """Save best subnet in searched top-k candidates."""
         best_random_subnet = self.top_k_candidates.subnets[0]
         self.model.mutator.set_choices(best_random_subnet)
+
         with adabn_context(self.model):
             if self.calibrate_sample_num > 0:
                 self.calibrate_bn_observer_statistics(self.calibrate_dataloader,

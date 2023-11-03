@@ -95,7 +95,7 @@ class OpenVINOXQuantizer(TorchNativeQuantizer):
             backend_config=self.backend_config)
         # 3. delete redundant fakequant
         prepared = self.del_redundant_fakequant(prepared)
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         # 4. modify fakequant bits (for input and output layer)
         prepared = modify_fakequant_bits(
             prepared, tuple(self.quant_bits_skipped_module_names), self.default_skipped_bit, True)

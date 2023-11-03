@@ -5,10 +5,11 @@ import torch
 import torch.nn as nn
 from torch.nn.parameter import Parameter
 try:
-    from torch.ao.quantization import MinMaxObserver
+    from torch.ao.quantization import MinMaxObserver, PerChannelMinMaxObserver
 except ImportError:
     from mmrazor.utils import get_placeholder
     MinMaxObserver = get_placeholder('torch>=1.13')
+    PerChannelMinMaxObserver = get_placeholder('torch>=1.13')
 
 from mmrazor.registry import MODELS
 from mmrazor.models import LearnableFakeQuantize
@@ -77,35 +78,55 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         raise NotImplementedError()
 
     def to_static_op(self) -> nn.Module:
-        # quant_bits, index = self.get_dynamic_params()
-        # if quant_bits == self.FLOAT_BITS:
-        #     return
-        raise NotImplementedError()
+        quant_bits, index = self.get_dynamic_params()
+        if quant_bits == self.FLOAT_BITS:
+            return
+
+        scale, zero_point = self.calculate_qparams()
+        if len(scale) == 1:
+            observer = MinMaxObserver
+        else:
+            observer = PerChannelMinMaxObserver
+        lsq = LearnableFakeQuantize(observer.with_args())
+        lsq.scale.data = torch.ones_like(scale)
+        lsq.zero_point.data = torch.zeros_like(zero_point.float())
+        lsq.scale.data.copy_(scale.data)
+        lsq.zero_point.data.copy_(zero_point.data)
+        lsq.fake_quant_enabled.data.copy_(self.fake_quant_enabled.data)
+        lsq.static_enabled.data.copy_(self.static_enabled.data)
+        lsq.learning_enabled.copy_(self.learning_enabled.data)
+        lsq.eps.copy_(self.eps.data)
+        update_qdype_qmin_qmax(lsq, self.bitwidth, quant_min=self.quant_min, quant_max=self.quant_max)
+        return lsq
 
     @torch.jit.export
     def calculate_qparams(self):
         quant_bits, index = self.get_dynamic_params()
-        _scale, zero_point = self.activation_post_process.calculate_qparams()
-        self.activation_post_process.reset_min_max_vals()
+
         mult = self.mult_factor(quant_bits)
         # Check whether is initialized or not. We choose scale as indicator
         # since zero_point may also be zero after initialized.
         scale = self.scale[:, index] if self.param_share_mode == 0 else self.scale
+        zero_point = self.zero_point[:, index]
         scale_initialized = not torch.equal(scale, torch.ones_like(scale))
         # scale_initialized = scale_initialized or not self.training
         if not scale_initialized:
+            _scale, _zero_point = self.activation_post_process.calculate_qparams()
+            self.activation_post_process.reset_min_max_vals()
             _scale = _scale.to(self.scale.device)
+            _zero_point = _zero_point.to(self.zero_point.device)
+            if self.qscheme in (torch.per_channel_symmetric,
+                                torch.per_channel_affine) and scale.shape != _scale.shape:
+                self.scale.data = self.scale.data.repeat(len(_scale), 1)
+                self.zero_point.data = self.zero_point.data.repeat(len(_zero_point), 1)
+                if self.param_share_mode in [2, 4]:
+                    self.scale_theta.data = self.scale_theta.data.repeat(len(_scale), 1)
+                scale = self.scale[:, index] if self.param_share_mode == 0 else self.scale
+                zero_point = self.zero_point[:, index]
+
             _scale = _scale / mult
             scale.data.copy_(_scale)
-            zero_point = zero_point.to(self.zero_point.device)
-            self.zero_point.data.copy_(zero_point)
-
-            if self.qscheme in (torch.per_channel_symmetric,
-                                torch.per_channel_affine):
-                self.scale.data.repeat(1, len(_scale))
-                self.zero_point.data.repeat(1, len(zero_point))
-                if self.param_share_mode in [2, 4]:
-                    self.scale_theta.data.repeat(1, len(_scale))
+            zero_point.data.copy_(_zero_point)
 
         if self.param_share_mode == 0:
             scale = self.scale[:, index]
@@ -125,13 +146,14 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
 
     def register_mutable_attr(self, attr, mutable):
         assert hasattr(self, 'mutable_attrs')
-        assert not self.zero_point_trainable, 'Unsupport zero_point_trainable now.'
+        # assert not self.zero_point_trainable, 'Unsupport zero_point_trainable now.'
         if attr == 'quant_bits':
             device = self.scale.device
             if self.param_share_mode == 0:
                 self.scale.data = torch.ones(1, len(mutable.choices)).to(device)
-            if self.param_share_mode in [2, 4]:
+            elif self.param_share_mode in [2, 4]:
                 self.scale_theta.data = torch.zeros(1, len(mutable.choices)).to(device)
+            self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
             self.mutable_attrs['quant_bits'] = mutable
         else:
             raise NotImplementedError
@@ -291,7 +313,7 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
             if self.param_share_mode == 0:
                 self.scale.data = torch.ones(1, len(mutable.choices)).to(device)
                 self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
-            if self.param_share_mode in [2, 4]:
+            elif self.param_share_mode in [2, 4]:
                 self.scale_theta.data = torch.zeros(1, len(mutable.choices)).to(device)
                 self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
             self.mutable_attrs['quant_bits'] = mutable
@@ -342,7 +364,13 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
             return
 
         scale, zero_point = self.calculate_qparams()
-        lsq = LearnableFakeQuantize(MinMaxObserver.with_args())
+        if len(scale) == 1:
+            observer = MinMaxObserver
+        else:
+            observer = PerChannelMinMaxObserver
+        lsq = LearnableFakeQuantize(observer.with_args())
+        lsq.scale.data = torch.ones_like(scale)
+        lsq.zero_point.data = torch.zeros_like(zero_point.float())
         lsq.scale.data.copy_(scale.data)
         lsq.zero_point.data.copy_(zero_point.data)
         lsq.fake_quant_enabled.data.copy_(self.fake_quant_enabled.data)

@@ -239,6 +239,7 @@ class LearnableFakeQuantize(FakeQuantizeBase):
         else:
             self.scale.data.abs_()
             self.scale.data.clamp_(min=self.eps.item())
+            self.zero_point.data = torch.clamp(self.zero_point.data, self.quant_min, self.quant_max)
 
         if self.fake_quant_enabled[0] == 1:
 
