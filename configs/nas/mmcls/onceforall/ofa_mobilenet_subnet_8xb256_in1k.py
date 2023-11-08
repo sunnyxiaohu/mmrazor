@@ -19,4 +19,4 @@ model = dict(
 model_wrapper_cfg = None
 find_unused_parameters = True
 
-test_cfg = dict(evaluate_fixed_subnet=True)
+test_cfg = dict(_delete_=True)

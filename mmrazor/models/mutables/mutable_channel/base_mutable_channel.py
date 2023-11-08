@@ -76,6 +76,11 @@ class BaseMutableChannel(BaseMutable, DerivedMethodMixin):
 
     # others
 
+    @property
+    def mutable_prefix(self) -> str:
+        """Mutable prefix."""
+        return 'channel'
+
     def __repr__(self):
         repr_str = self.__class__.__name__
         repr_str += '('

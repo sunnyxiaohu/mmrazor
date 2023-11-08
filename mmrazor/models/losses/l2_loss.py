@@ -26,6 +26,7 @@ class L2Loss(nn.Module):
         mult: float = 1.0,
         div_element: bool = False,
         dist: bool = False,
+        teacher_detach: bool = False,
     ) -> None:
         super().__init__()
         self.loss_weight = loss_weight
@@ -33,6 +34,7 @@ class L2Loss(nn.Module):
         self.mult = mult
         self.div_element = div_element
         self.dist = dist
+        self.teacher_detach = teacher_detach
 
     def forward(
         self,
@@ -47,6 +49,8 @@ class L2Loss(nn.Module):
             t_feature (torch.Tensor): The teacher model feature with
                 shape (N, C, H, W) or shape (N, C).
         """
+        if self.teacher_detach:
+            t_feature = t_feature.detach()
         if self.normalize:
             s_feature = self.normalize_feature(s_feature)
             t_feature = self.normalize_feature(t_feature)
