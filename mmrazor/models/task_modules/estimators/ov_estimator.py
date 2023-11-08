@@ -12,8 +12,8 @@ from mmengine.logging import MMLogger
 from mmengine.utils import mkdir_or_exist
 from torch.utils.data import DataLoader
 
-from mmrazor.models import ResourceEstimator
 from mmrazor.registry import METRICS, TASK_UTILS
+from .resource_estimator import ResourceEstimator
 
 try:
     import npuc

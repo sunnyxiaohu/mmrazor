@@ -2,8 +2,6 @@ _base_ = ['mmcls::_base_/default_runtime.py']
 
 custom_imports = dict(
     imports=[
-        'projects.commons.models.task_modules.estimators.ov_estimator',
-        'projects.commons.models.task_modules.estimators.heron_estimator',
         'projects.commons.engine.runner.subnet_ov_val_loop',
         'projects.face-recognition.models.algorithms.spos_partialfc',
         'projects.face-recognition.models.losses.margin_loss',

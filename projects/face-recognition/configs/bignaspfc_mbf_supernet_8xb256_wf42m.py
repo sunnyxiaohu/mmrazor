@@ -5,8 +5,6 @@ _base_ = [
 
 custom_imports = dict(
     imports=[
-        'projects.commons.models.task_modules.estimators.ov_estimator',
-        'projects.commons.models.task_modules.estimators.heron_estimator',
         'projects.commons.engine.runner.subnet_ov_val_loop',
         'projects.face-recognition.models.algorithms.bignas_partialfc',
         'projects.face-recognition.models.losses.margin_loss',
