@@ -154,7 +154,9 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
                                                 'type': "biased",
                                                 }
                 prev_node = self.output2node[node.input[0]]
-                if prev_node.op_type in ['Relu', 'Clip', 'Concat']:
+                # (shiguang): Uncomment these codes for adjusting scale accoding superacme backends.
+                # Note that the pattern like `relu -> concat -> fakequant` is not handle properly.
+                if prev_node.op_type in ['Relu', 'Clip']:
                     adjust_range = clip_ranges[tensor_name]
                     min1, max1, bit = 0, (adjust_range['max'] - adjust_range['min']), adjust_range['bit']
                     if prev_node.op_type == 'Clip':

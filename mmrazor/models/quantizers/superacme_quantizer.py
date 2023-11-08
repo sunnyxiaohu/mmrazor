@@ -42,47 +42,7 @@ from mmrazor.models import LearnableFakeQuantize
 from mmrazor.models.task_modules.tracer.fx import build_graphmodule
 from mmrazor.models.task_modules.tracer.fx.graph_utils import _get_attrs, modify_fakequant_bits
 
-from .native_quantizer import TorchNativeQuantizer
-
-if digit_version(torch.__version__) >= digit_version('1.13.0'):
-    SUPPORT_QAT_MODULES: Tuple = (
-        qat_fused_modules.ConvBn1d, qat_fused_modules.ConvBn2d,
-        qat_fused_modules.ConvBn3d, qat_fused_modules.ConvBnReLU1d,
-        qat_fused_modules.ConvBnReLU2d, qat_fused_modules.ConvBnReLU3d,
-        qat_fused_modules.ConvReLU1d, qat_fused_modules.ConvReLU2d,
-        qat_fused_modules.ConvReLU3d, qat_fused_modules.LinearBn1d,
-        qat_fused_modules.LinearReLU, qat_modules.Conv1d, qat_modules.Conv2d,
-        qat_modules.Conv3d, qat_modules.Linear)
-
-    MERGE_BN_MAPPINGS: Dict = {
-        qat_fused_modules.ConvBn1d: qat_modules.Conv1d,
-        qat_fused_modules.ConvBn2d: qat_modules.Conv2d,
-        qat_fused_modules.ConvBn3d: qat_modules.Conv3d,
-        qat_fused_modules.ConvBnReLU1d: qat_fused_modules.ConvReLU1d,
-        qat_fused_modules.ConvBnReLU2d: qat_fused_modules.ConvReLU2d,
-        qat_fused_modules.ConvBnReLU3d: qat_fused_modules.ConvReLU3d,
-        qat_fused_modules.LinearBn1d: qat_modules.Linear
-    }
-
-    def fake_quantize_per_channel_affine(g, x, scale, zero_point, ch_axis,
-                                         quant_min, quant_max):
-        return g.op('mmrazor::FixedPerChannelAffine', x, scale, zero_point,
-                    ch_axis, quant_min, quant_max)
-
-    register_custom_op_symbolic('::fake_quantize_per_channel_affine',
-                                fake_quantize_per_channel_affine, 11)
-
-    def fake_quantize_per_tensor_affine(g, x, scale, zero_point, quant_min,
-                                        quant_max):
-        return g.op('mmrazor::FixedPerTensorAffine', x, scale, zero_point,
-                    quant_min, quant_max)
-
-    register_custom_op_symbolic('::fake_quantize_per_tensor_affine',
-                                fake_quantize_per_tensor_affine, 11)
-
-else:
-    SUPPORT_QAT_MODULES = ()
-    MERGE_BN_MAPPINGS = {}
+from .native_quantizer import TorchNativeQuantizer, SUPPORT_QAT_MODULES, MERGE_BN_MAPPINGS
 
 
 @MODELS.register_module()
