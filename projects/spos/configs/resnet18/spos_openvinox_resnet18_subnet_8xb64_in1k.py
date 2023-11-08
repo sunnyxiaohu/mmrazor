@@ -1,4 +1,4 @@
-_base_ = './cobits_openvinox_mbv2_supernet_8xb64_in1k.py'
+_base_ = './spos_openvinox_resnet18_supernet_8xb64_in1k.py'
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQPerChannelObserver'),
@@ -28,11 +28,12 @@ model = dict(
     #     prefix='architecture.'))
 
 train_dataloader = dict(batch_size=64)
-optim_wrapper = dict(optimizer=dict(lr=0.00004))
+optim_wrapper = dict(optimizer=dict(lr=0.0002))
 
 # learning policy
 max_epochs = 75
 warm_epochs = 1
+# learning policy
 param_scheduler = [
     # warm up learning rate scheduler
     dict(

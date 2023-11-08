@@ -1,11 +1,11 @@
-_base_ = './cobits_openvinox_mbv2_supernet_8xb64_in1k.py'
+_base_ = './spos_weightonly_mbv2_supernet_8xb64_in1k.py'
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.LSQPerChannelObserver'),
+    w_observer=dict(type='mmrazor.LSQObserver'),
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True, is_symmetric_range=True),
+    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True),
     a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
 )
 _base_.qmodel.quantizer.global_qconfig = global_qconfig
@@ -28,7 +28,7 @@ model = dict(
     #     prefix='architecture.'))
 
 train_dataloader = dict(batch_size=64)
-optim_wrapper = dict(optimizer=dict(lr=0.00004))
+optim_wrapper = dict(optimizer=dict(lr=0.0002))
 
 # learning policy
 max_epochs = 75

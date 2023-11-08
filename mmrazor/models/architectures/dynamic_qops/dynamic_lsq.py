@@ -117,10 +117,13 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             _zero_point = _zero_point.to(self.zero_point.device)
             if self.qscheme in (torch.per_channel_symmetric,
                                 torch.per_channel_affine) and scale.shape != _scale.shape:
-                self.scale.data = self.scale.data.repeat(len(_scale), 1)
+                if self.param_share_mode == 0:
+                    self.scale.data = self.scale.data.repeat(len(_scale), 1)
+                else:
+                    self.scale.data = torch.ones_like(_scale)
+                    if self.param_share_mode in [2, 4]:
+                        self.scale_theta.data = self.scale_theta.data.repeat(len(_scale), 1)
                 self.zero_point.data = self.zero_point.data.repeat(len(_zero_point), 1)
-                if self.param_share_mode in [2, 4]:
-                    self.scale_theta.data = self.scale_theta.data.repeat(len(_scale), 1)
                 scale = self.scale[:, index] if self.param_share_mode == 0 else self.scale
                 zero_point = self.zero_point[:, index]
 

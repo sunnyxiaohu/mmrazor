@@ -416,7 +416,7 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                     else:
                         choices = self.quant_bits
                     for bit in choices:
-                        sample_kinds.extend([f'max_q{bit}', f'min_q{bit}'])
+                        sample_kinds.extend([f'max_q{bit}'])  # , f'min_q{bit}'])
 
             def qmaxmin(bit=32, is_max=True):
                 def sample(mutables):
@@ -794,14 +794,15 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         candidates_resources = []
         init_candidates = len(self.candidates)
         idx = 0
+        filterd_results, prob_results = self.get_qrange_probs()
         if self.solve_mode == 'ilp':
             num_candidates = self.num_candidates - init_candidates
             act_alphas = [3*(i+1.0) / num_candidates for i in range(num_candidates)]
             w_act_alphas = [(1.0, 0.0), (0.0, 1.0)]
             w_act_alphas += [(1.0, i) for i in act_alphas]
-            filterd_results, prob_results = self.get_qrange_probs()
-        elif self.solve_mode == 'prob':
-            _, prob_results = self.get_qrange_probs()
+            # filterd_results, prob_results = self.get_qrange_probs()
+        # elif self.solve_mode == 'prob':
+            # _, prob_results = self.get_qrange_probs()
         while len(self.candidates) < self.num_candidates:
             idx += 1
             if self.solve_mode == 'ilp' and idx <= len(w_act_alphas):
@@ -816,7 +817,16 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
             elif idx == 2:
                 candidate = self.model.mutator.sample_choices('min')
             else:
-                candidate = self.model.mutator.sample_choices()
+                # candidate = self.model.mutator.sample_choices()
+                this_prob_results = deepcopy(prob_results)
+                for k, v in this_prob_results.items():
+                    for b in v:
+                        p = random.random()
+                        this_prob_results[k][b] = p
+                candidate = self.sample_ilp_once(
+                    filterd_results, this_prob_results)
+                if candidate is None:
+                    continue
             self.model.mutator.set_choices(candidate)
             is_pass, result = self._check_constraints(
                 random_subnet=candidate)
@@ -966,6 +976,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
             self._resume()
 
         while self._epoch < self._max_epochs:
+            # import pdb; pdb.set_trace()
             self.run_epoch()
             self._save_searcher_ckpt()
 

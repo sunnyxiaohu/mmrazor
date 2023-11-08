@@ -28,7 +28,7 @@ model = dict(
     #     prefix='architecture.'))
 
 train_dataloader = dict(batch_size=64)
-optim_wrapper = dict(optimizer=dict(lr=0.002))
+optim_wrapper = dict(optimizer=dict(lr=0.0002))
 
 # learning policy
 max_epochs = 75
