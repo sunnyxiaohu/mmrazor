@@ -392,3 +392,78 @@ def del_fakequant_after_module(prepared_model,
     new_graph.lint()
     prepared_model.graph = new_graph
     return prepared_model
+
+
+def update_qdype_qmin_qmax(fake_quant, bit=8, quant_min=None, quant_max=None, qdtype=None):
+    # TODO: calc qdype according quant_min, quant_max (rely on backend support)
+    # reduce_range is False by default.
+    if qdtype is None:
+        qdtype = fake_quant.dtype
+    if quant_min is None or quant_max is None:
+        quant_min = fake_quant.quant_min
+        quant_max = fake_quant.quant_max
+
+        is_symmetric_range = False
+        if abs(quant_min) == abs(quant_max):
+            is_symmetric_range = True
+        if qdtype == torch.quint8:
+            quant_min = 0
+            quant_max = 2**bit - 1
+        elif qdtype == torch.qint8:
+            quant_max = 2**(bit - 1) - 1
+            if is_symmetric_range:
+                quant_min = -2**(bit - 1) + 1
+            else:
+                quant_min = -2**(bit - 1)
+        else:
+            raise ValueError(f'Only support qint8 and quint8, got {qdtype}')
+    fake_quant.quant_max = \
+        fake_quant.activation_post_process.quant_max = quant_max
+    fake_quant.quant_min = \
+        fake_quant.activation_post_process.quant_min = quant_min
+    fake_quant.dtype = \
+        fake_quant.activation_post_process.dtype = qdtype
+
+
+def modify_fakequant_bits(prepared_model,
+                          module_patterns: Tuple,
+                          bits: int = 8,
+                          inplace: bool = True):
+    """Delete useless fakequant before modules whose type are in
+    `module_patterns`.
+
+    Args:
+        prepared_model (GraphModule): Prepared standalone module.
+        target_patterns (tuple): Fakequants before and inner the modules
+            whose name in `module_patterns` will be modified.
+        inplace (bool): Can optionally do the operation in-place.
+            Defaults to True.
+
+    Returns:
+        GraphModule: Prepared standalone module after modified.
+    """
+    def recursive_find_act_fakequant(prepared_model, dynamic_node):
+        maybe_act = dynamic_node.args[0]
+        if not (maybe_act.op == 'call_module' and isinstance(
+                _get_attrs(prepared_model, maybe_act.target), FakeQuantizeBase)):
+            return recursive_find_act_fakequant(prepared_model, maybe_act)
+        return  _get_attrs(prepared_model, maybe_act.target)
+
+    if not inplace:
+        prepared_model = copy.deepcopy(prepared_model)
+
+    new_graph = copy.deepcopy(prepared_model.graph)
+    for node in new_graph.nodes:
+        if node.op == 'call_module' and node.target in module_patterns:
+            maybe_weight = _get_attrs(prepared_model, node.target)
+            if not (hasattr(maybe_weight, 'weight_fake_quant') and isinstance(
+                    maybe_weight.weight_fake_quant, FakeQuantizeBase)):
+                continue
+            maybe_weight = maybe_weight.weight_fake_quant
+            maybe_act = recursive_find_act_fakequant(prepared_model, node)
+            update_qdype_qmin_qmax(maybe_weight, bits)
+            update_qdype_qmin_qmax(maybe_act, bits)
+
+    new_graph.lint()
+    prepared_model.graph = new_graph
+    return prepared_model

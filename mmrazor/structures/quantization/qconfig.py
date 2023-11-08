@@ -161,11 +161,13 @@ class QConfigHandler():
     @staticmethod
     def replace_fakequant(fake_quant_org: FakeQuantize,
                           qscheme_org: QSchemeHandler,
-                          update_qparams: bool = True):
+                          update_qparams: bool = True,
+                          extra_observer_kwargs: Dict = {}):
         """Replace origin fakequants in model with the specified fakequant,
         which is in favor of deploying the quantized model."""
         assert isinstance(qscheme_org, QSchemeHandler)
         observer_kwargs = qscheme_org.to_observer_params()
+        observer_kwargs.update(extra_observer_kwargs)
         if is_per_tensor(observer_kwargs['qscheme']):
             observer = MODELS.get('MinMaxObserver')
             retain_args = RetainArgsPerTensor
@@ -194,7 +196,10 @@ class QConfigHandler():
         else:
             return fake_quant_wrapper
 
-    def fixed_w_fakequant(self):
+    def fixed_w_fakequant(self, ref_weight_fakequant=None):
         """Make `self.w_fake_quant` fixed as the consistent fakequant."""
+        extra_observer_kwargs ={}
+        if ref_weight_fakequant is not None:
+            extra_observer_kwargs = {'dtype': ref_weight_fakequant.dtype, 'quant_min': ref_weight_fakequant.quant_min, 'quant_max': ref_weight_fakequant.quant_max}
         self.w_fake_quant = self.replace_fakequant(
-            self.w_fake_quant(), self.w_qscheme, update_qparams=False)
+            self.w_fake_quant(), self.w_qscheme, update_qparams=False, extra_observer_kwargs=extra_observer_kwargs)

@@ -153,6 +153,18 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
                                                 'bit': int(np.log2(qmax - qmin + 1)),
                                                 'type': "biased",
                                                 }
+                prev_node = self.output2node[node.input[0]]
+                # (shiguang): Uncomment these codes for adjusting scale accoding superacme backends.
+                # Note that the pattern like `relu -> concat -> fakequant` is not handle properly.
+                if prev_node.op_type in ['Relu', 'Clip']:
+                    adjust_range = clip_ranges[tensor_name]
+                    min1, max1, bit = 0, (adjust_range['max'] - adjust_range['min']), adjust_range['bit']
+                    if prev_node.op_type == 'Clip':
+                        max1 = min(6.0, max1)
+                    adjust_range['min'], adjust_range['max'] = min1, max1
+                    adjust_range['step'] = max1 / (2**bit-1)
+                    adjust_range['zero_point'] = 0 - (2**(bit-1))
+                    clip_ranges[tensor_name] = adjust_range
         return clip_ranges,nodes_to_be_removed
     
     
