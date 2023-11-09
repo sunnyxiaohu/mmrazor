@@ -51,11 +51,16 @@ class CalibrateBNMixin:
             var_average_meter: AverageMeter = bn_module.__var_average_meter__
 
             real_input = input[0]
-            mean = real_input.mean((0, 2, 3))
-            var = real_input.var((0, 2, 3), unbiased=True)
+            x_dim = real_input.size()
+            new_axis_list = [i for i in range(len(x_dim))]  # noqa: C416
+            new_axis_list[1] = 0
+            new_axis_list[0] = 1
+            real_input = real_input.permute(new_axis_list).flatten(start_dim=1)
+            mean = real_input.mean((1,))
+            var = real_input.var((1,), unbiased=True)
 
-            mean_average_meter.update(mean, real_input.size(0))
-            var_average_meter.update(var, real_input.size(0))
+            mean_average_meter.update(mean, x_dim[0])
+            var_average_meter.update(var, x_dim[0])
 
         hook_handles = []
 

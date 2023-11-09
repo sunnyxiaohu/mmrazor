@@ -1,6 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import warnings
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 
 import torch
 import torch.nn as nn
@@ -44,24 +44,8 @@ class NasMutator(BaseMutator[MUTABLE_TYPE], GroupMixin):
             supernet (:obj:`torch.nn.Module`): The supernet to be searched
                 in your algorithm.
         """
-        self._search_groups = dict()
-
-        # prepare for channel mutables
-        if self.has_channel(supernet):
-            units = self._prepare_from_predefined_model(supernet)
-            self.mutable_units = [unit for unit in units if unit.is_mutable]
-
-            _channel_groups = dict()
-            for id, unit in enumerate(ModuleList(self.mutable_units)):
-                _channel_groups['channel' + '_' + str(id)] = [unit]
-            self._search_groups.update(_channel_groups)
-        else:
-            self.mutable_units = []
-
-        # prepare for value mutables
-        _value_groups: Dict[str, List[MUTABLE_TYPE]] = \
-            self.build_search_groups(supernet, self._custom_groups)
-        self._search_groups.update(_value_groups)
+        self._search_groups = self.build_search_groups(
+            supernet, self._custom_groups)
 
     def prepare_arch_params(self):
         """This function will build searchable params for each layer, which are
@@ -79,15 +63,6 @@ class NasMutator(BaseMutator[MUTABLE_TYPE], GroupMixin):
                     torch.randn(mutables[0].num_choices) * 1e-3)
 
         self._modify_supernet_forward()
-
-    def has_channel(self, supernet):
-        """Whether to build channel space."""
-        for module in supernet.modules():
-            if isinstance(module, DynamicChannelMixin):
-                if module.get_mutable_attr('out_channels') or \
-                        module.get_mutable_attr('in_channels'):
-                    return True
-        return False
 
     @property
     def search_groups(self) -> Dict[str, List[MUTABLE_TYPE]]:
@@ -127,20 +102,6 @@ class NasMutator(BaseMutator[MUTABLE_TYPE], GroupMixin):
                 'Call `prepare_arch_params` first to get the search params.')
         return self._arch_params
 
-    def _prepare_from_predefined_model(self, model: Module):
-        """Initialize units using the model with pre-defined dynamic-ops and
-        mutable-channels."""
-        from mmrazor.models.mutables import OneShotMutableChannelUnit
-
-        self._name2unit: Dict = {}
-        units = OneShotMutableChannelUnit.init_from_predefined_model(model)
-
-        for unit in units:
-            unit.current_choice = unit.max_choice
-            self._name2unit[unit.name] = unit
-
-        return units
-
     def _modify_supernet_forward(self):
         """Modify the DiffMutableModule's default arch_param in forward.
 
@@ -170,6 +131,8 @@ class NasMutator(BaseMutator[MUTABLE_TYPE], GroupMixin):
                     choices[name] = mutables[0].min_choice
                 elif kind == 'random':
                     choices[name] = mutables[0].sample_choice()
+                elif isinstance(kind, Callable):
+                    choices[name] = kind(mutables)
                 else:
                     raise NotImplementedError()
         return choices

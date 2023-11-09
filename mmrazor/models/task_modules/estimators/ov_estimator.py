@@ -12,8 +12,8 @@ from mmengine.logging import MMLogger
 from mmengine.utils import mkdir_or_exist
 from torch.utils.data import DataLoader
 
-from mmrazor.models import ResourceEstimator
 from mmrazor.registry import METRICS, TASK_UTILS
+from .resource_estimator import ResourceEstimator
 
 try:
     import npuc
@@ -153,11 +153,12 @@ class OVResourceEstimator(ResourceEstimator):
                     f'Floating inference: {self.ovmodel.floating_inference()}')
                 logger.info(
                     f'Fixed inference: {self.ovmodel.fixed_inference()}')
-            ov_metrics = [self.ovmodel.sim_ppa()]
+            ov_metrics = self.ovmodel.sim_ppa()
+            self.ovmodel.reset_model()
         else:
-            ov_metrics = [None]
-        broadcast_object_list(ov_metrics)
-        resource_metrics.update(ov_metrics[0])
+            ov_metrics = dict()
+        # broadcast_object_list(ov_metrics)
+        resource_metrics.update(ov_metrics)
         return resource_metrics
 
 
@@ -226,6 +227,14 @@ class OVModelWrapper:
         self.infer_metric = infer_metric
         if infer_metric is not None:
             self.infer_metric = METRICS.build(infer_metric)
+
+    def reset_model(self):
+        self.graph = None
+        self.params = None
+        self.data = None
+        self.label = None
+        self.output = None
+        self.ovm_hdl = None
 
     def reset_data(self):
         """Reset dataset iterator."""

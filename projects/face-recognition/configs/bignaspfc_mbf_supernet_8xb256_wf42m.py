@@ -1,12 +1,15 @@
-_base_ = ['mmcls::_base_/default_runtime.py']
+_base_ = [
+    'mmcls::_base_/default_runtime.py',
+    './bignaspfc_mbf_supernet.py',
+]
 
 custom_imports = dict(
     imports=[
         'projects.commons.engine.runner.subnet_ov_val_loop',
-        'projects.face-recognition.models.algorithms.spos_partialfc',
+        'projects.face-recognition.models.algorithms.bignas_partialfc',
         'projects.face-recognition.models.losses.margin_loss',
         'projects.face-recognition.models.heads.partialfc_head',
-        'projects.face-recognition.models.backbones.mobilefacenet',
+        'projects.face-recognition.models.backbones.searchable_mobilefacenet',
         'projects.face-recognition.datasets.mx_face_dataset',
         'projects.face-recognition.evaluation.match_rank',
         'projects.face-recognition.engine.runner.loopx',
@@ -14,10 +17,11 @@ custom_imports = dict(
     ],
     allow_failed_imports=False)
 
+
 # model settings
-architecture = dict(
-    _scope_='mmcls',
-    type='ImageClassifier',
+supernet = dict(
+    _scope_='mmrazor',
+    type='SearchableImageClassifier',
     data_preprocessor=dict(
         # num_classes=1000,
         # RGB format normalization parameters
@@ -26,17 +30,11 @@ architecture = dict(
         # convert image from BGR to RGB
         to_rgb=True,
     ),
-    # TODO: replace model config
-    backbone=dict(
-        type='mmrazor.MobileFaceNet',
-        num_features=256,
-        fp16=False,
-        scale=1,
-        blocks=(2, 4, 6, 2)),
+    backbone=_base_.nas_backbone,
     # neck=dict(type='GlobalAveragePooling'),
     head=dict(
         type='mmrazor.PartialFCHead',
-        embedding_size=256,
+        embedding_size=_base_.embedding_size,
         num_classes=2059906,
         sample_rate=0.2,
         fp16=False,
@@ -47,15 +45,36 @@ architecture = dict(
             m2=0.0,
             m3=0.4,
             interclass_filtering_threshold=0.0),
-    ))
+    ),
+    input_resizer_cfg=_base_.input_resizer_cfg,
+    # connect_head=dict(connect_with_backbone='backbone.last_mutable_channels'),
+)
 
 model = dict(
-    type='mmrazor.SPOSPartialFC',
-    architecture=architecture,
+    _scope_='mmrazor',
+    type='BigNASPartialFC',
+    num_random_samples=2,
+    architecture=supernet,
+    distiller=dict(
+        type='ConfigurableDistiller',
+        student_recorders=dict(
+            feat=dict(type='mmrazor.ModuleOutputs', source='backbone.features.layers.2')),
+        teacher_recorders=dict(
+            feat=dict(type='mmrazor.ModuleOutputs', source='backbone.features.layers.2')),
+        distill_losses=dict(
+            loss_feat=dict(type='mmrazor.L2Loss', loss_weight=1, teacher_detach=True)),
+        loss_forward_mappings=dict(
+            loss_feat=dict(
+                s_feature=dict(
+                    from_student=True,
+                    # TODO(shiguang): connector='loss_s4_sfeat',
+                    recorder='feat'),
+                t_feature=dict(
+                    from_student=False, recorder='feat')))),
     mutator=dict(type='mmrazor.NasMutator'))
 
 model_wrapper_cfg = dict(
-    type='mmrazor.SPOSPartialFCDDP',
+    type='mmrazor.BigNASPartialFCDDP',
     exclude_module='architecture.head',
     broadcast_buffers=False,
     find_unused_parameters=True)
@@ -79,6 +98,7 @@ train_dataloader = dict(
 )
 
 mdataset_type = 'mmrazor.MatchFaceDataset'
+sample_ratio = 1.0
 val_pipeline = [
     dict(type='LoadImageFromFile'),
     dict(
@@ -94,6 +114,7 @@ val_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='120P',
+                sample_ratio=sample_ratio,
                 data_root='/mnt/data/face_data/OV_test/face_recognition/120P',
                 key_file='120p.key',
                 data_prefix=dict(img_path='norm_facex'),
@@ -101,6 +122,7 @@ val_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='baby_500p',
+                sample_ratio=sample_ratio,
                 data_root=
                 '/mnt/data/face_data/OV_test/face_recognition/baby_500p',
                 key_file='baby_500p.key',
@@ -109,6 +131,7 @@ val_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='glint1k',
+                sample_ratio=sample_ratio,
                 data_root=
                 '/mnt/data/face_data/OV_test/face_recognition/glint1k',
                 key_file='glint1k_val.key',
@@ -117,6 +140,7 @@ val_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='mask_369p',
+                sample_ratio=sample_ratio,
                 data_root=
                 '/mnt/data/face_data/OV_test/face_recognition/mask_369p',
                 key_file='mask_369p.key',
@@ -125,6 +149,7 @@ val_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='menjin_20p',
+                sample_ratio=sample_ratio,
                 data_root=
                 '/mnt/data/face_data/OV_test/face_recognition/menjin_20p',
                 key_file='menjin_20p.key',
@@ -133,6 +158,7 @@ val_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='xm14',
+                sample_ratio=sample_ratio,
                 data_root='/mnt/data/face_data/OV_test/face_recognition/xm14',
                 key_file='xm14.key',
                 data_prefix=dict(img_path='norm_112'),
@@ -153,6 +179,8 @@ test_pipeline = [
         type='PackClsInputs',
         meta_keys=('sample_idx_identical_mapping', 'dataset_name')),
 ]
+
+
 test_dataloader = dict(
     batch_size=128,
     num_workers=1,
@@ -162,6 +190,7 @@ test_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='120P',
+                sample_ratio=sample_ratio,
                 data_root='/mnt/data/face_data/OV_test/face_recognition/120P',
                 key_file='120p.key',
                 data_prefix=dict(img_path='norm_facex'),
@@ -169,6 +198,7 @@ test_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='baby_500p',
+                sample_ratio=sample_ratio,
                 data_root=
                 '/mnt/data/face_data/OV_test/face_recognition/baby_500p',
                 key_file='baby_500p.key',
@@ -177,6 +207,7 @@ test_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='glint1k',
+                sample_ratio=sample_ratio,
                 data_root=
                 '/mnt/data/face_data/OV_test/face_recognition/glint1k',
                 key_file='glint1k_val.key',
@@ -185,6 +216,7 @@ test_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='mask_369p',
+                sample_ratio=sample_ratio,
                 data_root=
                 '/mnt/data/face_data/OV_test/face_recognition/mask_369p',
                 key_file='mask_369p.key',
@@ -193,6 +225,7 @@ test_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='menjin_20p',
+                sample_ratio=sample_ratio,
                 data_root=
                 '/mnt/data/face_data/OV_test/face_recognition/menjin_20p',
                 key_file='menjin_20p.key',
@@ -201,6 +234,7 @@ test_dataloader = dict(
             dict(
                 type=mdataset_type,
                 dataset_name='xm14',
+                sample_ratio=sample_ratio,
                 data_root='/mnt/data/face_data/OV_test/face_recognition/xm14',
                 key_file='xm14.key',
                 data_prefix=dict(img_path='norm_112'),
@@ -217,14 +251,14 @@ optim_wrapper = {
     'mmrazor.FaceSeparateOptimWrapperConstructor',
     'architecture.backbone':
     dict(
-        # type='AmpOptimWrapper',
-        # loss_scale=dict(growth_interval=100),
+        type='AmpOptimWrapper',
+        loss_scale=dict(growth_interval=100),
         optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4),
         clip_grad=dict(type='norm', max_norm=5)),
     'architecture.head':
     dict(
-        # type='AmpOptimWrapper',
-        # loss_scale=dict(growth_interval=100),
+        type='AmpOptimWrapper',
+        loss_scale=dict(growth_interval=100),
         optimizer=dict(type='SGD', lr=0.2, momentum=0.9, weight_decay=1e-4), )
 }
 
@@ -255,16 +289,15 @@ param_scheduler = [
 # train, val, test setting
 # Note that: Use LoopX is a little faster than EpochBasedTrainLoop
 train_cfg = dict(
-    type='mmrazor.EpochBasedTrainLoopX', max_epochs=10, val_interval=1)
-val_cfg = dict()
+    type='mmrazor.EpochBasedTrainLoop', max_epochs=10, val_interval=1)
 test_cfg = dict(
     type='mmrazor.SubnetOVValLoop',
     evaluate_fixed_subnet=True,
-    calibrate_sample_num=0,
+    calibrate_sample_num=40960,
     estimator_cfg=dict(
         type='mmrazor.HERONResourceEstimator',
         heronmodel_cfg=dict(
-            work_dir='work_dirs/mbf_8xb256_wf42m_pfc02',
+            work_dir='work_dirs/mbf_8xb512_wf42m_pfc02',
             ptq_json='projects/commons/heron_files/face_config_ptq.json',
             HeronCompiler = '/alg-data/ftp-upload/private/wangshiguang/HeronRT/HeronRT_v0.8.0_2023.06.15/tool/HeronCompiler',
             HeronProfiler = '/alg-data/ftp-upload/private/wangshiguang/HeronRT/HeronRT_v0.8.0_2023.06.15/tool/HeronProfiler'
@@ -287,3 +320,5 @@ test_cfg = dict(
 auto_scale_lr = dict(base_batch_size=256)
 
 # _base_.default_hooks.logger.interval = 10
+
+val_cfg = dict(type='mmrazor.SubnetValLoop', calibrate_sample_num=40960)

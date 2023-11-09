@@ -51,8 +51,8 @@ model_wrapper_cfg = dict(
     broadcast_buffers=False,
     find_unused_parameters=True)
 
-optim_wrapper_cfg = dict(
-    type='OptimWrapper', clip_grad=dict(type='value', clip_value=0.2))
+optim_wrapper = dict(
+    type='AmpOptimWrapper', clip_grad=dict(type='value', clip_value=0.2))
 
 default_hooks = dict(
     checkpoint=dict(

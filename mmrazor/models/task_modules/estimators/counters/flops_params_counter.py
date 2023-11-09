@@ -141,6 +141,7 @@ def get_model_flops_params(model,
                         str(module.__params__) + params_suffix
 
     flops_params_model.stop_flops_params_count()
+    remove_flops_params_counting_methods(flops_params_model)
 
     if seperate_return:
         return spec_modules_resources
@@ -374,6 +375,13 @@ def add_flops_params_counting_methods(net_main_module):
     net_main_module.reset_flops_params_count()
 
     return net_main_module
+
+
+def remove_flops_params_counting_methods(net_main_module):
+    del net_main_module.start_flops_params_count
+    del net_main_module.stop_flops_params_count
+    del net_main_module.reset_flops_params_count
+    del net_main_module.compute_average_flops_params_cost
 
 
 def compute_average_flops_params_cost(self):

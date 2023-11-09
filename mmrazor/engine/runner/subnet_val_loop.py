@@ -6,6 +6,7 @@ from mmengine.runner import ValLoop
 from torch.utils.data import DataLoader
 
 from mmrazor.models.utils import add_prefix
+from mmrazor.structures import export_fix_subnet
 from mmrazor.registry import LOOPS, TASK_UTILS
 from .utils import CalibrateBNMixin
 
@@ -83,14 +84,21 @@ class SubnetValLoop(ValLoop, CalibrateBNMixin):
 
     def _evaluate_once(self) -> Dict:
         """Evaluate a subnet once with BN re-calibration."""
-        self.calibrate_bn_statistics(self.runner.train_dataloader,
-                                     self.calibrate_sample_num)
+        if self.calibrate_sample_num > 0:
+            self.calibrate_bn_statistics(self.runner.train_dataloader,
+                                         self.calibrate_sample_num)
         self.runner.model.eval()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch)
 
+        if self.runner.distributed:
+            model = self.runner.model.module
+        else:
+            model = self.runner.model
+        _, sliced_model = export_fix_subnet(
+            model, slice_weight=True)
         metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
-        resource_metrics = self.estimator.estimate(self.model)
+        resource_metrics = self.estimator.estimate(sliced_model)
         metrics.update(resource_metrics)
 
         return metrics
