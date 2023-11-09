@@ -225,9 +225,15 @@ class FaceEvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         while len(init_candidates) < num_candidates_per_rank:
             idx += 1
             if idx == 1 and self.runner.rank == 0:
-                candidate = self.model.mutator.sample_choices('max')
+                try:
+                    candidate = self.model.mutator.sample_choices('max')
+                except:
+                    candidate = self.model.mutator.sample_choices()
             elif idx == 2 and self.runner.rank == 0:
-                candidate = self.model.mutator.sample_choices('min')
+                try:
+                    candidate = self.model.mutator.sample_choices('min')
+                except:
+                    candidate = self.model.mutator.sample_choices()
             else:
                 candidate = self.model.mutator.sample_choices()
 
