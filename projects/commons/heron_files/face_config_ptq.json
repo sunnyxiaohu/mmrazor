@@ -1,25 +1,42 @@
 {
-	"input_model_type": "ONNX",
-	"output_model_type": "MNN",
-	"calibration_image_num": 5,
-	"inputs_list": [
-		{
-			"name": "",
-			"type": "uint8",
-			"format": "image",
-			"shape": [1, 3, 112, 112],
-			"layout": "NCHW",
-			"color_space": "GRAY",
-			"mean": [127, 127, 127],
-			"normal": [1.0, 1.0, 1.0],
-			"fuse_preprocess": true,
-			"dataset_path": "/mnt/data/face_data/OV_test/face_recognition/120P/norm_facex"
-		}
-	],
-	"weight_quant": {
-		"quantization_method": "MAX_ABS"
-	},
-	"feature_quant": {
-		"quantization_method": "MINMAX"
-	}
+    "hardware_param": {
+        "target_platform": "SA6920",
+        "sram_size": 1,
+        "data_format": "RGBA",
+        "binary_eltwise_mode": 0
+    },
+	"calibration_image_num": 10,
+    "input_model_type": "ONNX",
+    "feature_quant": {
+        "quantization_method": "MINMAX"
+    },
+    "weight_quant": {
+        "quantization_method": "MAX_ABS"
+    },
+    "inputs_list": [
+        {
+            "color_space": "RGB",
+            "mean": [
+                127,
+                127,
+                127
+            ],
+            "normal": [
+                1.0,
+                1.0,
+                1.0
+            ],
+            "shape": [
+                1,
+                3,
+                112,
+                112
+            ],
+            "layout": "NCHW",
+            "dataset_path": "/mnt/data/face_data/OV_test/face_recognition/120P/norm_facex",
+            "type": "uint8",
+            "format": "image",
+            "fuse_preprocess": true
+        }
+    ]
 }
