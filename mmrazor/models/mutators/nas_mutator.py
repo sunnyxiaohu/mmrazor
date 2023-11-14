@@ -116,7 +116,7 @@ class NasMutator(BaseMutator[MUTABLE_TYPE], GroupMixin):
 
     # choice manage
 
-    def sample_choices(self, kind='random') -> Dict:
+    def sample_choices(self, kind='random',**kwargs) -> Dict:
         """Random sample choices by search space."""
         choices = dict()
         for name, mutables in self.search_groups.items():
@@ -132,7 +132,7 @@ class NasMutator(BaseMutator[MUTABLE_TYPE], GroupMixin):
                 elif kind == 'random':
                     choices[name] = mutables[0].sample_choice()
                 elif isinstance(kind, Callable):
-                    choices[name] = kind(mutables)
+                    choices[name] = kind(mutables,**kwargs)
                 else:
                     raise NotImplementedError()
         return choices
