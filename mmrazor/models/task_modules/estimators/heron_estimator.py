@@ -16,7 +16,7 @@ from torch.nn.modules.conv import _ConvNd
 from torch.utils.data import DataLoader
 
 from mmengine import print_log
-from mmengine.dist import get_rank
+from mmengine.dist import get_rank, get_world_size
 from mmengine.fileio import load, dump
 from mmengine.logging import MMLogger
 from mmengine.utils import mkdir_or_exist
@@ -231,7 +231,8 @@ class HERONModelWrapper:
             # labels = scores.argmax(dim=1, keepdim=True).detach()
             # data_samples.set_pred_score(scores.squeeze()).set_pred_label(labels.squeeze())
             # self.infer_metric.process(inputs, [data_samples.to_dict()])
-        metrics = self.infer_metric.evaluate(self.num_infer) if self.num_infer > 0 else {}
+        num_samples = min(get_world_size() * self.num_infer, len(self.dataloader.dataset))
+        metrics = self.infer_metric.evaluate(num_samples) if self.num_infer > 0 else {}
         return metrics
 
     def fixed_inference(self):
@@ -322,8 +323,8 @@ class HERONModelWrapper:
             # # interpreter.runSessionWithCallBack(session, begin_callback, end_callback)
             # interpreter.runSessionWithCallBackInfo(session, begin_callback, end_callback)
             ########################DEBUG EXAMPLE#############################
-
-        metrics = self.infer_metric.evaluate(self.num_infer) if self.num_infer > 0 else {}
+        num_samples = min(get_world_size() * self.num_infer, len(self.dataloader.dataset))
+        metrics = self.infer_metric.evaluate(num_samples) if self.num_infer > 0 else {}
         return metrics
 
 
