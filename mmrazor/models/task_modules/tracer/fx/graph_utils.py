@@ -467,3 +467,97 @@ def modify_fakequant_bits(prepared_model,
     new_graph.lint()
     prepared_model.graph = new_graph
     return prepared_model
+
+
+def register_mutables_for_dynamic_fakequant(prepared_model,
+                                            module_patterns: Tuple,
+                                            quant_bits: List = None,
+                                            default_skipped_bit = 32,
+                                            inplace: bool = True,
+                                            nested_quant_bits_in_layer = False):
+    """Register mutables for dynamic fakequant. It will follow the rules bellow
+    to register mutables:
+    1. if quant_bits contains `FLOAT_BITS`, all the dynamic fakequant will use
+        register mutable by using `quant_bits` as candidate values.
+    2. if not, all the dynamic fakequant except that matchs `module_patterns` will
+        register mutable by using `quant_bits` as candidate values.
+
+    Args:
+        prepared_model (GraphModule): Prepared standalone module.
+        target_patterns (tuple): Fakequants before and inner the modules
+            whose name in `module_patterns` will be modified.
+        quant_bits (List): Quant bits for building mutables.
+        default_skipped_bit (int): If matched, the default skipped bit will be registered.
+        inplace (bool): Can optionally do the operation in-place.
+            Defaults to True.
+        nested_quant_bits_in_layer: Nested quant_bits of  Activations(input) to the
+            corresponding layer, so that we could easily BitFlops.
+
+    Returns:
+        GraphModule: Prepared standalone module after modified.
+    """
+    from mmrazor.models.architectures.dynamic_qops import DynamicLearnableFakeQuantize
+    from mmrazor.models.mutables import OneShotMutableValue
+    if not inplace:
+        prepared_model = copy.deepcopy(prepared_model)
+    new_graph = copy.deepcopy(prepared_model.graph)
+    # get skipped nodes, weights and activation.
+    # skipped_nodes = set()
+    # since there will be multiple nodes share the same fake_quant
+    skipped_fake_quant = set()
+    for node in new_graph.nodes:
+        if node.op == 'call_module' and node.target in module_patterns:
+            maybe_weight = _get_attrs(prepared_model, node.target)
+            if not (hasattr(maybe_weight, 'weight_fake_quant') and isinstance(
+                    maybe_weight.weight_fake_quant, DynamicLearnableFakeQuantize)):
+                continue
+            # skipped_nodes.add(node)
+            skipped_fake_quant.add(maybe_weight.weight_fake_quant)
+            maybe_act = node.args[0]
+            if not (maybe_act.op == 'call_module' and isinstance(
+                    _get_attrs(prepared_model, maybe_act.target), DynamicLearnableFakeQuantize)):
+                continue
+            # skipped_nodes.add(maybe_act)
+            skipped_fake_quant.add(_get_attrs(prepared_model, maybe_act.target))
+    for node in new_graph.nodes:
+        if node.op == 'call_module':
+            maybe_dynamic = _get_attrs(prepared_model, node.target)
+            # for activations
+            if isinstance(maybe_dynamic, DynamicLearnableFakeQuantize):
+                # multiple nodes may share the same fakequant.
+                if 'quant_bits' in maybe_dynamic.mutable_attrs:
+                    continue
+                this_bits = quant_bits
+                if maybe_dynamic in skipped_fake_quant:
+                    this_bits = [default_skipped_bit]
+                qbits = OneShotMutableValue(alias=node.target + '.quant_bits', value_list=this_bits)
+                maybe_dynamic.register_mutable_attr('quant_bits', qbits)
+            # for weights
+            elif hasattr(maybe_dynamic, 'weight_fake_quant') and isinstance(
+                    maybe_dynamic.weight_fake_quant, DynamicLearnableFakeQuantize):
+                maybe_dynamicw = maybe_dynamic.weight_fake_quant
+                this_bits = quant_bits
+                if maybe_dynamicw in skipped_fake_quant:
+                    this_bits = [default_skipped_bit]
+                qbits = OneShotMutableValue(alias=node.target + '.weight_fake_quant.quant_bits', value_list=this_bits)
+                maybe_dynamicw.register_mutable_attr('quant_bits', qbits)
+
+                if nested_quant_bits_in_layer:
+                    maybe_act = recursive_find_act_fakequant(prepared_model, node)
+                    print_log(
+                        f'Nested quant_bits with w_bits: {node.target} and a_bits: {maybe_act.target}', logger='current')
+                    maybe_dynamic._ACT_QUANT_BITS = _get_attrs(prepared_model, maybe_act.target).mutable_attrs['quant_bits']
+
+    new_graph.lint()
+    prepared_model.graph = new_graph
+    return prepared_model
+
+
+def recursive_find_act_fakequant(prepared_model, dynamic_node):
+    from mmrazor.models.architectures.dynamic_qops import DynamicLearnableFakeQuantize
+    maybe_act = dynamic_node.args[0]
+    # TODO(shiguang): more general.
+    if not (maybe_act.op == 'call_module' and isinstance(
+            _get_attrs(prepared_model, maybe_act.target), DynamicLearnableFakeQuantize)):
+        return recursive_find_act_fakequant(prepared_model, maybe_act)
+    return maybe_act

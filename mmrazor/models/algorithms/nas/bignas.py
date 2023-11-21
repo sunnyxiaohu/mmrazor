@@ -9,7 +9,6 @@ from mmengine.structures import BaseDataElement
 from torch import nn
 
 from mmrazor.models.architectures.ops.mobilenet_series import MBBlock
-from mmrazor.models.architectures.utils import set_dropout
 from mmrazor.models.distillers import ConfigurableDistiller
 from mmrazor.models.mutators import NasMutator
 from mmrazor.models.utils import (add_prefix,
@@ -138,9 +137,7 @@ class BigNAS(BaseAlgorithm):
             # update the max subnet loss.
             if kind == 'max':
                 self.mutator.set_max_choices()
-                set_dropout(
-                    layers=self.architecture.backbone.layers[:-1],
-                    module=MBBlock,
+                self.architecture.backbone.set_dropout(
                     dropout_stages=self.backbone_dropout_stages,
                     drop_path_rate=self.drop_path_rate)
                 with optim_wrapper.optim_context(
@@ -156,9 +153,7 @@ class BigNAS(BaseAlgorithm):
             # update the min subnet loss.
             elif kind == 'min':
                 self.mutator.set_min_choices()
-                set_dropout(
-                    layers=self.architecture.backbone.layers[:-1],
-                    module=MBBlock,
+                self.architecture.backbone.set_dropout(
                     dropout_stages=self.backbone_dropout_stages,
                     drop_path_rate=0.)
                 min_subnet_losses = distill_step(batch_inputs, data_samples)
@@ -167,14 +162,18 @@ class BigNAS(BaseAlgorithm):
             # update the random subnets loss.
             elif 'random' in kind:
                 self.mutator.set_choices(self.mutator.sample_choices())
-                set_dropout(
-                    layers=self.architecture.backbone.layers[:-1],
-                    module=MBBlock,
+                self.architecture.backbone.set_dropout(
                     dropout_stages=self.backbone_dropout_stages,
                     drop_path_rate=0.)
                 random_subnet_losses = distill_step(batch_inputs, data_samples)
                 total_losses.update(
                     add_prefix(random_subnet_losses, f'{kind}_subnet'))
+
+        # Clear data_buffer so that we could implement deepcopy.
+        for key, recorder in self.distiller.teacher_recorders.recorders.items():
+            recorder.reset_data_buffer()
+        for key, recorder in self.distiller.student_recorders.recorders.items():
+            recorder.reset_data_buffer()
 
         return total_losses
 
@@ -228,9 +227,7 @@ class BigNASDDP(MMDistributedDataParallel):
             # update the max subnet loss.
             if kind == 'max':
                 self.module.mutator.set_max_choices()
-                set_dropout(
-                    layers=self.module.architecture.backbone.layers[:-1],
-                    module=MBBlock,
+                self.module.architecture.backbone.set_dropout(
                     dropout_stages=self.module.backbone_dropout_stages,
                     drop_path_rate=self.module.drop_path_rate)
                 with optim_wrapper.optim_context(
@@ -246,9 +243,7 @@ class BigNASDDP(MMDistributedDataParallel):
             # update the min subnet loss.
             elif kind == 'min':
                 self.module.mutator.set_min_choices()
-                set_dropout(
-                    layers=self.module.architecture.backbone.layers[:-1],
-                    module=MBBlock,
+                self.module.architecture.backbone.set_dropout(
                     dropout_stages=self.module.backbone_dropout_stages,
                     drop_path_rate=0.)
                 min_subnet_losses = distill_step(batch_inputs, data_samples)
@@ -258,14 +253,18 @@ class BigNASDDP(MMDistributedDataParallel):
             elif 'random' in kind:
                 self.module.mutator.set_choices(
                     self.module.mutator.sample_choices())
-                set_dropout(
-                    layers=self.module.architecture.backbone.layers[:-1],
-                    module=MBBlock,
+                self.module.architecture.backbone.set_dropout(
                     dropout_stages=self.module.backbone_dropout_stages,
                     drop_path_rate=0.)
                 random_subnet_losses = distill_step(batch_inputs, data_samples)
                 total_losses.update(
                     add_prefix(random_subnet_losses, f'{kind}_subnet'))
+
+        # Clear data_buffer so that we could implement deepcopy.
+        for key, recorder in self.module.distiller.teacher_recorders.recorders.items():
+            recorder.reset_data_buffer()
+        for key, recorder in self.module.distiller.student_recorders.recorders.items():
+            recorder.reset_data_buffer()
 
         return total_losses
 

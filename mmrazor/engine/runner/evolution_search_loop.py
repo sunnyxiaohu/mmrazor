@@ -73,6 +73,7 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                  num_crossover: int = 25,
                  mutate_prob: float = 0.1,
                  crossover_prob: float = 0.5,
+                 calibrate_dataloader: Optional[Dict] = None,
                  calibrate_sample_num: int = -1,
                  constraints_range: Dict[str, Any] = dict(flops=(0., 330.)),
                  estimator_cfg: Optional[Dict] = None,
@@ -91,6 +92,17 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                 f'Dataset {self.dataloader.dataset.__class__.__name__} has no '
                 'metainfo. ``dataset_meta`` in evaluator, metric and '
                 'visualizer will be None.')
+
+        if calibrate_dataloader is None:
+            self.calibrate_dataloader = self.runner.train_dataloader
+        elif isinstance(calibrate_dataloader, dict):
+            # Determine whether or not different ranks use different seed.
+            diff_rank_seed = self.runner._randomness_cfg.get(
+                'diff_rank_seed', False)
+            self.calibrate_dataloader = self.runner.build_dataloader(
+                calibrate_dataloader, seed=self.runner.seed, diff_rank_seed=diff_rank_seed)
+        else:
+            self.calibrate_dataloader = calibrate_dataloader
 
         self.num_candidates = num_candidates
         self.top_k = top_k
@@ -306,20 +318,21 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
             for k in searcher_resume.keys():
                 setattr(self, k, searcher_resume[k])
             epoch_start = int(searcher_resume['_epoch'])
-            self._max_epochs = self._max_epochs - epoch_start
+            self._max_epochs = self._max_epochs - epoch_start + 1
             self.runner.logger.info('#' * 100)
             self.runner.logger.info(f'Resume from epoch: {epoch_start}')
             self.runner.logger.info('#' * 100)
 
     def _save_best_fix_subnet(self):
         """Save best subnet in searched top-k candidates."""
+        best_random_subnet = self.top_k_candidates.subnets[0]
+        self.model.mutator.set_choices(best_random_subnet)
+        if self.calibrate_sample_num > 0:
+            self.calibrate_bn_statistics(self.calibrate_dataloader,
+                                         self.calibrate_sample_num)
+        best_fix_subnet, sliced_model = \
+            export_fix_subnet(self.model.architecture, slice_weight=True)
         if self.runner.rank == 0:
-            best_random_subnet = self.top_k_candidates.subnets[0]
-            self.model.mutator.set_choices(best_random_subnet)
-
-            best_fix_subnet, sliced_model = \
-                export_fix_subnet(self.model, slice_weight=True)
-
             timestamp_subnet = time.strftime('%Y%m%d_%H%M', time.localtime())
             model_name = f'subnet_{timestamp_subnet}.pth'
             save_path = osp.join(self.runner.work_dir, model_name)
@@ -352,7 +365,7 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
             metrics = self.predictor.predict(self.model)
         else:
             if self.calibrate_sample_num > 0:
-                self.calibrate_bn_statistics(self.runner.train_dataloader,
+                self.calibrate_bn_statistics(self.calibrate_dataloader,
                                              self.calibrate_sample_num)
             self.runner.model.eval()
             for data_batch in self.dataloader:

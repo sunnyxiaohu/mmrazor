@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import argparse
+import re
 from pathlib import Path
 
 import torch
@@ -47,7 +48,8 @@ def main():
                                   'layer' + index_table[index])
         else:
             new_key = key
-
+        if 'input_stem' in new_key:
+            new_key = new_key.replace('input_stem', 'stem')
         if 'mobile_inverted_conv' in new_key:
             new_key = new_key.replace('mobile_inverted_conv.', '')
         if 'depth_conv' in key:
@@ -56,8 +58,12 @@ def main():
             new_key = new_key.replace('point_linear', 'linear_conv')
         if 'inverted_bottleneck' in key:
             new_key = new_key.replace('inverted_bottleneck', 'expand_conv')
+        if '.conv.conv.conv' in new_key:
+            new_key = new_key.replace('.conv.conv.conv', '.conv')
         if '.conv.conv' in new_key:
             new_key = new_key.replace('.conv.conv', '.conv')
+        if '.conv.bn.bn' in new_key:
+            new_key = new_key.replace('.conv.bn.bn', '.bn')
         if '.bn.bn' in new_key:
             new_key = new_key.replace('.bn.bn', '.bn')
 
@@ -87,7 +93,16 @@ def main():
         if '7to5_matrix' in new_key:
             new_key = new_key.replace('7to5_matrix', 'trans_matrix_7to5')
 
+        new_key = re.sub(r'conv(\d+).conv', r'conv\1', new_key)
+        new_key = re.sub(r'conv(\d+).bn', r'bn\1', new_key)
+        new_key = re.sub('downsample.conv', 'downsample.0', new_key)
+        new_key = re.sub('downsample.bn', 'downsample.1', new_key)
+
         new_key = 'architecture.backbone.' + new_key
+
+        if 'classifier.linear.linear' in new_key:
+            new_key = new_key.replace('classifier.linear.linear', 'head.fc')
+            new_key = new_key.replace('backbone.', '')
 
         if 'classifier.linear' in new_key:
             new_key = new_key.replace('classifier.linear', 'head.fc')

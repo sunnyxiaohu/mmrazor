@@ -13,8 +13,8 @@ class PoolCounter(BaseCounter):
     def add_count_hook(module, input, output):
         """Calculate FLOPs and params based on the size of input & output."""
         input = input[0]
-        module.__flops__ += int(np.prod(input.shape))
-        module.__params__ += get_model_parameters_number(module)
+        module.__flops__ += 0  # int(np.prod(input.shape))
+        module.__params__ += 0  # get_model_parameters_number(module)
 
 
 @TASK_UTILS.register_module()

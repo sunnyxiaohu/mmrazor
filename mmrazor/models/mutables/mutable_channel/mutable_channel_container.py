@@ -89,6 +89,7 @@ class MutableChannelContainer(BaseMutableChannel):
             container = module.get_mutable_attr('in_channels')
         assert isinstance(container, MutableChannelContainer)
         container.register_mutable(mutable, start, end)
+        container._assert_mutables_valid()
 
     # private methods
 

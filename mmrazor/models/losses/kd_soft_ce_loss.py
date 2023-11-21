@@ -32,6 +32,9 @@ class KDSoftCELoss(nn.Module):
         mult_tem_square (bool, optional): Multiply square of temperature
             or not. Defaults to True.
         loss_weight (float): Weight of loss. Defaults to 1.0.
+        teacher_detach (bool): Whether to detach the teacher model prediction.
+            Will set to ``'False'`` in some data-free distillation algorithms.
+            Defaults to True.
     """
 
     def __init__(
@@ -40,12 +43,14 @@ class KDSoftCELoss(nn.Module):
         reduction: str = 'mean',
         mult_tem_square: bool = True,
         loss_weight: float = 1.0,
+        teacher_detach: bool = True,
     ) -> None:
         super().__init__()
         self.tau = tau
         self.mult_tem_square = mult_tem_square
         self.loss_weight = loss_weight
         self.cls_criterion = soft_cross_entropy
+        self.teacher_detach = teacher_detach
 
         accept_reduction = {None, 'none', 'mean', 'sum'}
         assert reduction in accept_reduction, \
@@ -81,6 +86,8 @@ class KDSoftCELoss(nn.Module):
         reduction = (
             reduction_override if reduction_override else self.reduction)
 
+        if self.teacher_detach:
+            preds_T = preds_T.detach()
         preds_S = preds_S / self.tau
         soft_label = F.softmax((preds_T / self.tau), dim=-1)
         loss_cls = self.loss_weight * self.cls_criterion(

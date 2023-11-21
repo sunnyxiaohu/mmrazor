@@ -119,6 +119,7 @@ class DynamicChannelMixin(DynamicMixin):
         ``mutable_out_channels`` APIs.
     """
 
+    accepted_mutable_attrs = {'in_channels', 'out_channels'}
     attr_mappings: Dict[str, str] = {
         'in_channels': 'in_channels',
         'out_channels': 'out_channels',

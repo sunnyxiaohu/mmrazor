@@ -30,6 +30,9 @@ from mmrazor.registry import LOOPS
 TORCH_observers = register_torch_observers()
 TORCH_fake_quants = register_torch_fake_quants()
 
+from mmengine.utils import import_modules_from_strings
+custom_imports = 'projects.nas-mqbench.models.architectures.dynamic_qops.dynamic_qconv_fused'
+dynamic_qconv_fused = import_modules_from_strings(custom_imports)
 
 @LOOPS.register_module()
 class QATEpochBasedLoop(EpochBasedTrainLoop):
@@ -84,7 +87,7 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
 
         if (self.freeze_bn_begin > 0
                 and self._epoch + 1 >= self.freeze_bn_begin):
-            self.runner.model.apply(freeze_bn_stats)
+            self.runner.model.apply(dynamic_qconv_fused.freeze_bn_stats)
 
     def prepare_for_val(self):
         """Toggle the state of the observers and fake quantizers before
@@ -96,6 +99,18 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
         """Launch training."""
         self.runner.call_hook('before_train')
 
+        # Calibrate bn for float model only at the begining of the training process.
+        # if hasattr(self.runner.model.module, 'mutator') and self._epoch == 0 and self._epoch + 1 == self.freeze_bn_begin:
+        #     if self.runner.model.module.sample_kinds[0] == 'min':
+        #         self.runner.model.module.mutator.set_min_choices()
+        #     else:
+        #         self.runner.model.module.mutator.set_max_choices()
+        #     self.runner.val_loop.calibrate_bn_observer_statistics(self.runner.train_dataloader,
+        #                                                  model = self.runner.model.module.architecture.architecture,
+        #                                                  calibrate_sample_num = 4096)
+        self.prepare_for_run_epoch()
+        self.prepare_for_val()
+        self.runner.val_loop.run()
         while self._epoch < self._max_epochs:
             self.prepare_for_run_epoch()
             self.run_epoch()
@@ -153,6 +168,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
             val_begin: int = 1,
             val_interval: int = 1,
             freeze_bn_begin: int = -1,
+            is_first_batch: bool = True,
             dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
         super().__init__(
             runner,
@@ -163,7 +179,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
             freeze_bn_begin=freeze_bn_begin,
             dynamic_intervals=dynamic_intervals)
 
-        self.is_first_batch = True
+        self._is_first_batch = is_first_batch
         self.distributed = is_distributed()
 
     def prepare_for_run_epoch(self):
@@ -171,7 +187,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
         training."""
         if (self.freeze_bn_begin > 0
                 and self._epoch + 1 >= self.freeze_bn_begin):
-            self.runner.model.apply(freeze_bn_stats)
+            self.runner.model.apply(dynamic_qconv_fused.freeze_bn_stats)
 
         self.runner.model.apply(enable_param_learning)
 
@@ -179,6 +195,10 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
         """Toggle the state of the observers and fake quantizers before
         validation."""
         self.runner.model.apply(enable_val)
+
+    @property
+    def is_first_batch(self):
+        return self._epoch == 0 and self._is_first_batch
 
     def run_epoch(self) -> None:
         """Iterate one epoch."""
@@ -202,7 +222,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
                         self.runner.model.parameters(), op='mean')
 
                 # Change back to param learning mode
-                self.is_first_batch = False
+                self._is_first_batch = False
                 self.runner.model.apply(enable_param_learning)
 
         self.runner.model.sync_qparams(src_mode='loss')
@@ -331,7 +351,7 @@ class PTQLoop(TestLoop):
             diff_rank_seed = runner._randomness_cfg.get(
                 'diff_rank_seed', False)
             self.dataloader = runner.build_dataloader(
-                dataloader, seed=runner.seed, diff_rank_seed=diff_rank_seed)
+                calibrate_dataloader, seed=runner.seed, diff_rank_seed=diff_rank_seed)
         else:
             self.dataloader = dataloader
 
