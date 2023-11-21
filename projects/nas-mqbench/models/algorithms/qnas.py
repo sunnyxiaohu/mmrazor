@@ -221,6 +221,11 @@ class QNAS(BaseAlgorithm):
         else:
             return super().forward(inputs, data_samples=data_samples, mode=mode)
 
+    def calibrate_step(self, data: Union[Dict, Tuple, List]):
+        """PTQ method need calibrate by cali data."""
+        self.mutator.set_choices(self.mutator.sample_choices())
+        return self.architecture.calibrate_step(data)
+
 
 @MODEL_WRAPPERS.register_module()
 class QNASDDP(MMDistributedDataParallel):
@@ -358,6 +363,10 @@ class QNASDDP(MMDistributedDataParallel):
         """
 
         self.module.sync_qparams(src_mode)
+
+    def calibrate_step(self, data: Union[Dict, Tuple, List]):
+        """PTQ method need calibrate by cali data."""
+        return self.module.calibrate_step(data)
 
 
 def qsample(epoch, kind='max'):

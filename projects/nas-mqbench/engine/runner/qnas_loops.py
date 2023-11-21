@@ -266,6 +266,7 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
             qat_begin: int = 1,
             freeze_bn_begin: int = -1,
             is_first_batch: bool = True,
+            calibrate_steps: int = -1,
             dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
         super().__init__(
             runner,
@@ -279,6 +280,7 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
         self._is_first_batch = is_first_batch
         self.distributed = is_distributed()
         self.qat_begin = qat_begin
+        self.calibrate_steps = calibrate_steps
 
     def prepare_for_run_epoch(self):
         """Toggle the state of the observers and fake quantizers before qat
@@ -288,6 +290,35 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
         if (self.freeze_bn_begin > 0
                 and self._epoch + 1 >= self.freeze_bn_begin):
             self.runner.model.apply(dynamic_qconv_fused.freeze_bn_stats)
+        if (self.qat_begin > 0
+                and self._epoch + 1 >= self.qat_begin):
+            self.runner.model.apply(enable_param_learning)
+            model.current_stage = 'qat'
+        else:
+            self.runner.model.apply(enable_val)
+            self.runner.model.apply(disable_fake_quant)
+            model.current_stage = 'float'
+        self.runner.model.apply(dynamic_lsq.unfix_calib_stats)
+
+        if self.is_first_batch and self.calibrate_steps != -1:
+            # lsq observer init
+            self.runner.model.apply(enable_static_estimate)
+            print_log('Star calibratiion...', logger='current')
+            for idx, data_batch in enumerate(self.dataloader):
+                if idx == self.calibrate_steps:
+                    break
+                _ = self.runner.model.calibrate_step(data_batch)
+            if self.distributed:
+                all_reduce_params(
+                    self.runner.model.parameters(), op='mean')
+            self.runner.model.sync_qparams(src_mode='predict')
+            self.runner.model.apply(enable_param_learning)
+            print_log('Finish calibratiion!', logger='current')
+
+            self.prepare_for_val()
+            self.runner.val_loop.run()
+            self._is_first_batch = False
+
         if (self.qat_begin > 0
                 and self._epoch + 1 >= self.qat_begin):
             self.runner.model.apply(enable_param_learning)

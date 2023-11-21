@@ -8,8 +8,8 @@ global_qconfig = dict(
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=False, is_symmetric_range=True),
-    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=False),
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=True),
+    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True),
 )
 
 model = dict(
@@ -48,7 +48,7 @@ optim_wrapper = dict(
     optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.00001))
 
 # learning policy
-max_epochs = 100
+max_epochs = 50
 warm_epochs = 1
 # learning policy
 param_scheduler = [

@@ -214,6 +214,11 @@ class QNAS(BaseAlgorithm):
         """
         self.architecture.sync_qparams(src_mode)
 
+    def calibrate_step(self, data: Union[Dict, Tuple, List]):
+        """PTQ method need calibrate by cali data."""
+        self.mutator.set_choices(self.mutator.sample_choices())
+        return self.architecture.calibrate_step(data)
+
     def forward(self,
                 inputs: torch.Tensor,
                 data_samples: Optional[List[BaseDataElement]] = None,
@@ -362,8 +367,10 @@ class QNASDDP(MMDistributedDataParallel):
         Args:
             src_mode (str): The src modes of forward method.
         """
-
         self.module.sync_qparams(src_mode)
+
+    def calibrate_step(self, data: Union[Dict, Tuple, List]):
+        self.module.calibrate_step(data)
 
 
 def qsample(epoch, kind='max'):

@@ -8,8 +8,8 @@ global_qconfig = dict(
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=False),
-    a_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=False),
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=False, zero_point_trainable=True),
+    a_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=False, zero_point_trainable=True),
 )
 
 model = dict(

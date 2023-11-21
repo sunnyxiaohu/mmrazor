@@ -1,18 +1,41 @@
 _base_ = [
-    './resnet18_8xb256-warmup-lbs-coslr_in1k.py',
+    'mmdet::yolox/yolox_s_8xb8-300e_coco.py',
 ]
 
-_base_.data_preprocessor.type = 'mmcls.ClsDataPreprocessor'
+# _base_.data_preprocessor.type = 'mmdet.DetDataPreprocessor'
 _base_.model.backbone.conv_cfg = dict(type='mmrazor.BigNasConv2d')
-_base_.model.backbone.norm_cfg = dict(type='mmrazor.DynamicBatchNorm2d')
-_base_.model.head.type = 'mmrazor.DynamicLinearClsHead'
+_base_.model.backbone.norm_cfg = dict(type='mmrazor.DynamicBatchNorm2d', momentum=0.03, eps=0.001)
+_base_.model.neck.conv_cfg = dict(type='mmrazor.BigNasConv2d')
+_base_.model.neck.norm_cfg = dict(type='mmrazor.DynamicBatchNorm2d', momentum=0.03, eps=0.001)
+_base_.model.bbox_head.conv_cfg = dict(type='mmrazor.BigNasConv2d')
+_base_.model.bbox_head.norm_cfg = dict(type='mmrazor.DynamicBatchNorm2d', momentum=0.03, eps=0.001)
+# _base_.model.head.type = 'mmrazor.DynamicLinearClsHead'
 _base_.model.init_cfg = dict(
     type='Pretrained',
     checkpoint=  # noqa: E251
-'https://download.openmmlab.com/mmclassification/v0/resnet/resnet18_8xb32_in1k_20210831-fbbb1da6.pth')
+'https://download.openmmlab.com/mmdetection/v2.0/yolox/yolox_s_8x8_300e_coco/yolox_s_8x8_300e_coco_20211121_095711-4592a793.pth')
+
+_base_.train_dataloader.dataset.pipeline = [
+    dict(type='YOLOXHSVRandomAug'),
+    dict(type='RandomFlip', prob=0.5),
+    # According to the official implementation, multi-scale
+    # training is not considered here but in the
+    # 'mmdet/models/detectors/yolox.py'.
+    # Resize and Pad are for the last 15 epochs when Mosaic,
+    # RandomAffine, and MixUp are closed by YOLOXModeSwitchHook.
+    dict(type='Resize', scale=_base_.img_scale, keep_ratio=True),
+    dict(
+        type='Pad',
+        pad_to_square=True,
+        # If the image is three-channel, the pad value needs
+        # to be set separately for each channel.
+        pad_val=dict(img=(114.0, 114.0, 114.0))),
+    dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
+    dict(type='PackDetInputs')
+]
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.PerChannelBatchLSQObserver'),
+    w_observer=dict(type='mmrazor.BatchLSQObserver'),
     a_observer=dict(type='mmrazor.BatchLSQObserver'),
     w_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
@@ -21,19 +44,21 @@ global_qconfig = dict(
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
 qmodel = dict(
-    _scope_='mmcls',
+    _scope_='mmdet',
     type='mmrazor.MMArchitectureQuant',
-    data_preprocessor=_base_.data_preprocessor,
+    data_preprocessor=_base_.model.data_preprocessor,
     architecture=_base_.model,
     float_checkpoint=None,
     forward_modes=('tensor', 'predict', 'loss'),
     quantizer=dict(
         type='mmrazor.OpenVINOXQuantizer',
         quant_bits_skipped_module_names=[
-            'backbone.conv1',
-            'head.fc'
+            'backbone.stem.conv.conv',
+            'bbox_head.multi_level_conv_cls.2',
+            'bbox_head.multi_level_conv_reg.2',
+            'bbox_head.multi_level_conv_obj.2'
         ],
-        quant_bits=[3,4,5,6],
+        quant_bits=[4,5,6,7,8],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
@@ -44,8 +69,8 @@ qmodel = dict(
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_norm.DynamicBatchNorm2d',
             ],
             skipped_methods=[
-                'mmcls.models.heads.ClsHead._get_loss',
-                'mmcls.models.heads.ClsHead._get_predictions'
+                'mmdet.models.dense_heads.yolox_head.YOLOXHead.predict_by_feat',  # noqa: E501
+                'mmdet.models.dense_heads.yolox_head.YOLOXHead.loss_by_feat',
             ])))
 
 model = dict(
@@ -57,39 +82,41 @@ model = dict(
     # Note index start from 1
     backbone_dropout_stages=[3, 4],
     architecture=qmodel,
+    # distiller is not used now.
     distiller=dict(
         type='ConfigurableDistiller',
         teacher_recorders=dict(
-            fc=dict(type='ModuleOutputs', source='head.fc')),
+            cls=dict(type='ModuleOutputs', source='bbox_head.multi_level_conv_cls.2')),
         student_recorders=dict(
-            fc=dict(type='ModuleOutputs', source='head.fc')),
+            cls=dict(type='ModuleOutputs', source='bbox_head.multi_level_conv_cls.2')),
         distill_losses=dict(
             loss_kd=dict(type='KDSoftCELoss', tau=1, loss_weight=1)),
         loss_forward_mappings=dict(
             loss_kd=dict(
-                preds_S=dict(recorder='fc', from_student=True),
-                preds_T=dict(recorder='fc', from_student=False)))),
+                preds_S=dict(recorder='cls', from_student=True),
+                preds_T=dict(recorder='cls', from_student=False)))),
     qat_distiller=dict(
         type='ConfigurableDistiller',
         teacher_recorders=dict(
-            fc=dict(type='ModuleOutputs', source='head.fc')),
+            cls=dict(type='ModuleOutputs', source='bbox_head.multi_level_conv_cls.2')),
         student_recorders=dict(
-            fc=dict(type='ModuleOutputs', source='head.fc')),
+            cls=dict(type='ModuleOutputs', source='bbox_head.multi_level_conv_cls.2')),
         distill_losses=dict(
             loss_kd=dict(type='KDSoftCELoss', tau=1, loss_weight=1)),
         loss_forward_mappings=dict(
             loss_kd=dict(
-                preds_S=dict(recorder='fc', from_student=True),
-                preds_T=dict(recorder='fc', from_student=False)))),
+                preds_S=dict(recorder='cls', from_student=True),
+                preds_T=dict(recorder='cls', from_student=False)))),
     mutator=dict(type='mmrazor.NasMutator'))
 
-train_dataloader = dict(batch_size=64)
+# train_dataloader = dict(batch_size=64)
 optim_wrapper = dict(
-    _delete_=True,
-    optimizer=dict(type='SGD', lr=0.002, momentum=0.9, weight_decay=0.0001, nesterov=True),
-    paramwise_cfg=dict(
-        bypass_duplicate=True
-    ),)
+    type='OptimWrapper',
+    optimizer=dict(
+        type='SGD', lr=1e-6, momentum=0.9, weight_decay=5e-4,
+        nesterov=True),
+    paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0., bypass_duplicate=True),
+)
 
 model_wrapper_cfg = dict(
     type='mmrazor.QNASDDP',
@@ -123,12 +150,14 @@ train_cfg = dict(
     _delete_=True,
     type='mmrazor.QNASEpochBasedLoop',
     max_epochs=max_epochs,
-    val_interval=5,
+    val_interval=1,
     qat_begin=1,
+    calibrate_steps=100,
     freeze_bn_begin=-1)
 
 # total calibrate_sample_num = 256 * 8 * 2
-val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536, quant_bits=[3,4,5,6])
+val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=200, quant_bits=[4,5,6,7,8])
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
-default_hooks = dict(sync=dict(type='SyncBuffersHook'))
+default_hooks = dict(sync=dict(type='SyncBuffersHook'), checkpoint=dict(interval=1))
+custom_hooks = []

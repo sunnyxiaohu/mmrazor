@@ -1,5 +1,5 @@
 _base_ = [
-    './cobits_openvinox_mbv2_supernet_8xb64_in1k.py'
+    './cobits_snpe_yolox_s_supernet_8xb8_coco.py'
 ]
 
 train_cfg = dict(
@@ -12,13 +12,13 @@ train_cfg = dict(
     num_mutation=0,
     num_crossover=0,
     calibrate_dataloader=_base_.train_dataloader,
-    calibrate_sample_num=65536,
-    # w4a4: Flops: 5394.053 Params: 19.011
-    # w3a3: Flops: 3373.459 Params: 16.822
-    # w5a5: Flops: 7991.959 Params: 21.199
-    # w6a6: Flops: 11167.178 Params: 23.388
-    constraints_range=dict(flops=(0., 5395)),
-    score_key='accuracy/top1')
+    calibrate_sample_num=200,
+    # w4a4: Flops: 229102.333 Params: 35.696
+    # w5a5: Flops: 345179.696 Params: 44.605
+    # w6a6: Flops: 487052.029 Params: 53.513
+    constraints_range=dict(flops=(0., 487052.)),
+    estimator_cfg=dict(type='mmrazor.ResourceEstimator', input_shape=(1, 3, 640, 640)),
+    score_key='coco/bbox_mAP')
 
 val_cfg = dict(_delete_=True)
 _base_.model.architecture.quantizer.nested_quant_bits_in_layer = True
