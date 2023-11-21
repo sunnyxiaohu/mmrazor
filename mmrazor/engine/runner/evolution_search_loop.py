@@ -238,7 +238,7 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         for i, candidate in enumerate(self.candidates.subnets):
             self.model.mutator.set_choices(candidate)
             metrics = self._val_candidate(use_predictor=self.use_predictor)
-            score = round(metrics[self.score_key], 2) \
+            score = round(metrics[self.score_key], 4) \
                 if len(metrics) != 0 else 0.
             self.candidates.set_resource(i, score, 'score')
             self.runner.logger.info(

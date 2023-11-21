@@ -108,9 +108,6 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
         #     self.runner.val_loop.calibrate_bn_observer_statistics(self.runner.train_dataloader,
         #                                                  model = self.runner.model.module.architecture.architecture,
         #                                                  calibrate_sample_num = 4096)
-        self.prepare_for_run_epoch()
-        self.prepare_for_val()
-        self.runner.val_loop.run()
         while self._epoch < self._max_epochs:
             self.prepare_for_run_epoch()
             self.run_epoch()
@@ -169,6 +166,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
             val_interval: int = 1,
             freeze_bn_begin: int = -1,
             is_first_batch: bool = True,
+            calibrate_steps: int = -1,
             dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
         super().__init__(
             runner,
@@ -181,13 +179,37 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
 
         self._is_first_batch = is_first_batch
         self.distributed = is_distributed()
+        self.calibrate_steps = calibrate_steps
 
     def prepare_for_run_epoch(self):
         """Toggle the state of the observers and fake quantizers before qat
         training."""
         if (self.freeze_bn_begin > 0
                 and self._epoch + 1 >= self.freeze_bn_begin):
-            self.runner.model.apply(dynamic_qconv_fused.freeze_bn_stats)
+            self.runner.model.apply(freeze_bn_stats)
+
+        if self.is_first_batch and self.calibrate_steps != -1:
+            # lsq observer init
+            # import pdb; pdb.set_trace()
+            # self.runner.model.eval()
+            self.runner.model.apply(enable_static_estimate)
+            print_log('Start calibration...', logger='current')
+            for idx, data_batch in enumerate(self.dataloader):
+                if idx == self.calibrate_steps:
+                    break
+                # self.run_iter(idx, data_batch)
+                _ = self.runner.model.calibrate_step(data_batch)
+            if self.distributed:
+                all_reduce_params(
+                    self.runner.model.parameters(), op='mean')
+                all_reduce_params(self.runner.model.buffers(), op='mean')
+            self.runner.model.sync_qparams(src_mode='predict')
+            self.runner.model.apply(enable_param_learning)
+            print_log('Finish calibration!', logger='current')
+
+            self.prepare_for_val()
+            self.runner.val_loop.run()
+            self._is_first_batch = False
 
         self.runner.model.apply(enable_param_learning)
 

@@ -38,6 +38,10 @@ def enable_val(mod):
     if isinstance(mod, LearnableFakeQuantize):
         mod.enable_val()
 
+def enable_fake_quant(mod):
+    if isinstance(mod, LearnableFakeQuantize):
+        mod.toggle_fake_quant(enabled=True)
+
 
 @MODELS.register_module()
 class LearnableFakeQuantize(FakeQuantizeBase):

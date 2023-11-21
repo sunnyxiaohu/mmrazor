@@ -51,7 +51,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
     FLOAT_BITS = 32
     BASE_BITS = 4
 
-    def __init__(self, *args, param_share_mode = 1, **kwargs) -> None:
+    def __init__(self, *args, param_share_mode = 1, M=0.4, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # mode 0: Unshared
         # mode 1: Full shared with all the bits sharing the same scale
@@ -63,7 +63,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         if self.param_share_mode in [2, 4]:
             self.scale_theta = Parameter(torch.tensor([0.]))
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
-        self.M = 0.4
+        self.M = M
 
     @property
     def static_op_factory(self):
@@ -110,9 +110,9 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         zero_point = self.zero_point[:, index]
         scale_initialized = not torch.equal(scale, torch.ones_like(scale))
         # scale_initialized = scale_initialized or not self.training
-        if not scale_initialized:
+        if not scale_initialized or self.static_enabled[0] == 1:
             _scale, _zero_point = self.activation_post_process.calculate_qparams()
-            self.activation_post_process.reset_min_max_vals()
+            # self.activation_post_process.reset_min_max_vals()
             _scale = _scale.to(self.scale.device)
             _zero_point = _zero_point.to(self.zero_point.device)
             if self.qscheme in (torch.per_channel_symmetric,
@@ -274,12 +274,12 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         2. during test, we have to recalibrate the minmax statics by
         enabling the observer updatable and forwarding a few batches fo data.
     """
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, M=0.1, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         assert self.param_share_mode in [0, 1, 2, 4], f'Unexpected param_share_mode: {self.param_share_mode}'
         self.register_buffer('calib_stats_fixed',
                              torch.tensor([0], dtype=torch.uint8))
-        self.M = 0.1 #0.2 #0.4 #0.3
+        self.M = M #0.2 #0.4 #0.3
 
     @torch.jit.export
     def calculate_qparams(self):
