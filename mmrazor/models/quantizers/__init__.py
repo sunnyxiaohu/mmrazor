@@ -11,6 +11,6 @@ from .openvinox_quantizer import OpenVINOXQuantizer
 
 __all__ = [
     'BaseQuantizer', 'AcademicQuantizer', 'TorchNativeQuantizer',
-    'TensorRTQuantizer', 'OpenVINOQuantizer', 'SuperAcmeQuantizer'
+    'TensorRTQuantizer', 'OpenVINOQuantizer', 'SuperAcmeQuantizer',
     'WeightOnlyQuantizer', 'SNPEQuantizer', 'OpenVINOXQuantizer'
 ]

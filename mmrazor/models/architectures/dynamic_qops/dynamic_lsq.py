@@ -189,6 +189,8 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
 
     def forward(self, X):
         """Forward computation. """
+        if X.numel() == 0:
+            return X
         quant_bits, index = self.get_dynamic_params()
         if quant_bits == self.FLOAT_BITS:
             return X
@@ -329,6 +331,8 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
 
         Forward path returns fake quantized X.
         """
+        if X.numel() == 0:
+            return X
         quant_bits, index = self.get_dynamic_params()
         if quant_bits == self.FLOAT_BITS:
             return X

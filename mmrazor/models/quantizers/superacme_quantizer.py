@@ -39,11 +39,16 @@ except ImportError:
 from mmrazor import digit_version
 from mmrazor.registry import MODELS
 from mmrazor.models import LearnableFakeQuantize
+from mmrazor.models.utils import str2class
 from mmrazor.models.task_modules.tracer.fx import build_graphmodule
-from mmrazor.models.task_modules.tracer.fx.graph_utils import _get_attrs, modify_fakequant_bits
+from mmrazor.models.task_modules.tracer.fx.graph_utils import (_get_attrs,
+    modify_fakequant_bits, register_mutables_for_dynamic_fakequant)
 
+from mmrazor.structures.quantization import BackendConfigs
+from mmrazor.structures.quantization.backend_config.superacme import get_superacme_backend_config
 from .native_quantizer import TorchNativeQuantizer, SUPPORT_QAT_MODULES, MERGE_BN_MAPPINGS
 
+BackendConfigs['superacme'] = get_superacme_backend_config()
 
 @MODELS.register_module()
 class SuperAcmeQuantizer(TorchNativeQuantizer):
@@ -117,6 +122,11 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
         # prepared = modify_fakequant_according_clip(prepared)
         prepared = modify_fakequant_bits(
             prepared, tuple(self.quant_bits_skipped_module_names), self.default_skipped_bit, True)
+        # import pdb; pdb.set_trace()
+        if self.quant_bits:
+            prepared = register_mutables_for_dynamic_fakequant(
+                prepared, tuple(self.quant_bits_skipped_module_names), self.quant_bits,
+                self.default_skipped_bit, True, nested_quant_bits_in_layer=self.nested_quant_bits_in_layer)
         return prepared
 
     @property

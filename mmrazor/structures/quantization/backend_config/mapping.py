@@ -14,7 +14,7 @@ if digit_version(torch.__version__) >= digit_version('1.13.0'):
         'native': get_native_backend_config(),
         'tensorrt': get_tensorrt_backend_config(),
         'openvino': get_openvino_backend_config(),
-        'superacme': get_superacme_backend_config(),
+        # 'superacme': get_superacme_backend_config(),
     }
 else:
     BackendConfigs = {

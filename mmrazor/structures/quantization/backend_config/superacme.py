@@ -16,7 +16,9 @@ except ImportError:
 from .common_operator_config_utils import (_get_binary_op_configs,
                                            _get_conv_configs,
                                            _get_linear_configs,
-                                           _get_share_qparams_op_configs)
+                                           _get_share_qparams_op_configs,
+                                           _get_dynamicconv_configs,
+                                           _get_dynamiclinear_configs)
 
 
 def get_superacme_backend_config() -> BackendConfig:
@@ -72,7 +74,9 @@ def get_superacme_backend_config() -> BackendConfig:
             _get_binary_op_configs(binary_op_dtype_configs)) \
         .set_backend_pattern_configs(
             _get_share_qparams_op_configs(share_qparams_op_dtype_configs)) \
-        .set_backend_pattern_config(size_config)
+        .set_backend_pattern_config(size_config) \
+        .set_backend_pattern_configs(_get_dynamicconv_configs(conv_dtype_configs)) \
+        .set_backend_pattern_configs(_get_dynamiclinear_configs(linear_dtype_configs))
 
 
 def get_superacme_backend_config_dict():
