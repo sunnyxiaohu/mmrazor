@@ -35,12 +35,12 @@ _base_.train_dataloader.dataset.pipeline = [
 ]
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.PerChannelBatchLSQObserver'),
+    w_observer=dict(type='mmrazor.BatchLSQObserver'),
     a_observer=dict(type='mmrazor.BatchLSQObserver'),
     w_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=True, extreme_estimator=1, param_share_mode=4),
-    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, extreme_estimator=1, param_share_mode=4)
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=False, zero_point_trainable=True, param_share_mode=0),
+    a_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=False, zero_point_trainable=True, param_share_mode=0)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
 qmodel = dict(
@@ -51,7 +51,7 @@ qmodel = dict(
     float_checkpoint=None,
     forward_modes=('tensor', 'predict', 'loss'),
     quantizer=dict(
-        type='mmrazor.OpenVINOXQuantizer',
+        type='mmrazor.SNPEQuantizer',
         quant_bits_skipped_module_names=[
             'backbone.stem.conv.conv',
             'bbox_head.multi_level_conv_cls.2',
@@ -82,6 +82,7 @@ model = dict(
     # Note index start from 1
     backbone_dropout_stages=[3, 4],
     architecture=qmodel,
+    use_spos=True,
     # distiller is not used now.
     distiller=dict(
         type='ConfigurableDistiller',
@@ -113,7 +114,7 @@ model = dict(
 optim_wrapper = dict(
     type='OptimWrapper',
     optimizer=dict(
-        type='SGD', lr=0.0005, momentum=0.9, weight_decay=5e-4,
+        type='SGD', lr=0.0001, momentum=0.9, weight_decay=5e-4,
         nesterov=True),
     paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0., bypass_duplicate=True),
 )

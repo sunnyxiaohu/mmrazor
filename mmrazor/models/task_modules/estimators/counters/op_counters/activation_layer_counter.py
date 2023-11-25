@@ -12,8 +12,8 @@ class ReLUCounter(BaseCounter):
     def add_count_hook(module, input, output):
         """Calculate FLOPs and params based on the size of input & output."""
         active_elements_count = output.numel()
-        module.__flops__ += int(active_elements_count)
-        module.__params__ += get_model_parameters_number(module)
+        module.__flops__ += 0 # int(active_elements_count)
+        module.__params__ += 0 # get_model_parameters_number(module)
 
 
 @TASK_UTILS.register_module()

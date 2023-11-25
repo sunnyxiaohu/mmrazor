@@ -113,7 +113,7 @@ model = dict(
 optim_wrapper = dict(
     type='OptimWrapper',
     optimizer=dict(
-        type='SGD', lr=1e-6, momentum=0.9, weight_decay=5e-4,
+        type='SGD', lr=0.0001, momentum=0.9, weight_decay=5e-4,
         nesterov=True),
     paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0., bypass_duplicate=True),
 )

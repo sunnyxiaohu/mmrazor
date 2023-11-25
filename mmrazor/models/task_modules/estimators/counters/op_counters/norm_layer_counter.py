@@ -16,8 +16,8 @@ class BNCounter(BaseCounter):
         batch_flops = np.prod(input.shape)
         if getattr(module, 'affine', False):
             batch_flops *= 2
-        module.__flops__ += int(batch_flops)
-        module.__params__ += get_model_parameters_number(module)
+        module.__flops__ += 0 # int(batch_flops)
+        module.__params__ += 0 # get_model_parameters_number(module)
 
 
 @TASK_UTILS.register_module()

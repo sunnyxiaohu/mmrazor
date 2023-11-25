@@ -1,7 +1,7 @@
 _base_ = './cobits_openvinox_yolox_s_supernet_8xb8_coco.py'
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.LSQObserver'),
+    w_observer=dict(type='mmrazor.LSQPerChannelObserver'),
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),

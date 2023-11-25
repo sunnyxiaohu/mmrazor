@@ -39,8 +39,8 @@ global_qconfig = dict(
     a_observer=dict(type='mmrazor.BatchLSQObserver'),
     w_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=True, extreme_estimator=1, param_share_mode=4),
-    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, extreme_estimator=1, param_share_mode=4)
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=True, param_share_mode=0),
+    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, param_share_mode=0)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
 qmodel = dict(
@@ -82,6 +82,7 @@ model = dict(
     # Note index start from 1
     backbone_dropout_stages=[3, 4],
     architecture=qmodel,
+    use_spos=True,
     # distiller is not used now.
     distiller=dict(
         type='ConfigurableDistiller',

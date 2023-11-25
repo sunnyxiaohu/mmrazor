@@ -55,6 +55,11 @@ def recursive_find_erased_nodes(node, prepared_model):
     activation_post_process_88 | (head_fc, )
     data_samples               | (None, )
     """
+    nodes_to_erase = []
+    if isinstance(node, (List, Tuple)):
+        for sub_node in node:
+            nodes_to_erase.extend(recursive_find_erased_nodes(sub_node, prepared_model))
+        return nodes_to_erase
     if node is None:
         return []
 
@@ -62,7 +67,6 @@ def recursive_find_erased_nodes(node, prepared_model):
             _get_attrs(prepared_model, node.target), FakeQuantizeBase):
         return [node]
 
-    nodes_to_erase = []
     for prev_node in node.args:
         if isinstance(prev_node, Node):
             nodes_to_erase.extend(
@@ -103,6 +107,7 @@ def del_fakequant_before_op(prepared_model,
     new_graph = copy.deepcopy(prepared_model.graph)
     for node in new_graph.nodes:
         if node.op in target_ops:
+            # import pdb; pdb.set_trace()
             nodes_to_erase: List[Node] = recursive_find_erased_nodes(
                 node, prepared_model)
             for to_erase in nodes_to_erase:
