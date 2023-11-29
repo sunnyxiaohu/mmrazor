@@ -128,7 +128,6 @@ class HERONModelWrapper:
         name = f'{self.__class__.__name__}'
         work_dir = os.path.join(work_dir, f'rank_{get_rank()}')
         mkdir_or_exist(work_dir)
-        assert dataloader.batch_size == 1, f'HERON only support batch_size == 1'
         self.dataloader = dataloader
         self.onnx_file = osp.join(work_dir, f'{name}.onnx')
         self.fixed_sann_file = self.onnx_file.replace('.onnx', '_fixed.sann')
@@ -139,7 +138,7 @@ class HERONModelWrapper:
         # sann config path load
         self.mnn_quant_json = mnn_quant_json
         # heron tool load
-        self.shape = next(iter(self.dataloader))['inputs'].shape
+        self.shape = (1, ) + next(iter(self.dataloader))['inputs'].shape[1:]
         self.is_quantized = is_quantized
         if self.is_quantized:
             quant_json = load(self.mnn_quant_json)
@@ -156,7 +155,7 @@ class HERONModelWrapper:
     def import_torch(self, model):
         self.model = model
         device = next(model.parameters()).device
-        dummy_data = next(iter(self.dataloader))['inputs'].float().to(device)
+        dummy_data = next(iter(self.dataloader))['inputs'][0, None].float().to(device)
         if self.is_quantized:
             observed_model = model.get_deploy_model()
             model.quantizer.export_onnx(observed_model, dummy_data, self.onnx_file)
@@ -172,7 +171,7 @@ class HERONModelWrapper:
 
     def hir_convert(self):
         # convert and compiler
-        command_line = 'sann build --input '+self.onnx_file+' --output '+self.hir_file+' --config '+self.mnn_quant_json+' > '+self.profiler_net_res
+        command_line = 'sann build --saveSimpleModel 0 --input '+self.onnx_file+' --output '+self.hir_file+' --config '+self.mnn_quant_json+' > '+self.profiler_net_res
         os.system(command_line)
 
     def hir_profiler(self):
@@ -180,19 +179,19 @@ class HERONModelWrapper:
         os.system(command_line)
 
     def res_extract(self):
-        ddr_io, sram_io, params, ddr_occp, sram_occp = None, None, None, None, None
+        ddr_io, sram_io, sdata, ddr_occp, sram_occp = None, None, None, None, None
         for line in open(self.profiler_net_res).readlines():
             if 'total DDR import and export data size' in line:
                 ddr_io = float(line.split(':')[-1].split('MiB')[0])
             if 'total SRAM import and export data size' in line:
                 sram_io = float(line.split(':')[-1].split('MiB')[0])
             if 'total static data size' in line:
-                params = float(line.split(':')[-1].split('MiB')[0])
+                sdata = float(line.split(':')[-1].split('MiB')[0])
             if 'total DDR memory occupancy' in line:
                 ddr_occp = float(line.split(':')[-1].split('MiB')[0])
             if 'total SRAM memory occupancy' in line:
                 sram_occp = float(line.split(':')[-1].split('MiB')[0])
-        assert (ddr_io is not None and sram_io is not None and params is not None) and (
+        assert (ddr_io is not None and sram_io is not None and sdata is not None) and (
             ddr_occp is not None and sram_occp is not None)
         fps = None
         for line in open(self.profiler_layer_res).readlines():
@@ -202,7 +201,7 @@ class HERONModelWrapper:
         results = {
             'ddr_io': ddr_io,
             'sram_io': sram_io,
-            'params': params,
+            'sdata': sdata,
             'ddr_occp': ddr_occp,
             'sram_occp': sram_occp,
             'fps': fps
@@ -237,6 +236,7 @@ class HERONModelWrapper:
 
     def fixed_inference(self):
         """Fixed point inference."""
+        assert self.dataloader.batch_size == 1, f'HERON only support batch_size == 1'
         interpreter = MNN.Interpreter(self.fixed_sann_file)
         session = interpreter.createSession()
         input_tensor = interpreter.getSessionInput(session)

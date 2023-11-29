@@ -96,7 +96,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         lsq.static_enabled.data.copy_(self.static_enabled.data)
         lsq.learning_enabled.copy_(self.learning_enabled.data)
         lsq.eps.copy_(self.eps.data)
-        update_qdype_qmin_qmax(lsq, self.bitwidth, quant_min=self.quant_min, quant_max=self.quant_max)
+        update_qdype_qmin_qmax(lsq, self.bitwidth, quant_min=self.quant_min, quant_max=self.quant_max, qdtype=self.dtype)
         return lsq
 
     @torch.jit.export
@@ -384,5 +384,5 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         lsq.static_enabled.data.copy_(self.static_enabled.data)
         lsq.learning_enabled.copy_(self.learning_enabled.data)
         lsq.eps.copy_(self.eps.data)
-        update_qdype_qmin_qmax(lsq, self.bitwidth, quant_min=self.quant_min, quant_max=self.quant_max)
+        update_qdype_qmin_qmax(lsq, self.bitwidth, quant_min=self.quant_min, quant_max=self.quant_max, qdtype=self.dtype)
         return lsq

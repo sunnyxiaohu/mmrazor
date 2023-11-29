@@ -3,6 +3,7 @@
 from typing import List
 import numpy as np
 import json
+import logging
 
 try:
     import onnx
@@ -51,10 +52,10 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
             new_data = np.array(new_data)
             if transposed:
                 new_data = new_data.transpose(1, 0, 2, 3)
-            print_log(f'Clip weights <{tensor_name}> to per-channel ranges.')
+            print_log(f'Clip weights <{tensor_name}> to per-channel ranges.', logger='current', level=logging.DEBUG)
         else:
             new_data = np.clip(data, clip_range_min, clip_range_max)
-            print_log(f'Clip weights <{tensor_name}> to range [{clip_range_min}, {clip_range_max}].')
+            print_log(f'Clip weights <{tensor_name}> to range [{clip_range_min}, {clip_range_max}].', logger='current', level=logging.DEBUG)
         new_data = numpy_helper.from_array(new_data)
         named_initializer[tensor_name].raw_data = new_data.raw_data
         
@@ -191,7 +192,7 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
                     for i in range(len(node.input)):
                         clip_ranges[node.input[i]] = clip_ranges[tensor_name]
                         inputname = node.input[i]
-                        print_log(f'Pass <{tensor_name}> clip range to <{node.name}> input <{inputname}>.')                  
+                        print_log(f'Pass <{tensor_name}> clip range to <{node.name}> input <{inputname}>.', logger='current', level=logging.DEBUG)
         return clip_ranges
 
 

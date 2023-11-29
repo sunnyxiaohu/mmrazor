@@ -14,6 +14,7 @@ from torch import nn
 from mmrazor.registry import MODEL_WRAPPERS, MODELS
 from mmrazor.structures.quantization import QConfigHandler
 from ..base import BaseAlgorithm, BaseModel
+from ...task_modules.tracer.fx.graph_utils import update_qdype_qmin_qmax
 
 try:
     from torch.ao.quantization import (FakeQuantizeBase, MinMaxObserver,
@@ -449,31 +450,3 @@ class MMArchitectureQuantDDP(MMDistributedDataParallel):
         """
 
         self.module.sync_qparams(src_mode)
-
-
-def update_qdype_qmin_qmax(fake_quant, bit, quant_min=None, quant_max=None):
-    # TODO: calc qdype according quant_min, quant_max (rely on backend support)
-    # reduce_range is False by default.
-    if quant_min is None or quant_max is None:
-        qdtype = fake_quant.dtype
-        quant_min = fake_quant.quant_min
-        quant_max = fake_quant.quant_max
-
-        is_symmetric_range = False
-        if abs(quant_min) == abs(quant_max):
-            is_symmetric_range = True
-        if qdtype == torch.quint8:
-            quant_min = 0
-            quant_max = 2**bit - 1
-        elif qdtype == torch.qint8:
-            quant_max = 2**(bit - 1) - 1
-            if is_symmetric_range:
-                quant_min = -2**(bit - 1) + 1
-            else:
-                quant_min = -2**(bit - 1)
-        else:
-            raise ValueError(f'Only support qint8 and quint8, got {qdtype}')
-    fake_quant.quant_max = \
-        fake_quant.activation_post_process.quant_max = quant_max
-    fake_quant.quant_min = \
-        fake_quant.activation_post_process.quant_min = quant_min

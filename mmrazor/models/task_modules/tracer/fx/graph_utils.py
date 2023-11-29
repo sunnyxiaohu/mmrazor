@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import copy
+import numpy as np
 from typing import Any, List, Tuple
 
 import torch
@@ -423,6 +424,7 @@ def update_qdype_qmin_qmax(fake_quant, bit=8, quant_min=None, quant_max=None, qd
         fake_quant.activation_post_process.quant_min = quant_min
     fake_quant.dtype = \
         fake_quant.activation_post_process.dtype = qdtype
+    fake_quant.bitwidth = int(np.log2(quant_max - quant_min + 1))
 
 
 def modify_fakequant_bits(prepared_model,
@@ -544,9 +546,14 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
 
                 if nested_quant_bits_in_layer:
                     maybe_act = recursive_find_act_fakequant(prepared_model, node)
-                    print_log(
-                        f'Nested quant_bits with w_bits: {node.target} and a_bits: {maybe_act.target}', logger='current')
-                    maybe_dynamic._ACT_QUANT_BITS = _get_attrs(prepared_model, maybe_act.target).mutable_attrs['quant_bits']
+                    if maybe_act is None:
+                        maybe_dynamic._ACT_QUANT_BITS = OneShotMutableValue(alias=node.target + '.quant_bits', value_list=[8])
+                        print_log(
+                            f'Nested quant_bits with w_bits: {node.target} with default bit "8"', logger='current')
+                    else:
+                        print_log(
+                            f'Nested quant_bits with w_bits: {node.target} and a_bits: {maybe_act.target}', logger='current')
+                        maybe_dynamic._ACT_QUANT_BITS = _get_attrs(prepared_model, maybe_act.target).mutable_attrs['quant_bits']
 
     new_graph.lint()
     prepared_model.graph = new_graph
@@ -555,6 +562,8 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
 
 def recursive_find_act_fakequant(prepared_model, dynamic_node):
     from mmrazor.models.architectures.dynamic_qops import DynamicLearnableFakeQuantize
+    if len(dynamic_node.args) == 0:
+        return None
     maybe_act = dynamic_node.args[0]
     # TODO(shiguang): more general.
     if not (maybe_act.op == 'call_module' and isinstance(

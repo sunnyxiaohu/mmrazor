@@ -36,8 +36,7 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
         groups = self.groups
         if self.groups == self.in_channels == self.out_channels:
             groups = input.size(1)
-        weight, bias, padding = self.get_dynamic_params(self.weight, self.bias)
-        weight = self.weight_fake_quant(weight)
+        weight, bias, padding = self.get_dynamic_params(self.weight_fake_quant(self.weight), self.bias)
         return self.conv_func(input, weight, bias,
                               self.stride, padding, self.dilation, groups)
 
@@ -86,7 +85,38 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
         return weight, bias, self.padding
 
     def to_static_op(self):
-        # TODO(shiguang): also export DynamicQConv2d to static        
-        mod = copy.deepcopy(self)
-        traverse_children(mod._modules)
+        weight, bias, padding, out_mask = self.get_dynamic_params(self.weight, self.bias)
+        groups = self.groups
+        if groups == self.in_channels == self.out_channels and \
+                self.mutable_in_channels is not None:
+            mutable_in_channels = self.mutable_attrs['in_channels']
+            groups = mutable_in_channels.current_mask.sum().item()
+        out_channels = weight.size(0)
+        in_channels = weight.size(1) * groups
+        kernel_size = tuple(weight.shape[2:])
+
+        cls = self.static_op_factory
+        mod = cls._FLOAT_MODULE(  # type: ignore[attr-defined]
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            groups=groups,
+            bias=self.bias is not None,
+            padding_mode=self.padding_mode)
+        mod.weight = torch.nn.Parameter(weight)
+        if bias is not None:
+            mod.bias = torch.nn.Parameter(bias)
+
+        fake_quant = self.weight_fake_quant.to_static_op()
+        if len(fake_quant.scale) > 1 and len(fake_quant.scale) != out_channels:
+          fake_quant.scale.data = fake_quant.scale.data[out_mask]
+          fake_quant.zero_point.data = fake_quant.zero_point.data[out_mask]
+
+        mod.qconfig = self.config
+        mod.train(self.training)
+        mod = cls.from_float(mod)
+        mod.weight_fake_quant = fake_quant
         return mod

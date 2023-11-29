@@ -79,6 +79,7 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                  estimator_cfg: Optional[Dict] = None,
                  predictor_cfg: Optional[Dict] = None,
                  score_key: str = 'accuracy/top1',
+                 score_indicator: str = 'score',
                  init_candidates: Optional[str] = None) -> None:
         super().__init__(runner, dataloader, max_epochs)
         if isinstance(evaluator, dict) or is_list_of(evaluator, dict):
@@ -104,6 +105,9 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         else:
             self.calibrate_dataloader = calibrate_dataloader
 
+        self.score_indicator = score_indicator
+        Candidates._indicators = tuple(
+            set(Candidates._indicators + (score_indicator, ) + tuple(constraints_range.keys())))
         self.num_candidates = num_candidates
         self.top_k = top_k
         self.constraints_range = constraints_range
@@ -193,18 +197,19 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         scores_after = self.top_k_candidates.scores
         self.runner.logger.info(f'top k scores after update: '
                                 f'{scores_after}')
-
-        mutation_candidates = self.gen_mutation_candidates()
-        self.candidates_mutator_crossover = Candidates(mutation_candidates)
-        crossover_candidates = self.gen_crossover_candidates()
-        self.candidates_mutator_crossover.extend(crossover_candidates)
-
-        assert len(self.candidates_mutator_crossover
-                   ) <= self.num_candidates, 'Total of mutation and \
-            crossover should be less than the number of candidates.'
-
-        self.candidates = self.candidates_mutator_crossover
         self._epoch += 1
+
+        if self._epoch < self._max_epochs:
+            mutation_candidates = self.gen_mutation_candidates()
+            self.candidates_mutator_crossover = Candidates(mutation_candidates)
+            crossover_candidates = self.gen_crossover_candidates()
+            self.candidates_mutator_crossover.extend(crossover_candidates)
+
+            assert len(self.candidates_mutator_crossover
+                    ) <= self.num_candidates, 'Total of mutation and \
+                crossover should be less than the number of candidates.'
+
+            self.candidates = self.candidates_mutator_crossover
 
     def sample_candidates(self) -> None:
         """Update candidate pool contains specified number of candicates."""
@@ -238,16 +243,17 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         for i, candidate in enumerate(self.candidates.subnets):
             self.model.mutator.set_choices(candidate)
             metrics = self._val_candidate(use_predictor=self.use_predictor)
+            self.runner.logger.info(f'Metrics: {metrics}')
             score = round(metrics[self.score_key], 4) \
                 if len(metrics) != 0 else 0.
-            self.candidates.set_resource(i, score, 'score')
+            self.candidates.set_resource(i, score, self.score_indicator)
+            indicators_str = ''
+            for indicator in Candidates._indicators:
+                indicators_str += f' {indicator.capitalize()}: {self.candidates.resources(indicator)[i]}'
             self.runner.logger.info(
-                f'Epoch:[{self._epoch}/{self._max_epochs}] '
-                f'Candidate:[{i + 1}/{self.num_candidates}] '
-                f'Flops: {self.candidates.resources("flops")[i]} '
-                f'Params: {self.candidates.resources("params")[i]} '
-                f'Latency: {self.candidates.resources("latency")[i]} '
-                f'Score: {self.candidates.scores[i]} ')
+                f'Epoch:[{self._epoch + 1}/{self._max_epochs}] '
+                f'Candidate:[{i + 1}/{self.num_candidates}]'
+                f'{indicators_str}')
 
     def gen_mutation_candidates(self):
         """Generate specified number of mutation candicates."""
@@ -313,15 +319,14 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
 
     def _resume(self):
         """Resume searching."""
-        if self.runner.rank == 0:
-            searcher_resume = fileio.load(self.resume_from)
-            for k in searcher_resume.keys():
-                setattr(self, k, searcher_resume[k])
-            epoch_start = int(searcher_resume['_epoch'])
-            self._max_epochs = self._max_epochs - epoch_start + 1
-            self.runner.logger.info('#' * 100)
-            self.runner.logger.info(f'Resume from epoch: {epoch_start}')
-            self.runner.logger.info('#' * 100)
+        searcher_resume = fileio.load(self.resume_from)
+        for k in searcher_resume.keys():
+            setattr(self, k, searcher_resume[k])
+        epoch_start = int(searcher_resume['_epoch'])
+        self._max_epochs = self._max_epochs - epoch_start + 1
+        self.runner.logger.info('#' * 100)
+        self.runner.logger.info(f'Resume from epoch: {epoch_start}')
+        self.runner.logger.info('#' * 100)
 
     def _save_best_fix_subnet(self):
         """Save best subnet in searched top-k candidates."""
