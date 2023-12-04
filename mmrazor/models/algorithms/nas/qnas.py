@@ -1,4 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import copy
 import os
 import random
 from typing import Dict, List, Optional, Tuple, Union
@@ -16,8 +17,17 @@ from mmrazor.models.mutators import NasMutator
 from mmrazor.models.utils import (add_prefix,
                                   reinitialize_optim_wrapper_count_status)
 from mmrazor.registry import MODEL_WRAPPERS, MODELS
+from mmrazor.structures.quantization import QConfigHandler
 
 from ..base import BaseAlgorithm
+
+try:
+    from torch.ao.quantization import disable_observer
+except ImportError:
+    from mmrazor.utils import get_placeholder
+
+    disable_observer = get_placeholder('torch>=1.13')
+
 
 VALID_MUTATOR_TYPE = Union[NasMutator, Dict]
 VALID_DISTILLER_TYPE = Union[ConfigurableDistiller, Dict]
@@ -73,18 +83,21 @@ class QNAS(BaseAlgorithm):
                  use_spos: bool = False,
                  init_cfg: Optional[Dict] = None) -> None:
         super().__init__(architecture, data_preprocessor, init_cfg)
+        # import pdb; pdb.set_trace()
         self.mutator = self._build_mutator(mutator)
         # NOTE: `mutator.prepare_from_supernet` must be called
         # before distiller initialized.
         self.mutator.prepare_from_supernet(self.architecture)
 
-        self.distiller = self._build_distiller(distiller)
-        self.distiller.prepare_from_teacher(self.architecture.architecture)
-        self.distiller.prepare_from_student(self.architecture.architecture)
+        assert distiller is None, 'Unsupposed qat_distiller, except "None"'
+        assert qat_distiller is None, 'Unsupposed qat_distiller, except "None"'
+        # self.distiller = self._build_distiller(distiller)
+        # self.distiller.prepare_from_teacher(self.architecture.architecture)
+        # self.distiller.prepare_from_student(self.architecture.architecture)
 
-        self.qat_distiller = self._build_distiller(qat_distiller)
-        self.qat_distiller.prepare_from_teacher(self.architecture.qmodels['loss'])
-        self.qat_distiller.prepare_from_student(self.architecture.qmodels['loss'])
+        # self.qat_distiller = self._build_distiller(qat_distiller)
+        # self.qat_distiller.prepare_from_teacher(self.architecture.qmodels['loss'])
+        # self.qat_distiller.prepare_from_student(self.architecture.qmodels['loss'])
 
         if use_spos:
             self.sample_kinds = []
@@ -219,6 +232,36 @@ class QNAS(BaseAlgorithm):
         self.mutator.set_choices(self.mutator.sample_choices())
         return self.architecture.calibrate_step(data)
 
+    def get_deploy_model(self):
+        device = next(self.parameters()).device
+        observed_model = copy.deepcopy(self.architecture.qmodels['tensor'])
+        self.architecture.quantizer.post_process_for_deploy(
+            observed_model,
+            device=device,
+            keep_w_fake_quant=True,
+            update_weight_with_fakequant=True)
+        # replace various activation fakequant with base fakequant, which
+        # contributes to deploy our model to various backends.
+        for node in observed_model.graph.nodes:
+            if 'activation_post_process_' in node.name:
+                module_name = node.target
+                module = getattr(observed_model, module_name)
+                extra_observer_kwargs = {'dtype': module.dtype, 'quant_min': module.quant_min, 'quant_max': module.quant_max}
+                fakequant_new = QConfigHandler.replace_fakequant(
+                    module,
+                    self.architecture.quantizer.qconfig.a_qscheme,
+                    update_qparams=True,
+                    extra_observer_kwargs=extra_observer_kwargs)
+                setattr(observed_model, module_name, fakequant_new)
+
+        observed_model.apply(disable_observer)
+
+        return observed_model
+    
+    @property
+    def quantizer(self):
+        return self.architecture.quantizer
+
     def forward(self,
                 inputs: torch.Tensor,
                 data_samples: Optional[List[BaseDataElement]] = None,
@@ -245,6 +288,7 @@ class QNASDDP(MMDistributedDataParallel):
                 device_ids = [int(os.environ['LOCAL_RANK'])]
         super().__init__(device_ids=device_ids, **kwargs)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        # import pdb; pdb.set_trace()
         # After moving all model parameters and buffers to the GPU
         # (`model.cuda()`), the buffers in model are different.
         # Hackly, we rebuild qmodels and the corresonding modules based on the architecture
@@ -253,18 +297,18 @@ class QNASDDP(MMDistributedDataParallel):
         self.module.architecture.qmodels = self.module.architecture._build_qmodels(
             self.module.architecture.architecture)
         self.module.mutator.prepare_from_supernet(self.module.architecture)
-        self.module.qat_distiller.prepare_from_teacher(self.module.architecture.qmodels['loss'])
-        self.module.qat_distiller.prepare_from_student(self.module.architecture.qmodels['loss'])        
+        # self.module.qat_distiller.prepare_from_teacher(self.module.architecture.qmodels['loss'])
+        # self.module.qat_distiller.prepare_from_student(self.module.architecture.qmodels['loss'])        
         self.module.sync_qparams('tensor')
         self.module.architecture.reset_observer_and_fakequant_statistics(self)
 
     def train_step(self, data: List[dict],
                    optim_wrapper: OptimWrapper) -> Dict[str, torch.Tensor]:
         if self.module.current_stage == 'float':
-            distiller = self.module.distiller
+            # distiller = self.module.distiller
             mode = 'float.loss'
         elif self.module.current_stage == 'qat':
-            distiller = self.module.qat_distiller
+            # distiller = self.module.qat_distiller
             mode = 'loss'
         else:
             raise ValueError(f'Unsupported current_stage: {self.module.current_stage}')
@@ -277,7 +321,7 @@ class QNASDDP(MMDistributedDataParallel):
             subnet_losses = dict()
             with optim_wrapper.optim_context(
                     self
-            ), distiller.student_recorders:  # type: ignore
+            ):  #, distiller.student_recorders:  # type: ignore
                 hard_loss = self(batch_inputs, data_samples, mode=mode)
                 subnet_losses.update(hard_loss)
                 # soft_loss = distiller.compute_distill_losses()
@@ -300,18 +344,18 @@ class QNASDDP(MMDistributedDataParallel):
             data, True).values()
         # import pdb; pdb.set_trace()
         total_losses = dict()
-        self.module.mutator.set_min_choices()
+        # self.module.mutator.set_min_choices()
         for kind in self.module.sample_kinds:
             # update the max subnet loss.
             if kind == 'max':
-                # self.module.mutator.set_max_choices()
-                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
+                self.module.mutator.set_max_choices()
+                # self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
                 # qnas_backbone.set_dropout(
                 #     dropout_stages=self.module.backbone_dropout_stages,
                 #     drop_path_rate=self.module.drop_path_rate)
                 with optim_wrapper.optim_context(
                         self
-                ), distiller.teacher_recorders:  # type: ignore
+                ):  # , distiller.teacher_recorders:  # type: ignore
                     max_subnet_losses = self(
                         batch_inputs, data_samples, mode=mode)
                     parsed_max_subnet_losses, _ = self.module.parse_losses(
@@ -321,8 +365,8 @@ class QNASDDP(MMDistributedDataParallel):
                     add_prefix(max_subnet_losses, 'max_subnet'))
             # update the min subnet loss.
             elif kind == 'min':
-                # self.module.mutator.set_min_choices()
-                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
+                self.module.mutator.set_min_choices()
+                # self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
                 # qnas_backbone.set_dropout(
                 #     dropout_stages=self.module.backbone_dropout_stages,
                 #     drop_path_rate=0.)
@@ -331,8 +375,8 @@ class QNASDDP(MMDistributedDataParallel):
                     add_prefix(min_subnet_losses, 'min_subnet'))
             # update the random subnets loss.
             elif 'random' in kind:
-                # self.module.mutator.set_choices(self.module.mutator.sample_choices())
-                self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
+                self.module.mutator.set_choices(self.module.mutator.sample_choices())
+                # self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
                 # qnas_backbone.set_dropout(
                 #     dropout_stages=self.module.backbone_dropout_stages,
                 #     drop_path_rate=0.)
@@ -341,10 +385,10 @@ class QNASDDP(MMDistributedDataParallel):
                     add_prefix(random_subnet_losses, f'{kind}_subnet'))
 
         # Clear data_buffer so that we could implement deepcopy.
-        for key, recorder in distiller.teacher_recorders.recorders.items():
-            recorder.reset_data_buffer()
-        for key, recorder in distiller.student_recorders.recorders.items():
-            recorder.reset_data_buffer()
+        # for key, recorder in distiller.teacher_recorders.recorders.items():
+        #     recorder.reset_data_buffer()
+        # for key, recorder in distiller.student_recorders.recorders.items():
+        #     recorder.reset_data_buffer()
 
         return total_losses
 
