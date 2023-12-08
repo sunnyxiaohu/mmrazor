@@ -379,12 +379,13 @@ class MMArchitectureQuant(BaseAlgorithm):
         the backend's requirement.
         """
         device = next(self.parameters()).device
+        # mode = 'tensor' ??
         quantized_state_dict = self.qmodels['predict'].state_dict()
         fp32_model = self.architecture
         self.quantizer.convert_batchnorm2d(fp32_model)
         concrete_args = {'mode': 'tensor'}
         observed_model = self.quantizer.prepare(fp32_model, concrete_args)
-        observed_model.load_state_dict(quantized_state_dict)
+        observed_model.load_state_dict(quantized_state_dict, strict=False)
 
         self.quantizer.post_process_for_deploy(
             observed_model,

@@ -40,7 +40,8 @@ class SubnetExportValLoop(ValLoop, CalibrateBNMixin):
         fp16: bool = False,
         evaluate_fixed_subnet: bool = False,
         calibrate_sample_num: int = 4096,
-        estimator_cfg: Optional[Dict] = dict(type='mmrazor.ResourceEstimator')
+        estimator_cfg: Optional[Dict] = dict(type='mmrazor.ResourceEstimator'),
+        is_supernet=True,
     ) -> None:
         super().__init__(runner, dataloader, evaluator, fp16)
 
@@ -56,6 +57,7 @@ class SubnetExportValLoop(ValLoop, CalibrateBNMixin):
         default_args['dataloader'] = self.dataloader
         self.estimator = TASK_UTILS.build(
             estimator_cfg, default_args=default_args)
+        self.is_supernet = is_supernet
 
     def run(self):
         """Launch validation."""
@@ -101,9 +103,12 @@ class SubnetExportValLoop(ValLoop, CalibrateBNMixin):
             model = self.runner.model.module
         else:
             model = self.runner.model
-        _, sliced_model = export_fix_subnet(model, slice_weight=True)
+
+        if self.is_supernet:
+            # TODO(shiguang): figure out why deepcopy will cause `CustomTracer` degenerate to `fx.Tracer`
+            _, model = export_fix_subnet(model, slice_weight=True)
         metrics = {} if num_infer == 0 else self.evaluator.evaluate(num_infer)
-        resource_metrics = self.estimator.estimate(sliced_model)
+        resource_metrics = self.estimator.estimate(model)
         metrics.update(resource_metrics)
 
         return metrics
