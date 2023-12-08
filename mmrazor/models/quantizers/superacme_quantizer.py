@@ -1,6 +1,8 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from typing import Any, Optional, Tuple, Union, Dict
+from types import MethodType
 import copy
+import operator
 
 import torch
 import torch.nn as nn
@@ -39,6 +41,7 @@ except ImportError:
 from mmrazor import digit_version
 from mmrazor.registry import MODELS
 from mmrazor.models import LearnableFakeQuantize
+from mmrazor.models.architectures.dynamic_ops import DynamicSequential
 from mmrazor.models.utils import str2class
 from mmrazor.models.task_modules.tracer.fx import build_graphmodule
 from mmrazor.models.task_modules.tracer.fx.graph_utils import (_get_attrs,
@@ -66,13 +69,16 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
     than [-128, 127]
     """
     def __init__(self, *args, tracer: Dict = dict(type='CustomTracer'),
-                 quant_bits=None, quant_bits_skipped_module_names=None,
+                 w_bits=None, a_bits=None, quant_bits_skipped_module_names=None,
                  default_skipped_bit=8, nested_quant_bits_in_layer=False,
-                 **kwargs):
+                 w_skip=True, a_skip=True, **kwargs):
         if 'skipped_module_classes' in tracer:
             tracer['skipped_module_classes'] = str2class(tracer['skipped_module_classes'])
         super().__init__(*args, tracer=tracer, **kwargs)
-        self.quant_bits = quant_bits
+        self.w_bits = w_bits
+        self.a_bits = a_bits
+        self.w_skip = w_skip
+        self.a_skip = a_skip
         if quant_bits_skipped_module_names is None:
             quant_bits_skipped_module_names = []
         self.quant_bits_skipped_module_names = quant_bits_skipped_module_names
@@ -98,6 +104,13 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
             fake_quant  operations that we need it to be fused into our
             `SUPPORT_QAT_MODULES` type, which is a tricky way to deal with it.
         """
+        # get all the dynamic seq scopes.
+        scope_node_mapping = {}
+        for name, module in model.named_modules():
+            if isinstance(module, DynamicSequential) and 'depth' in module.mutable_attrs:
+                idx_nodes = {idx+1: [] for idx in range(module.pure_module_nums)}
+                scope_node_mapping[(name, module.mutable_depth)] = idx_nodes
+
         self.swap_ff_with_fxff(model)
         traced_graph = self.tracer.trace(model, concrete_args=concrete_args)
         graph_module = build_graphmodule(model, traced_graph)
@@ -120,14 +133,18 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
         prepared = self.del_redundant_fakequant(prepared)
 
         prepared = del_fakequant_after_placeholder(prepared)
-        # prepared = modify_fakequant_according_clip(prepared)
         prepared = modify_fakequant_bits(
-            prepared, tuple(self.quant_bits_skipped_module_names), self.default_skipped_bit, True)
-        # import pdb; pdb.set_trace()
-        if self.quant_bits:
+            prepared, tuple(self.quant_bits_skipped_module_names), w_bit=self.default_skipped_bit,
+            a_bit=self.default_skipped_bit, inplace=True)
+
+        if self.w_bits or self.a_bits:
             prepared = register_mutables_for_dynamic_fakequant(
-                prepared, tuple(self.quant_bits_skipped_module_names), self.quant_bits,
-                self.default_skipped_bit, True, nested_quant_bits_in_layer=self.nested_quant_bits_in_layer)
+                prepared, tuple(self.quant_bits_skipped_module_names), w_bits=self.w_bits, a_bits=self.a_bits,
+                default_skipped_bit=self.default_skipped_bit, w_skip=self.w_skip, a_skip=self.a_skip,
+                inplace=True, nested_quant_bits_in_layer=self.nested_quant_bits_in_layer)
+        # import pdb; pdb.set_trace()
+        # prepared = wrap_depth_scope(
+        #     prepared, scope_node_mapping, self.tracer.node_name_to_scope, True)
         return prepared
 
     @property
@@ -314,22 +331,110 @@ def del_fakequant_after_placeholder(prepared_model,
     return prepared_model
 
 
-def modify_fakequant_according_clip(prepared_model,
-                                    inplace: bool = True):
+def wrap_depth_scope(prepared_model, scope_node_mapping, node_name_to_scope, inplace: bool = True):
+    # Since fx.trace can not handle nested nodes. e.g., we have `DynamicSequential`
+    # `BigNASConv2d`, where the `BigNASConv2d` is nested in `DynamicSequential`, we
+    # can not both treat then as `Node`(leaf module). for simplicy, we record the 
+    # submodule's `depth_scope` and propogate `mutable_depth`.
+
     if not inplace:
         prepared_model = copy.deepcopy(prepared_model)
-    # import pdb; pdb.set_trace()
     new_graph = copy.deepcopy(prepared_model.graph)
+    import pdb; pdb.set_trace()
     for node in new_graph.nodes:
-        if node.op == 'call_module' and isinstance(
-            _get_attrs(prepared_model, node.target), LearnableFakeQuantize):
-            relu6 = node.args[0]
-            if relu6 == 'call_module' and not isinstance(
-                    _get_attrs(prepared_model, relu6.target), nn.ReLU6):
-                continue
-            fake_quant = _get_attrs(prepared_model, node.target)
-            setattr(fake_quant, 'relu6_clip', True)
+        if node.name not in node_name_to_scope:
+            print(f'{node.name} not in node_name_to_scope')
+            continue
+        scope_name = node_name_to_scope[node.name][0]
+        matched_scope = list(filter(lambda x: scope_name.startswith(x[0]), scope_node_mapping))
+        if len(matched_scope) == 0:
+            print(f'Node: {node.name} {scope_name} not matched to any scops')
+            continue
+        elif len(matched_scope) > 1:
+            raise ValueError(f'Node: {node.name} mathed multiple scopes: {matched_scope}')
+        scope, depth_mutable = matched_scope[0][0], matched_scope[0][1]
 
+        depth_scope = int(scope_name.replace(scope, '').split('.')[1]) + 1
+        print(f'Node: {node.name} {scope_name} matched Scope: {scope} {depth_scope}')
+        scope_node_mapping[(scope, depth_mutable)][depth_scope].append(node)
+        if node.op == 'call_module' or node.op == 'call_function':
+            for maybe_act in reversed(node.args):
+                if maybe_act.op == 'call_module' and isinstance(
+                        _get_attrs(prepared_model, maybe_act.target), LearnableFakeQuantize):
+                    print(f'Propogate Node: {maybe_act.name} to Scope: {scope} {depth_scope}')
+                    pos = len(scope_node_mapping[(scope, depth_mutable)][depth_scope]) - 1
+                    if maybe_act not in scope_node_mapping[(scope, depth_mutable)][depth_scope]:
+                        scope_node_mapping[(scope, depth_mutable)][depth_scope].insert(pos, maybe_act)
+        elif node.op == 'call_method':
+            raise ValueError(f'Not supported call_method yet, get `{node.name}`')
+
+    def module_call_wrapper(self, depth_scope, depth_mutable):
+        _orig_module_call: Callable = self.forward
+        self._DEPTH_SCOPE = depth_scope
+        self._DEPTH_MUTABLE = depth_mutable
+        self._already_patched = True
+
+        def module_call(self, *args, **kwargs):
+            assert hasattr(self, '_DEPTH_SCOPE')
+            assert hasattr(self, '_DEPTH_MUTABLE')
+            if not isinstance(args[0], torch.Tensor):
+                print(f'Except torch.Tensor, {self} get invalid: {type(args[0])}')
+            if self._DEPTH_MUTABLE.current_choice < self._DEPTH_SCOPE:
+                # import pdb; pdb.set_trace()
+                return args[0]
+            return _orig_module_call(*args, **kwargs)
+        return module_call
+
+    class function_call_wrapper(object):
+        SUPPORTED_FUNCS = (torch.add, operator.add)
+
+        def __init__(self, name, func, depth_scope, depth_mutable):
+            assert func in self.SUPPORTED_FUNCS, f'Only support {self.SUPPORTED_FUNCS}, get {func}'
+            self.func = func
+            self._DEPTH_SCOPE = depth_scope
+            self._DEPTH_MUTABLE = depth_mutable
+            self.__name__ = name
+
+        def __call__(self, *args, **kwarg):
+            if self.func in (torch.add, operator.add):
+                return self.__add__(*args, **kwarg)
+
+        def __add__(self, input, other, *args, alpha=1, out=None):
+            # import pdb; pdb.set_trace()
+            if self._DEPTH_MUTABLE.current_choice < self._DEPTH_SCOPE:
+                # import pdb; pdb.set_trace()
+                assert input is other, 'Get invalid input and other'
+                for arg in args:
+                    assert input is arg, 'Get invalid input and arg'
+                return input
+            else:
+                if self.func == torch.add:
+                    return self.func(input, other, *args, alpha=alpha, out=out)
+                elif self.func == operator.add:
+                    return self.func(input, other)
+
+    memo = {}
+    for (scope, depth_mutable), idx_nodes in scope_node_mapping.items():
+        for idx, nodes in idx_nodes.items():
+            for node in nodes:
+                if node not in memo:
+                    memo[node] = [(scope, idx)]
+                else:
+                    memo[node].append((scope, idx))
+                    raise ValueError(f'Duplicated node: {node} in {memo[node]})')
+                if node.op == 'call_module':
+                    module = _get_attrs(prepared_model, node.target)
+                    if not getattr(module, '_already_patched', False):
+                        # Note that this is temporally support, that all the hooks also should be modified.
+                        module.forward = MethodType(
+                            module_call_wrapper(module, idx, depth_mutable), module)
+                elif node.op == 'call_function':
+                    # import pdb; pdb.set_trace()
+                    new_func = function_call_wrapper(node.name, node.target, idx, depth_mutable)
+                    node.target = new_func
+                    node.op == 'call_module'
+
+    # import pdb; pdb.set_trace()
     new_graph.lint()
     prepared_model.graph = new_graph
     return prepared_model

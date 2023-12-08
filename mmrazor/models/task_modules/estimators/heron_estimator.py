@@ -4,6 +4,7 @@ import copy
 import os.path as osp
 import sys
 import zlib
+import time
 from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
@@ -177,6 +178,7 @@ class HERONModelWrapper:
         os.system(command_line)
 
     def res_extract(self):
+        time.sleep(2) # wait the io is done.
         ddr_io, sram_io, sdata, ddr_occp, sram_occp = None, None, None, None, None
         for line in open(self.profiler_net_res).readlines():
             if 'total DDR import and export data size' in line:

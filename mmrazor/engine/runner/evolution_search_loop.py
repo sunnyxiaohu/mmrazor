@@ -68,6 +68,7 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                  max_keep_ckpts: int = 3,
                  resume_from: Optional[str] = None,
                  num_candidates: int = 50,
+                 num_init_candidates: int = None,
                  top_k: int = 10,
                  num_mutation: int = 25,
                  num_crossover: int = 25,
@@ -109,6 +110,7 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         Candidates._indicators = tuple(
             set(Candidates._indicators + (score_indicator, ) + tuple(constraints_range.keys())))
         self.num_candidates = num_candidates
+        self.num_init_candidates = num_init_candidates or num_candidates
         self.top_k = top_k
         self.constraints_range = constraints_range
         self.calibrate_sample_num = calibrate_sample_num
@@ -183,7 +185,7 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                 will be used in mutation and crossover.
             4. Implement Mutation and crossover, generate better candidates.
         """
-        self.sample_candidates()
+        self.sample_candidates(num_candidates=self.num_init_candidates if self._epoch == 0 else self.num_candidates)
         self.update_candidates_scores()
 
         scores_before = self.top_k_candidates.scores
@@ -205,19 +207,34 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
             crossover_candidates = self.gen_crossover_candidates()
             self.candidates_mutator_crossover.extend(crossover_candidates)
 
-            assert len(self.candidates_mutator_crossover
-                    ) <= self.num_candidates, 'Total of mutation and \
-                crossover should be less than the number of candidates.'
+            # assert len(self.candidates_mutator_crossover
+            #         ) <= self.num_candidates, 'Total of mutation and \
+            #     crossover should be less than the number of candidates.'
 
-            self.candidates = self.candidates_mutator_crossover
+            self.candidates = self.candidates_mutator_crossover[:self.num_candidates]
 
-    def sample_candidates(self) -> None:
+    def sample_candidates(self, num_candidates=None) -> None:
         """Update candidate pool contains specified number of candicates."""
+        num_candidates = num_candidates or self.num_candidates
         candidates_resources = []
         init_candidates = len(self.candidates)
+        idx = 0
+        # import pdb; pdb.set_trace()
         if self.runner.rank == 0:
-            while len(self.candidates) < self.num_candidates:
-                candidate = self.model.mutator.sample_choices()
+            while len(self.candidates) < num_candidates:
+                idx += 1
+                if idx == 1:
+                    try:
+                        candidate = self.model.mutator.sample_choices('max')
+                    except Exception:
+                        candidate = self.model.mutator.sample_choices()
+                elif idx == 2:
+                    try:
+                        candidate = self.model.mutator.sample_choices('min')
+                    except Exception:
+                        candidate = self.model.mutator.sample_choices()
+                else:
+                    candidate = self.model.mutator.sample_choices()
                 is_pass, result = self._check_constraints(
                     random_subnet=candidate)
                 if is_pass:
@@ -225,14 +242,14 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
                     candidates_resources.append(result)
             self.candidates = Candidates(self.candidates.data)
         else:
-            self.candidates = Candidates([dict(a=0)] * self.num_candidates)
+            self.candidates = Candidates([dict(a=0)] * num_candidates)
 
         if len(candidates_resources) > 0:
             self.candidates.update_resources(
                 candidates_resources,
                 start=len(self.candidates.data) - len(candidates_resources))
             assert init_candidates + len(
-                candidates_resources) == self.num_candidates
+                candidates_resources) == num_candidates
 
         # broadcast candidates to val with multi-GPUs.
         broadcast_object_list(self.candidates.data)
@@ -261,21 +278,27 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         mutation_candidates: List = []
         max_mutate_iters = self.num_mutation * 10
         mutate_iter = 0
-        while len(mutation_candidates) < self.num_mutation:
-            mutate_iter += 1
-            if mutate_iter > max_mutate_iters:
-                break
+        if self.runner.rank == 0:
+            while len(mutation_candidates) < self.num_mutation:
+                mutate_iter += 1
+                if mutate_iter > max_mutate_iters:
+                    break
 
-            mutation_candidate = self._mutation()
+                mutation_candidate = self._mutation()
 
-            is_pass, result = self._check_constraints(
-                random_subnet=mutation_candidate)
-            if is_pass:
-                mutation_candidates.append(mutation_candidate)
-                mutation_resources.append(result)
+                is_pass, result = self._check_constraints(
+                    random_subnet=mutation_candidate)
+                if is_pass:
+                    mutation_candidates.append(mutation_candidate)
+                    mutation_resources.append(result)
 
-        mutation_candidates = Candidates(mutation_candidates)
-        mutation_candidates.update_resources(mutation_resources)
+            mutation_candidates = Candidates(mutation_candidates)
+            mutation_candidates.update_resources(mutation_resources)
+        else:
+            mutation_candidates = Candidates([dict(a=0)] * self.num_mutation)
+
+        # broadcast candidates to val with multi-GPUs.
+        broadcast_object_list(mutation_candidates.data)
 
         return mutation_candidates
 
@@ -285,21 +308,27 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         crossover_candidates: List = []
         crossover_iter = 0
         max_crossover_iters = self.num_crossover * 10
-        while len(crossover_candidates) < self.num_crossover:
-            crossover_iter += 1
-            if crossover_iter > max_crossover_iters:
-                break
+        if self.runner.rank == 0:
+            while len(crossover_candidates) < self.num_crossover:
+                crossover_iter += 1
+                if crossover_iter > max_crossover_iters:
+                    break
 
-            crossover_candidate = self._crossover()
+                crossover_candidate = self._crossover()
 
-            is_pass, result = self._check_constraints(
-                random_subnet=crossover_candidate)
-            if is_pass:
-                crossover_candidates.append(crossover_candidate)
-                crossover_resources.append(result)
+                is_pass, result = self._check_constraints(
+                    random_subnet=crossover_candidate)
+                if is_pass:
+                    crossover_candidates.append(crossover_candidate)
+                    crossover_resources.append(result)
 
-        crossover_candidates = Candidates(crossover_candidates)
-        crossover_candidates.update_resources(crossover_resources)
+            crossover_candidates = Candidates(crossover_candidates)
+            crossover_candidates.update_resources(crossover_resources)
+        else:
+            crossover_candidates = Candidates([dict(a=0)] * self.num_crossover)
+
+        # broadcast candidates to val with multi-GPUs.
+        broadcast_object_list(crossover_candidates.data)
 
         return crossover_candidates
 
