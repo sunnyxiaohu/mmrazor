@@ -125,6 +125,7 @@ class HERONModelWrapper:
                  num_infer=None,
                  mnn_quant_json=None,
                  is_quantized=False,
+                 outputs_mapping=None,
                  infer_metric=None):
         name = f'{self.__class__.__name__}'
         work_dir = os.path.join(work_dir, f'rank_{get_rank()}')
@@ -158,6 +159,7 @@ class HERONModelWrapper:
                     level=logging.WARNING)
         self.num_infer = num_infer if num_infer is not None and 0 < num_infer < len(self.dataloader) else len(self.dataloader)
         self.model = None
+        self.outputs_mapping = outputs_mapping
 
     def import_torch(self, model):
         self.model = model
