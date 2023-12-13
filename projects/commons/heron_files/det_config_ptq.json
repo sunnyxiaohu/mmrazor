@@ -5,14 +5,14 @@
         "data_format": "RGBA",
         "binary_eltwise_mode": 0
     },
+	"calibration_image_num": 200,
     "input_model_type": "ONNX",
     "feature_quant": {
-        "quantization_method": "QAT"
+        "quantization_method": "KLASYM"
     },
     "weight_quant": {
-        "quantization_method": "QAT"
+        "quantization_method": "MAX_ABS"
     },
-    "qatfile": "work_dirs/lsq_superacme_yolox_s_8xb8-50e_coco/rank_0/HERONModelWrapperDet_superacme_clip_ranges.json",
     "inputs_list": [
         {
             "color_space": "RGB",
@@ -22,9 +22,9 @@
                 0
             ],
             "normal": [
-                1,
-                1,
-                1
+                1.0,
+                1.0,
+                1.0
             ],
             "shape": [
                 1,
@@ -33,7 +33,7 @@
                 640
             ],
             "layout": "NCHW",
-            "dataset_path": "./",
+            "dataset_path": "/mnt/ssd/coco/val2017",
             "type": "uint8",
             "format": "image",
             "fuse_preprocess": true

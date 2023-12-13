@@ -5,6 +5,7 @@ import os.path as osp
 import sys
 import zlib
 import time
+import logging
 from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
@@ -147,6 +148,14 @@ class HERONModelWrapper:
         self.infer_metric = infer_metric
         if infer_metric is not None:
             self.infer_metric = METRICS.build(infer_metric)
+            if hasattr(self.dataloader.dataset, 'metainfo'):
+                self.infer_metric.dataset_meta = self.dataloader.dataset.metainfo
+            else:
+                print_log(
+                    f'Dataset {self.dataloader.dataset.__class__.__name__} has no '
+                    'metainfo. ``dataset_meta`` in metric will be None.',
+                    logger='current',
+                    level=logging.WARNING)
         self.num_infer = num_infer if num_infer is not None and 0 < num_infer < len(self.dataloader) else len(self.dataloader)
         self.model = None
 
@@ -167,6 +176,7 @@ class HERONModelWrapper:
                 keep_initializers_as_inputs=False,
                 verbose=False,
                 opset_version=11)
+            post_process_nodename(self.onnx_file)
 
     def hir_convert(self):
         # convert and compiler
@@ -236,7 +246,10 @@ class HERONModelWrapper:
         for i, data in enumerate(self.dataloader):
             if i >= self.num_infer:
                 break
-            data = self.model.data_preprocessor(data, False)
+            if self.is_quantized:
+                data = self.model.architecture.data_preprocessor(data, False)
+            else:
+                data = self.model.data_preprocessor(data, False)
             inputs, data_samples = data['inputs'], data['data_samples']
             input_data = MNN.Tensor(self.shape, MNN.Halide_Type_Uint8,
                 inputs.reshape(self.shape).cpu().numpy().astype(np.uint8), MNN.Tensor_DimensionType_Caffe)
@@ -325,6 +338,7 @@ class HERONModelWrapperDet(HERONModelWrapper):
                  num_infer=None,
                  mnn_quant_json=None,
                  is_quantized=False,
+                 outputs_mapping=None,
                  infer_metric=None):
         name = f'{self.__class__.__name__}'
         work_dir = os.path.join(work_dir, f'rank_{get_rank()}')
@@ -348,8 +362,17 @@ class HERONModelWrapperDet(HERONModelWrapper):
         self.infer_metric = infer_metric
         if infer_metric is not None:
             self.infer_metric = METRICS.build(infer_metric)
+            if hasattr(self.dataloader.dataset, 'metainfo'):
+                self.infer_metric.dataset_meta = self.dataloader.dataset.metainfo
+            else:
+                print_log(
+                    f'Dataset {self.dataloader.dataset.__class__.__name__} has no '
+                    'metainfo. ``dataset_meta`` in metric will be None.',
+                    logger='current',
+                    level=logging.WARNING)
         self.num_infer = num_infer if num_infer is not None and 0 < num_infer < len(self.dataloader) else len(self.dataloader)
         self.model = None
+        self.outputs_mapping = outputs_mapping
 
     def import_torch(self, model):
         self.model = model
@@ -358,7 +381,7 @@ class HERONModelWrapperDet(HERONModelWrapper):
         if self.is_quantized:
             observed_model = model.get_deploy_model()
             model.quantizer.export_onnx(observed_model, dummy_data, self.onnx_file)
-            self.model = model.architecture
+            # self.model = model.architecture
         else:
             model = fuse_conv_bn(model)
             torch.onnx.export(
@@ -382,7 +405,10 @@ class HERONModelWrapperDet(HERONModelWrapper):
         for i, data in enumerate(self.dataloader):
             if i >= self.num_infer:
                 break
-            data = self.model.data_preprocessor(data, False)
+            if self.is_quantized:
+                data = self.model.architecture.data_preprocessor(data, False)
+            else:
+                data = self.model.data_preprocessor(data, False)
             inputs, data_samples = data['inputs'], data['data_samples']
 
             input_data = MNN.Tensor(self.shape, MNN.Halide_Type_Uint8,
@@ -401,6 +427,8 @@ class HERONModelWrapperDet(HERONModelWrapper):
                     v_np.astype(np.float32), MNN.Tensor_DimensionType_Caffe)
                 v.copyToHostTensor(output_data)
                 out = torch.from_numpy(output_data.getNumpyData())
+                if self.outputs_mapping is not None:
+                    k = self.outputs_mapping.get(k, k)
                 if '_cls' in k:
                     cls_scores.append(out)
                 elif '_reg' in k:
@@ -408,9 +436,14 @@ class HERONModelWrapperDet(HERONModelWrapper):
                 elif '_obj' in k:
                     score_factors.append(out)
             rescale = True
-            predictions = self.model.bbox_head.predict_by_feat(
-                cls_scores, bbox_preds, score_factors, batch_img_metas=img_metas, rescale=rescale)
-            data_samples = self.model.add_pred_to_datasample(data_samples, predictions)
+            if self.is_quantized:
+                predictions = self.model.architecture.bbox_head.predict_by_feat(
+                    cls_scores, bbox_preds, score_factors, batch_img_metas=img_metas, rescale=rescale)
+                data_samples = self.model.architecture.add_pred_to_datasample(data_samples, predictions)
+            else:
+                predictions = self.model.bbox_head.predict_by_feat(
+                    cls_scores, bbox_preds, score_factors, batch_img_metas=img_metas, rescale=rescale)
+                data_samples = self.model.add_pred_to_datasample(data_samples, predictions)
             self.infer_metric.process(inputs, [data_samples[0].to_dict()])
         num_samples = min(get_world_size() * self.num_infer, len(self.dataloader.dataset))
         metrics = self.infer_metric.evaluate(num_samples) if self.num_infer > 0 else {}
