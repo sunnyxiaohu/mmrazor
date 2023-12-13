@@ -511,6 +511,7 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
     new_graph = copy.deepcopy(prepared_model.graph)
 
     skipped_a_fake_quant = set()
+    act_qbits_idx = 0
     for node in new_graph.nodes:
         if node.op == 'call_module':
             maybe_dynamic = _get_attrs(prepared_model, node.target)
@@ -519,8 +520,10 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
                 # multiple nodes may share the same fakequant.
                 if 'quant_bits' in maybe_dynamic.mutable_attrs:
                     continue
-                qbits = OneShotMutableValue(alias=node.target + '.quant_bits', value_list=a_bits)
+                alias = 'act_quant_bits_' + str(act_qbits_idx)  # node.target + '.quant_bits'
+                qbits = OneShotMutableValue(alias=alias, value_list=a_bits)
                 maybe_dynamic.register_mutable_attr('quant_bits', qbits)
+                act_qbits_idx += 1
             # for weights
             elif hasattr(maybe_dynamic, 'weight_fake_quant') and isinstance(
                     maybe_dynamic.weight_fake_quant, DynamicLearnableFakeQuantize):

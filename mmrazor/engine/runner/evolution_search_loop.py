@@ -352,7 +352,7 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
         for k in searcher_resume.keys():
             setattr(self, k, searcher_resume[k])
         epoch_start = int(searcher_resume['_epoch'])
-        self._max_epochs = self._max_epochs - epoch_start + 1
+        # self._max_epochs = self._max_epochs - epoch_start + 1
         self.runner.logger.info('#' * 100)
         self.runner.logger.info(f'Resume from epoch: {epoch_start}')
         self.runner.logger.info('#' * 100)

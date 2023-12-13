@@ -418,7 +418,10 @@ class QNASValLoop(ValLoop, CalibrateMixin):
         self.architecture.data_preprocessor = data_preprocessor
         self.evaluate_fixed_subnet = evaluate_fixed_subnet
         self.calibrate_sample_num = calibrate_sample_num
-        self.estimator = TASK_UTILS.build(estimator_cfg)
+        default_args = dict()
+        default_args['dataloader'] = self.dataloader
+        self.estimator = TASK_UTILS.build(
+            estimator_cfg, default_args=default_args)
         self.quant_bits = quant_bits
 
     def run(self) -> dict:
@@ -545,6 +548,11 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                 ori_key = 'original.' + key
                 qat_metrics[ori_key] = value
                 # self.runner.message_hub.log_scalars.pop(f'val/{qat_key}', None)
+
+        _, sliced_model = export_fix_subnet(
+            self.model, slice_weight=True)
+        resource_metrics = self.estimator.estimate(sliced_model)
+        qat_metrics.update(resource_metrics)
 
         return qat_metrics
 
