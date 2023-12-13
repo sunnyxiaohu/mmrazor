@@ -49,6 +49,7 @@ from mmrazor.models.task_modules.tracer.fx.graph_utils import (_get_attrs,
 
 from mmrazor.structures.quantization import BackendConfigs
 from mmrazor.structures.quantization.backend_config.superacme import get_superacme_backend_config
+from ..utils.quantization_util import post_process_nodename
 from .native_quantizer import TorchNativeQuantizer, SUPPORT_QAT_MODULES, MERGE_BN_MAPPINGS
 
 BackendConfigs['superacme'] = get_superacme_backend_config()
@@ -180,6 +181,7 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
             symbolic_output_path,
             opset_version=opset_version,
             **kwargs)
+        post_process_nodename(symbolic_output_path)
 
         from .exporters.superacme_quantize_exporter import SuperAcmeQuantizeExportor
         exporter = SuperAcmeQuantizeExportor(symbolic_output_path, output_path)

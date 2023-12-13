@@ -79,7 +79,7 @@ def recursive_find_erased_nodes(node, prepared_model):
             nodes_to_erase.extend(
                 recursive_find_erased_nodes(prev_node, prepared_model))
 
-    return nodes_to_erase
+    return list(set(nodes_to_erase))
 
 
 def del_fakequant_before_op(prepared_model,

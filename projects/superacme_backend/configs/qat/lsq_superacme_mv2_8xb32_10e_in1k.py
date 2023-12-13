@@ -81,6 +81,7 @@ test_cfg = dict(
     type='mmrazor.SubnetExportValLoop',
     evaluate_fixed_subnet=True,
     calibrate_sample_num=0,
+    is_supernet=False,
     estimator_cfg=dict(
         type='mmrazor.HERONResourceEstimator',
         heronmodel_cfg=dict(
@@ -90,9 +91,5 @@ test_cfg = dict(
             mnn_quant_json='projects/commons/heron_files/config_qat.json',
             # Uncomment and adjust `num_infer` for QoR
             num_infer=1000,
-            infer_metric=_base_.test_evaluator,
-            # Use netron to checkout outputs_mapping.
-            outputs_mapping = {
-                '/fc/Gemm_output_0': 'cls',
-            }
+            infer_metric=_base_.test_evaluator
         )))
