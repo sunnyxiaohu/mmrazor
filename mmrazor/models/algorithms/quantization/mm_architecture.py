@@ -379,13 +379,15 @@ class MMArchitectureQuant(BaseAlgorithm):
         the backend's requirement.
         """
         device = next(self.parameters()).device
-        # mode = 'tensor' ??
-        quantized_state_dict = self.qmodels['predict'].state_dict()
-        fp32_model = self.architecture
-        self.quantizer.convert_batchnorm2d(fp32_model)
-        concrete_args = {'mode': 'tensor'}
-        observed_model = self.quantizer.prepare(fp32_model, concrete_args)
-        observed_model.load_state_dict(quantized_state_dict, strict=False)
+        # Note that rebuilding observed_model will break mixed-precision, we just use deepcopy.
+        observed_model = copy.deepcopy(self.qmodels['tensor'])
+        # # mode = 'tensor' ??
+        # quantized_state_dict = self.qmodels['predict'].state_dict()
+        # fp32_model = self.architecture
+        # self.quantizer.convert_batchnorm2d(fp32_model)
+        # concrete_args = {'mode': 'tensor'}
+        # observed_model = self.quantizer.prepare(fp32_model, concrete_args)
+        # observed_model.load_state_dict(quantized_state_dict, strict=False)
 
         self.quantizer.post_process_for_deploy(
             observed_model,
@@ -399,10 +401,12 @@ class MMArchitectureQuant(BaseAlgorithm):
             if 'activation_post_process_' in node.name:
                 module_name = node.target
                 module = getattr(observed_model, module_name)
+                extra_observer_kwargs = {'dtype': module.dtype, 'quant_min': module.quant_min, 'quant_max': module.quant_max}
                 fakequant_new = QConfigHandler.replace_fakequant(
                     module,
                     self.quantizer.qconfig.a_qscheme,
-                    update_qparams=True)
+                    update_qparams=True,
+                    extra_observer_kwargs=extra_observer_kwargs)
                 setattr(observed_model, module_name, fakequant_new)
 
         observed_model.apply(disable_observer)

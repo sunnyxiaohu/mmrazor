@@ -126,6 +126,7 @@ class HERONModelWrapper:
                  mnn_quant_json=None,
                  is_quantized=False,
                  outputs_mapping=None,
+                 use_flip=True,
                  infer_metric=None):
         name = f'{self.__class__.__name__}'
         work_dir = os.path.join(work_dir, f'rank_{get_rank()}')
@@ -160,6 +161,7 @@ class HERONModelWrapper:
         self.num_infer = num_infer if num_infer is not None and 0 < num_infer < len(self.dataloader) else len(self.dataloader)
         self.model = None
         self.outputs_mapping = outputs_mapping
+        self.use_flip = use_flip
 
     def import_torch(self, model):
         self.model = model
@@ -168,7 +170,7 @@ class HERONModelWrapper:
         if self.is_quantized:
             observed_model = model.get_deploy_model()
             model.quantizer.export_onnx(observed_model, dummy_data, self.onnx_file)
-            self.model = model.architecture
+            self.observed_model = observed_model
         else:
             model = fuse_conv_bn(model)
             torch.onnx.export(
@@ -248,11 +250,9 @@ class HERONModelWrapper:
         for i, data in enumerate(self.dataloader):
             if i >= self.num_infer:
                 break
-            if self.is_quantized:
-                data = self.model.architecture.data_preprocessor(data, False)
-            else:
-                data = self.model.data_preprocessor(data, False)
             inputs, data_samples = data['inputs'], data['data_samples']
+            if self.use_flip:
+                inputs = inputs.flip(1)
             input_data = MNN.Tensor(self.shape, MNN.Halide_Type_Uint8,
                 inputs.reshape(self.shape).cpu().numpy().astype(np.uint8), MNN.Tensor_DimensionType_Caffe)
             # input_data = MNN.Tensor(self.shape, MNN.Halide_Type_Float,
@@ -341,6 +341,7 @@ class HERONModelWrapperDet(HERONModelWrapper):
                  mnn_quant_json=None,
                  is_quantized=False,
                  outputs_mapping=None,
+                 use_flip=False,
                  infer_metric=None):
         name = f'{self.__class__.__name__}'
         work_dir = os.path.join(work_dir, f'rank_{get_rank()}')
@@ -375,6 +376,7 @@ class HERONModelWrapperDet(HERONModelWrapper):
         self.num_infer = num_infer if num_infer is not None and 0 < num_infer < len(self.dataloader) else len(self.dataloader)
         self.model = None
         self.outputs_mapping = outputs_mapping
+        self.use_flip = use_flip
 
     def import_torch(self, model):
         self.model = model
@@ -383,7 +385,7 @@ class HERONModelWrapperDet(HERONModelWrapper):
         if self.is_quantized:
             observed_model = model.get_deploy_model()
             model.quantizer.export_onnx(observed_model, dummy_data, self.onnx_file)
-            # self.model = model.architecture
+            self.observed_model = observed_model
         else:
             model = fuse_conv_bn(model)
             torch.onnx.export(
@@ -407,12 +409,9 @@ class HERONModelWrapperDet(HERONModelWrapper):
         for i, data in enumerate(self.dataloader):
             if i >= self.num_infer:
                 break
-            if self.is_quantized:
-                data = self.model.architecture.data_preprocessor(data, False)
-            else:
-                data = self.model.data_preprocessor(data, False)
             inputs, data_samples = data['inputs'], data['data_samples']
-
+            if self.use_flip:
+                inputs[0] = inputs[0].flip(1)
             input_data = MNN.Tensor(self.shape, MNN.Halide_Type_Uint8,
                 inputs[0].reshape(self.shape).cpu().numpy().astype(np.uint8), MNN.Tensor_DimensionType_Caffe)
             input_tensor.copyFrom(input_data)

@@ -554,6 +554,7 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
         if node in skipped_a_fake_quant:
             maybe_dynamic = _get_attrs(prepared_model, node.target)
             maybe_dynamic.mutable_attrs['quant_bits']._value_list = [default_skipped_bit]
+            maybe_dynamic.mutable_attrs['quant_bits'].current_choice = default_skipped_bit
 
     new_graph.lint()
     prepared_model.graph = new_graph
