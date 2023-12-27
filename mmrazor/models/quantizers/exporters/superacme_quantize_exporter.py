@@ -50,12 +50,14 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
             for c in range(data.shape[0]):
                 new_data.append(np.clip(data[c], clip_range_min[c], clip_range_max[c]))
             new_data = np.array(new_data)
+            if not np.allclose(data, new_data):
+                print_log(f'Clip weights <{tensor_name}> to per-channel ranges.', logger='current', level=logging.WARNING)
             if transposed:
                 new_data = new_data.transpose(1, 0, 2, 3)
-            print_log(f'Clip weights <{tensor_name}> to per-channel ranges.', logger='current', level=logging.DEBUG)
         else:
             new_data = np.clip(data, clip_range_min, clip_range_max)
-            print_log(f'Clip weights <{tensor_name}> to range [{clip_range_min}, {clip_range_max}].', logger='current', level=logging.DEBUG)
+            if not np.allclose(data, new_data):
+                print_log(f'Clip weights <{tensor_name}> to range [{clip_range_min}, {clip_range_max}].', logger='current', level=logging.WARNING)
         new_data = numpy_helper.from_array(new_data)
         named_initializer[tensor_name].raw_data = new_data.raw_data
         

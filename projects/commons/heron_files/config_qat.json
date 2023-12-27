@@ -2,7 +2,7 @@
     "hardware_param": {
         "target_platform": "SA6920",
         "sram_size": 1,
-        "data_format": "RGBA",
+        "data_format": "NV12",
         "binary_eltwise_mode": 0
     },
     "input_model_type": "ONNX",

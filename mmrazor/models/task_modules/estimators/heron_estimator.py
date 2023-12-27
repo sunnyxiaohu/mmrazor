@@ -267,7 +267,7 @@ class HERONModelWrapper:
                 output_data = MNN.Tensor(v_np.shape, MNN.Halide_Type_Float,
                     v_np.astype(np.float32), MNN.Tensor_DimensionType_Caffe)
                 v.copyToHostTensor(output_data)
-                cls_score = torch.from_numpy(output_data.getNumpyData())
+                cls_score = torch.from_numpy(copy.deepcopy(output_data.getNumpyData()))
                 scores = F.softmax(cls_score, dim=1)
                 labels = scores.argmax(dim=1, keepdim=True).detach()
                 data_samples[0].set_pred_score(scores.squeeze()).set_pred_label(labels.squeeze())
@@ -427,7 +427,7 @@ class HERONModelWrapperDet(HERONModelWrapper):
                 output_data = MNN.Tensor(v_np.shape, MNN.Halide_Type_Float,
                     v_np.astype(np.float32), MNN.Tensor_DimensionType_Caffe)
                 v.copyToHostTensor(output_data)
-                out = torch.from_numpy(output_data.getNumpyData())
+                out = torch.from_numpy(copy.deepcopy(output_data.getNumpyData()))
                 if self.outputs_mapping is not None:
                     k = self.outputs_mapping.get(k, k)
                 if '_cls' in k:

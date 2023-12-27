@@ -50,9 +50,6 @@ model = dict(
     data_preprocessor=dict(
         type='DetDataPreprocessor',
         pad_size_divisor=32,
-        mean=[0.0, 0.0, 0.0],
-        std=[1.0, 1.0, 1.0],
-        bgr_to_rgb=False,
         batch_augments=[
             dict(
                 type='BatchSyncRandomResize',
@@ -136,6 +133,18 @@ test_cfg = dict(
             work_dir='work_dirs/lsq_superacme_yolox_s_8xb8-50e_coco',
             mnn_quant_json='projects/commons/heron_files/det_config_qat.json',
             # Uncomment and adjust `num_infer` for QoR
-            num_infer=1000,
-            infer_metric=_base_.test_evaluator
+            num_infer=None,
+            infer_metric=_base_.test_evaluator,
+            # Use netron to checkout outputs_mapping.
+            # outputs_mapping = {
+            #     '403': '~multi_level_conv_cls.0~Conv_output_0',
+            #     '418': '~multi_level_conv_cls.1~Conv_output_0',
+            #     '433': '~multi_level_conv_cls.2~Conv_output_0',
+            #     '405': '~multi_level_conv_obj.0~Conv_output_0',
+            #     '420': '~multi_level_conv_obj.1~Conv_output_0',
+            #     '435': '~multi_level_conv_obj.2~Conv_output_0',
+            #     '404': '~multi_level_conv_reg.0~Conv_output_0',
+            #     '419': '~multi_level_conv_reg.1~Conv_output_0',
+            #     '434': '~multi_level_conv_reg.2~Conv_output_0'
+            # }
         )))
