@@ -78,6 +78,7 @@ class DynamicSequential(Sequential, DynamicMixin):
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward of Dynamic Sequential."""
+
         if 'depth' not in self.mutable_attrs:
             return self(x)
 

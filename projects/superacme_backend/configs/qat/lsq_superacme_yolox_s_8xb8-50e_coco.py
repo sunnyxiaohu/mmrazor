@@ -2,7 +2,8 @@ _base_ = [
     'mmdet::yolox/yolox_s_8xb8-300e_coco.py'
 ]
 
-float_checkpoint = 'https://download.openmmlab.com/mmdetection/v2.0/yolox/yolox_s_8x8_300e_coco/yolox_s_8x8_300e_coco_20211121_095711-4592a793.pth'
+# float_checkpoint = 'https://download.openmmlab.com/mmdetection/v2.0/yolox/yolox_s_8x8_300e_coco/yolox_s_8x8_300e_coco_20211121_095711-4592a793.pth'
+float_checkpoint = '/alg-data/models/pretrained_models/yolox_s_8xb8-300e_coco/epoch_300.pth
 
 _base_.train_dataloader.dataset.pipeline = [
     dict(type='YOLOXHSVRandomAug'),
