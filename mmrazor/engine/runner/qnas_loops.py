@@ -348,10 +348,7 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
         """Iterate one epoch."""
         self.runner.call_hook('before_train_epoch')
         self.runner.model.train()
-        # if self._epoch < 5:
-        #     self.runner.model.module.sample_kinds = ['min']
-        # else:
-        #     self.runner.model.module.sample_kinds = ['max', 'min', 'random0', 'random1']
+
         for idx, data_batch in enumerate(self.dataloader):
             if self.is_first_batch:
                 # lsq observer init
@@ -503,15 +500,6 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                 self.architecture, slice_weight=True)
             metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
             resource_metrics = self.estimator.estimate(sliced_model)
-            # for mode in self.params_modes:
-            #     filename = f'{self.runner.log_dir}/subnet-{kind}_{mode}_params_boxplot_ep{self.runner.epoch}.png'
-            #     if mode == 'fuse_conv_bn':
-            #         from mqbench.cle_superacme.batch_norm_fold import fold_all_batch_norms
-            #         folded_pairs = fold_all_batch_norms(sliced_model, self.input_shapes)
-            #     elif mode == 'cle':
-            #         from mqbench.cle_superacme.cle import apply_cross_layer_equalization
-            #         apply_cross_layer_equalization(model=sliced_model, input_shape=self.input_shapes)
-            #     draw_params_boxplot(sliced_model, filename, topk_params=self.topk_params)
 
             metrics.update(resource_metrics)
         return metrics
