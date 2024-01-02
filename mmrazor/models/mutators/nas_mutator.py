@@ -132,7 +132,7 @@ class NasMutator(BaseMutator[MUTABLE_TYPE], GroupMixin):
                 elif kind == 'random':
                     choices[name] = mutables[0].sample_choice()
                 elif isinstance(kind, Callable):
-                    choices[name] = kind(mutables,**kwargs)
+                    choices[name] = kind(mutables, **kwargs)
                 else:
                     raise NotImplementedError()
         return choices

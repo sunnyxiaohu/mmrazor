@@ -92,3 +92,6 @@ class BaseMutable(BaseModule, ABC):
         store some non-essential information.
         """
         raise NotImplementedError()
+
+    def __lt__(self, other):
+        return str(self.alias) + str(self.current_choice) < str(other.alias) + str(self.current_choice)

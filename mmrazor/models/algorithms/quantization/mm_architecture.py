@@ -4,6 +4,7 @@ import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
+from mmengine import fileio
 from mmengine.config import Config
 from mmengine.model import MMDistributedDataParallel
 from mmengine.runner import load_checkpoint
@@ -13,6 +14,7 @@ from torch import nn
 from mmrazor.registry import MODEL_WRAPPERS, MODELS
 from mmrazor.structures.quantization import QConfigHandler
 from ..base import BaseAlgorithm, BaseModel
+from ...task_modules.tracer.fx.graph_utils import update_qdype_qmin_qmax
 
 try:
     from torch.ao.quantization import (FakeQuantizeBase, MinMaxObserver,
@@ -67,10 +69,13 @@ class MMArchitectureQuant(BaseAlgorithm):
                  forward_modes: Tuple = ('tensor', 'predict', 'loss'),
                  float_checkpoint: Optional[str] = None,
                  input_shapes: Tuple = (1, 3, 224, 224),
+                 use_cle=False,
+                 fix_subnet: Optional[Dict] = None,
                  init_cfg: Optional[Dict] = None):
 
         super().__init__(architecture, data_preprocessor, init_cfg)
-
+        self.fix_subnet = fix_subnet
+        self.use_cle = use_cle
         self.quantizer = MODELS.build(quantizer)
         self.input_shapes = input_shapes
         self.forward_modes = forward_modes
@@ -100,8 +105,10 @@ class MMArchitectureQuant(BaseAlgorithm):
             if isinstance(module, (MinMaxObserver, PerChannelMinMaxObserver)):
                 module.reset_min_max_vals()
             elif isinstance(module, FakeQuantizeBase):
-                module.scale.data = torch.ones_like(module.scale)
-                module.zero_point.data = torch.zeros_like(module.zero_point)
+                if hasattr(module, 'scale'):
+                    module.scale.data = torch.ones_like(module.scale)
+                if hasattr(module, 'zero_point'):
+                    module.zero_point.data = torch.zeros_like(module.zero_point)
 
     def sync_qparams(self, src_mode: str):
         """Sync all quantize parameters in different `forward_modes`. We could
@@ -282,7 +289,11 @@ class MMArchitectureQuant(BaseAlgorithm):
             call_method  _get_predictions  (head, head_fc, data_samples)
             output       output            (_get_predictions,)
         """
-
+        if self.use_cle:
+            # import pdb; pdb.set_trace()
+            model = model.eval()
+            from mqbench.cle_superacme.cle import apply_cross_layer_equalization
+            apply_cross_layer_equalization(model=model, input_shape=self.input_shapes)
         rewriter_context = self._get_rewriter_context_in_mmdeploy(
             self.deploy_cfg) if self.deploy_cfg is not None else None
 
@@ -304,6 +315,15 @@ class MMArchitectureQuant(BaseAlgorithm):
                 observed_module = self.quantizer.prepare(model, concrete_args)
 
             qmodels[mode] = observed_module
+
+        if self.fix_subnet is not None:
+            fix_subnet = fileio.load(self.fix_subnet)
+            for name, module in qmodels.named_modules():
+                if isinstance(module, FakeQuantizeBase):
+                    quant_info = fix_subnet[name]
+                    update_qdype_qmin_qmax(
+                        module, bit=quant_info['bit'], quant_min=quant_info['quant_min'],
+                        quant_max=quant_info['quant_max'])
 
         if rewriter_context is not None:
             # Add these popped function records back.
@@ -359,12 +379,15 @@ class MMArchitectureQuant(BaseAlgorithm):
         the backend's requirement.
         """
         device = next(self.parameters()).device
-        quantized_state_dict = self.qmodels['predict'].state_dict()
-        fp32_model = self.architecture
-        self.quantizer.convert_batchnorm2d(fp32_model)
-        concrete_args = {'mode': 'tensor'}
-        observed_model = self.quantizer.prepare(fp32_model, concrete_args)
-        observed_model.load_state_dict(quantized_state_dict)
+        # Note that rebuilding observed_model will break mixed-precision, we just use deepcopy.
+        observed_model = copy.deepcopy(self.qmodels['tensor'])
+        # # mode = 'tensor' ??
+        # quantized_state_dict = self.qmodels['predict'].state_dict()
+        # fp32_model = self.architecture
+        # self.quantizer.convert_batchnorm2d(fp32_model)
+        # concrete_args = {'mode': 'tensor'}
+        # observed_model = self.quantizer.prepare(fp32_model, concrete_args)
+        # observed_model.load_state_dict(quantized_state_dict, strict=False)
 
         self.quantizer.post_process_for_deploy(
             observed_model,
@@ -378,10 +401,12 @@ class MMArchitectureQuant(BaseAlgorithm):
             if 'activation_post_process_' in node.name:
                 module_name = node.target
                 module = getattr(observed_model, module_name)
+                extra_observer_kwargs = {'dtype': module.dtype, 'quant_min': module.quant_min, 'quant_max': module.quant_max}
                 fakequant_new = QConfigHandler.replace_fakequant(
                     module,
                     self.quantizer.qconfig.a_qscheme,
-                    update_qparams=True)
+                    update_qparams=True,
+                    extra_observer_kwargs=extra_observer_kwargs)
                 setattr(observed_model, module_name, fakequant_new)
 
         observed_model.apply(disable_observer)

@@ -1,6 +1,12 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from mmengine.utils import import_modules_from_strings
 
+try:
+    import onnx
+except ImportError:
+    from mmrazor.utils import get_package_placeholder
+    onnx = get_package_placeholder('No module named onnx')
+
 
 def _check_valid_source(source):
     """Check if the source's format is valid."""
@@ -37,3 +43,14 @@ def str2class(str_inputs):
         return tuple(clss)
     else:
         return clss[0]
+
+
+def post_process_nodename(onnx_file):
+    onnx_model = onnx.load(onnx_file)
+    for node in onnx_model.graph.node:
+        node.name = node.name.replace('/', '~')
+        for idx, input_name in enumerate(node.input):
+            node.input[idx] = input_name.replace('/', '~')
+        for idx, output_name in enumerate(node.output):
+            node.output[idx] = output_name.replace('/', '~')
+    onnx.save(onnx_model, onnx_file)

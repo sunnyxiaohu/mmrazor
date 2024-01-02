@@ -11,14 +11,6 @@ data_preprocessor = dict(
     to_rgb=True,
 )
 
-bgr_mean = data_preprocessor['mean'][::-1]
-bgr_std = data_preprocessor['std'][::-1]
-
-extra_params = dict(
-    translate_const=int(224 * 0.45),
-    img_mean=tuple(round(x) for x in data_preprocessor['mean']),
-)
-
 train_pipeline = [
     dict(type='mmcls.LoadImageFromFile'),
     dict(type='mmcls.RandomResizedCrop', scale=224),
@@ -29,19 +21,14 @@ train_pipeline = [
 
 test_pipeline = [
     dict(type='mmcls.LoadImageFromFile'),
-    dict(
-        type='mmcls.ResizeEdge',
-        scale=256,
-        edge='short',
-        backend='pillow',
-        interpolation='bilinear'),
+    dict(type='mmcls.ResizeEdge', scale=256, edge='short'),
     dict(type='mmcls.CenterCrop', crop_size=224),
     dict(type='mmcls.PackClsInputs')
 ]
 
 train_dataloader = dict(
     batch_size=64,
-    num_workers=16,
+    num_workers=6,
     dataset=dict(
         type=dataset_type,
         data_root='data/imagenet',
@@ -54,7 +41,7 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     batch_size=64,
-    num_workers=16,
+    num_workers=6,
     dataset=dict(
         type=dataset_type,
         data_root='data/imagenet',
@@ -74,25 +61,35 @@ test_evaluator = val_evaluator
 optim_wrapper = dict(
     optimizer=dict(
         type='SGD', lr=0.8, momentum=0.9, weight_decay=0.00001, nesterov=True),
-    paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0.))
+    paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0.)
+)
 
 # learning policy
-max_epochs = 360
+max_epochs = 100
+warm_epochs = 5
+# learning policy
 param_scheduler = [
+    # warm up learning rate scheduler
     dict(
-        type='LinearLR', start_factor=0.001, by_epoch=False, begin=0,
-        end=3125),
-    dict(
-        type='CosineAnnealingLR',
-        T_max=max_epochs,
-        eta_min=0,
+        type='LinearLR',
+        start_factor=0.25,
         by_epoch=True,
         begin=0,
+        # about 2500 iterations for ImageNet-1k
+        end=warm_epochs,
+        # update by iter
+        convert_to_iter_based=True),
+    # main learning rate scheduler
+    dict(
+        type='CosineAnnealingLR',
+        T_max=max_epochs-warm_epochs,
+        by_epoch=True,
+        begin=warm_epochs,
         end=max_epochs,
-        convert_to_iter_based=True)
+    ),
 ]
 
 # train, val, test setting
-train_cfg = dict(by_epoch=True, max_epochs=max_epochs, val_interval=1)
+train_cfg = dict(by_epoch=True, max_epochs=max_epochs, val_interval=5)
 val_cfg = dict(type='mmrazor.SubnetValLoop', calibrate_sample_num=4096)
 test_cfg = dict(type='mmrazor.SubnetValLoop', calibrate_sample_num=4096)

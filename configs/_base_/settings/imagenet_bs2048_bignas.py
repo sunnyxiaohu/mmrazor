@@ -343,7 +343,8 @@ test_pipeline = [
 
 train_dataloader = dict(
     batch_size=64,
-    num_workers=16,
+    num_workers=4,
+    pin_memory=True,
     dataset=dict(
         type=dataset_type,
         data_root='data/imagenet',
@@ -356,7 +357,7 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     batch_size=64,
-    num_workers=16,
+    num_workers=4,
     dataset=dict(
         type=dataset_type,
         data_root='data/imagenet',
@@ -395,6 +396,6 @@ param_scheduler = [
 ]
 
 # train, val, test setting
-train_cfg = dict(by_epoch=True, max_epochs=max_epochs, val_interval=1)
+train_cfg = dict(by_epoch=True, max_epochs=max_epochs, val_interval=5)
 val_cfg = dict(type='mmrazor.SubnetValLoop', calibrate_sample_num=4096)
 test_cfg = dict(type='mmrazor.SubnetValLoop', calibrate_sample_num=4096)

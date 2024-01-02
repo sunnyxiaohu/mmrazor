@@ -78,8 +78,4 @@ class DynamicLinearClsHead(ClsHead, DynamicHead):
                               backbone_output_mutable: BaseMutable) -> None:
         """Connect dynamic backbone."""
 
-        OneShotMutableChannelUnit._register_channel_container(
-            self, MutableChannelContainer)
-
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.fc, backbone_output_mutable, False)
+        self.fc.register_mutable_attr('in_features', backbone_output_mutable)

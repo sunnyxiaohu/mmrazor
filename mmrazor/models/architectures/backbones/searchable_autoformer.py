@@ -108,42 +108,31 @@ class TransformerEncoderLayer(BaseBackbone):
         self.attn.register_mutable_attr('num_heads', mutable_num_heads)
 
         # handle the mutable of the first dynamic LN
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.norm1, self.mutable_embed_dims, True)
+        self.norm1.register_mutable_attr(
+            'num_features', self.mutable_embed_dims)
         # handle the mutable of the second dynamic LN
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.norm2, self.mutable_embed_dims, True)
+        self.norm2.register_mutable_attr(
+            'num_features', self.mutable_embed_dims)
 
         # handle the mutable of attn
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.attn, self.mutable_embed_dims, False)
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.attn,
-            self.mutable_q_embed_dims,
-            True,
-            end=self.mutable_q_embed_dims.current_choice)
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.attn.rel_pos_embed_k, self.mutable_head_dims, False)
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.attn.rel_pos_embed_v, self.mutable_head_dims, False)
+        self.attn.register_mutable_attr(
+            'embed_dims', self.mutable_embed_dims)
+        self.attn.register_mutable_attr(
+            'q_embed_dims', self.mutable_q_embed_dims)
+        self.attn.rel_pos_embed_k.register_mutable_attr(
+            'in_channels', self.mutable_head_dims)
+        self.attn.rel_pos_embed_v.register_mutable_attr(
+            'in_channels', self.mutable_head_dims)
 
         # handle the mutable of fc
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.fc1, mutable_embed_dims, False)
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.fc1,
-            self.middle_channels,
-            True,
-            start=0,
-            end=self.middle_channels.current_choice)
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.fc2,
-            self.middle_channels,
-            False,
-            start=0,
-            end=self.middle_channels.current_choice)
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.fc2, mutable_embed_dims, True)
+        self.fc1.register_mutable_attr(
+            'in_channels', mutable_embed_dims)
+        self.fc1.register_mutable_attr(
+            'out_channels', self.middle_channels)
+        self.fc2.register_mutable_attr(
+            'in_channels', self.middle_channels)
+        self.fc2.register_mutable_attr(
+            'out_channels', mutable_embed_dims)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward of Transformer Encode Layer."""
@@ -324,15 +313,15 @@ class AutoformerBackbone(BaseBackbone):
 
     def register_mutables(self):
         """Mutate the autoformer."""
-        OneShotMutableChannelUnit._register_channel_container(
-            self, MutableChannelContainer)
+        # OneShotMutableChannelUnit._register_channel_container(
+        #     self, MutableChannelContainer)
 
         # handle the mutation of depth
         self.blocks.register_mutable_attr('depth', self.mutable_depth)
 
         # handle the mutation of patch embed
-        MutableChannelContainer.register_mutable_channel_to_module(
-            self.patch_embed, self.mutable_embed_dims, True)
+        self.patch_embed.register_mutable_attr(
+            'embed_dims', self.mutable_embed_dims)
 
         # handle the dependencies of TransformerEncoderLayers
         for i in range(self.mutable_depth.max_choice):  # max depth here
@@ -346,8 +335,8 @@ class AutoformerBackbone(BaseBackbone):
 
         # handle the mutable of final norm
         if self.use_final_norm:
-            MutableChannelContainer.register_mutable_channel_to_module(
-                self.norm1, self.last_mutable, True)
+            self.norm1.register_mutable_attr(
+                'out_channels', self.last_mutable)
 
     def forward(self, x: torch.Tensor):
         """Forward of Autoformer."""

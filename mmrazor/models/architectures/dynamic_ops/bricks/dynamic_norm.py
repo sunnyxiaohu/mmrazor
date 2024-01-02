@@ -260,6 +260,7 @@ class DynamicLayerNorm(LayerNorm, DynamicLayerNormMixin):
                 input.dim()))
 
 
+@MODELS.register_module()
 class DynamicSyncBatchNorm(nn.SyncBatchNorm, DynamicBatchNormMixin):
     """DynamicOp for sync bn."""
 

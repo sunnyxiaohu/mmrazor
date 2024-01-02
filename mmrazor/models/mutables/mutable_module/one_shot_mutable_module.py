@@ -244,6 +244,8 @@ class OneShotMutableOP(OneShotMutableModule):
         return DumpChosen(chosen=chosen, meta=meta)
 
     def export_chosen(self) -> str:
+        if self.is_fixed:
+            return self._chosen
         assert self.current_choice is not None
         return self.current_choice
 
