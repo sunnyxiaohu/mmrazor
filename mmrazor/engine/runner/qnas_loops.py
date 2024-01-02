@@ -619,9 +619,9 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         # normalize qrange_results
         belta, eps = 2.0, 10e-6
         filter_fns = [
-            lambda x: 'activation_post_process_' in x[0],
-            lambda x: 'activation_post_process_' not in x[0]
-            # lambda x: True,
+            # lambda x: 'act_quant_bits_' in x[0],
+            # lambda x: 'act_quant_bits_' not in x[0]
+            lambda x: True,
         ]
         for fn in filter_fns:
             f_qrange_results = dict(filter(fn, qrange_results.items()))
@@ -812,63 +812,61 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         candidate = self.model.mutator.current_choices
         return candidate
 
-    # def sample_candidates(self) -> None:
-    #     """Update candidate pool contains specified number of candicates."""
-    #     candidates_resources = []
-    #     init_candidates = len(self.candidates)
-    #     idx = 0
-    #     if self.solve_mode in ['evo', 'prob', 'ilp']:
-    #         filterd_results, prob_results = self.get_qrange_probs()
-    #     if self.solve_mode == 'ilp':
-    #         num_candidates = self.num_candidates - init_candidates
-    #         act_alphas = [3*(i+1.0) / num_candidates for i in range(num_candidates)]
-    #         w_act_alphas = [(1.0, 0.0), (0.0, 1.0)]
-    #         w_act_alphas += [(1.0, i) for i in act_alphas]
-    #         # filterd_results, prob_results = self.get_qrange_probs()
-    #     # elif self.solve_mode == 'prob':
-    #         # _, prob_results = self.get_qrange_probs()
-    #     while len(self.candidates) < self.num_candidates:
-    #         idx += 1
-    #         if self.solve_mode == 'ilp' and idx <= len(w_act_alphas):
-    #             candidate = self.sample_ilp_once(
-    #                 filterd_results, prob_results, *w_act_alphas[idx-1])
-    #             if candidate is None:
-    #                 continue
-    #         elif self.solve_mode == 'prob':
-    #             candidate = self.sample_qrange_prob_once(prob_results)
-    #         # elif idx == 1:
-    #         #     candidate = self.model.mutator.sample_choices('max')
-    #         # elif idx == 2:
-    #         #     candidate = self.model.mutator.sample_choices('min')
-    #         elif self.solve_mode == 'evo':
-    #             this_prob_results = deepcopy(prob_results)
-    #             for k, v in this_prob_results.items():
-    #                 for b in v:
-    #                     p = random.random()
-    #                     this_prob_results[k][b] = p
-    #             candidate = self.sample_ilp_once(
-    #                 filterd_results, this_prob_results)
-    #             if candidate is None:
-    #                 continue
-    #         else:
-    #             candidate = self.model.mutator.sample_choices()
-    #         self.model.mutator.set_choices(candidate)
-    #         is_pass, result = self._check_constraints(
-    #             random_subnet=candidate)
-    #         if is_pass:
-    #             self.candidates.append(candidate)
-    #             candidates_resources.append(result)
-    #     self.candidates = Candidates(self.candidates.data)
+    def sample_candidates(self, num_candidates=None) -> None:
+        """Update candidate pool contains specified number of candicates."""
+        num_candidates = num_candidates or self.num_candidates
+        if self.solve_mode == 'evo_org':
+            return super().sample_candidates(num_candidates=num_candidates)
 
-    #     if len(candidates_resources) > 0:
-    #         self.candidates.update_resources(
-    #             candidates_resources,
-    #             start=len(self.candidates.data) - len(candidates_resources))
-    #         assert init_candidates + len(
-    #             candidates_resources) == self.num_candidates
+        candidates_resources = []
+        init_candidates = len(self.candidates)
+        idx = 0
+        if self.solve_mode in ['evo', 'prob', 'ilp']:
+            filterd_results, prob_results = self.get_qrange_probs()
+        if self.solve_mode == 'ilp':
+            num_candidates = num_candidates - init_candidates
+            act_alphas = [3*(i+1.0) / num_candidates for i in range(num_candidates)]
+            w_act_alphas = [(1.0, 0.0), (0.0, 1.0)]
+            w_act_alphas += [(1.0, i) for i in act_alphas]
 
-    #     # broadcast candidates to val with multi-GPUs.
-    #     broadcast_object_list(self.candidates.data)
+        while len(self.candidates) < num_candidates:
+            idx += 1
+            if self.solve_mode == 'ilp' and idx <= len(w_act_alphas):
+                candidate = self.sample_ilp_once(
+                    filterd_results, prob_results, *w_act_alphas[idx-1])
+                if candidate is None:
+                    continue
+            elif self.solve_mode == 'prob':
+                candidate = self.sample_qrange_prob_once(prob_results)
+            elif self.solve_mode == 'evo':
+                this_prob_results = deepcopy(prob_results)
+                for k, v in this_prob_results.items():
+                    for b in v:
+                        p = random.random()
+                        this_prob_results[k][b] = p
+                candidate = self.sample_ilp_once(
+                    filterd_results, this_prob_results)
+                if candidate is None:
+                    continue
+            else:
+                candidate = self.model.mutator.sample_choices()
+            self.model.mutator.set_choices(candidate)
+            is_pass, result = self._check_constraints(
+                random_subnet=candidate)
+            if is_pass:
+                self.candidates.append(candidate)
+                candidates_resources.append(result)
+        self.candidates = Candidates(self.candidates.data)
+
+        if len(candidates_resources) > 0:
+            self.candidates.update_resources(
+                candidates_resources,
+                start=len(self.candidates.data) - len(candidates_resources))
+            assert init_candidates + len(
+                candidates_resources) == num_candidates
+
+        # broadcast candidates to val with multi-GPUs.
+        broadcast_object_list(self.candidates.data)
 
     @torch.no_grad()
     def _val_candidate(self, use_predictor: bool = False) -> Dict:
@@ -895,21 +893,21 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
         return metrics
 
-    # def _check_constraints(
-    #         self, random_subnet: SupportRandomSubnet) -> Tuple[bool, Dict]:
-    #     """Check whether is beyond constraints.
+    def _check_constraints(
+            self, random_subnet: SupportRandomSubnet) -> Tuple[bool, Dict]:
+        """Check whether is beyond constraints.
 
-    #     Returns:
-    #         bool, result: The result of checking.
-    #     """
-    #     is_pass, results = check_subnet_resources(
-    #         model=self.model,
-    #         subnet=random_subnet,
-    #         estimator=self.estimator,
-    #         constraints_range=self.constraints_range,
-    #         export=self.solve_mode == 'evo_org')
+        Returns:
+            bool, result: The result of checking.
+        """
+        is_pass, results = check_subnet_resources(
+            model=self.model,
+            subnet=random_subnet,
+            estimator=self.estimator,
+            constraints_range=self.constraints_range,
+            export=self.solve_mode == 'evo_org')
 
-    #     return is_pass, results
+        return is_pass, results
 
     def _save_best_fix_subnet(self):
         """Save best subnet in searched top-k candidates."""
