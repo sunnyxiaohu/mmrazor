@@ -35,8 +35,8 @@ def check_subnet_resources(
     # Support nested algorithm.
     model_to_check = model
     if export:
-        while(isinstance(model_to_check, BaseAlgorithm)):
-            model_to_check = model_to_check.architecture
+        # while(isinstance(model_to_check, BaseAlgorithm)):
+        #     model_to_check = model_to_check.architecture
 
         _, model_to_check = export_fix_subnet(model_to_check, slice_weight=True)
 

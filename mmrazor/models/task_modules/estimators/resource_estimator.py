@@ -125,16 +125,18 @@ class ResourceEstimator(BaseEstimator):
             self._check_flops_params_cfg(flops_params_cfg)
         else:
             flops_params_cfg = self.flops_params_cfg
-        flops_params_cfg = self._set_default_resource_params(flops_params_cfg)
+        flops_params_cfg = self._set_default_resource_params(
+            flops_params_cfg)
 
         if latency_cfg:
             latency_cfg = {**self.latency_cfg, **latency_cfg}
             self._check_latency_cfg(latency_cfg)
         else:
             latency_cfg = self.latency_cfg
-        latency_cfg = self._set_default_resource_params(latency_cfg)            
+        latency_cfg = self._set_default_resource_params(latency_cfg)
 
         model.eval()
+
         flops, params = get_model_flops_params(model, **flops_params_cfg)
         if measure_latency:
             latency = get_model_latency(model, **latency_cfg)
@@ -169,7 +171,8 @@ class ResourceEstimator(BaseEstimator):
             self._check_flops_params_cfg(flops_params_cfg)
         else:
             flops_params_cfg = self.flops_params_cfg
-        flops_params_cfg = self._set_default_resource_params(flops_params_cfg)            
+        flops_params_cfg = self._set_default_resource_params(
+            flops_params_cfg)
         flops_params_cfg['seperate_return'] = True
 
         assert len(flops_params_cfg['spec_modules']), (

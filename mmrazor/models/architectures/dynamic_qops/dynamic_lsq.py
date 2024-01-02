@@ -49,7 +49,6 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
     """
     accepted_mutable_attrs = {'quant_bits'}
     FLOAT_BITS = 32
-    BASE_BITS = 4
 
     def __init__(self, *args, param_share_mode = 1, M=0.4, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -64,6 +63,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             self.scale_theta = Parameter(torch.tensor([0.]))
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
         self.M = M
+        self.BASE_BITS = self.bitwidth
 
     @property
     def static_op_factory(self):
@@ -96,7 +96,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         lsq.static_enabled.data.copy_(self.static_enabled.data)
         lsq.learning_enabled.copy_(self.learning_enabled.data)
         lsq.eps.copy_(self.eps.data)
-        update_qdype_qmin_qmax(lsq, self.bitwidth, quant_min=self.quant_min, quant_max=self.quant_max)
+        update_qdype_qmin_qmax(lsq, self.bitwidth, quant_min=self.quant_min, quant_max=self.quant_max, qdtype=self.dtype)
         return lsq
 
     @torch.jit.export
@@ -130,6 +130,9 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             _scale = _scale / mult
             scale.data.copy_(_scale)
             zero_point.data.copy_(_zero_point)
+
+        if index is None:
+            zero_point = self.zero_point
 
         if self.param_share_mode == 0:
             scale = self.scale[:, index]
@@ -174,6 +177,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
             else:
                 quant_bits = int(math.log(self.quant_max - self.quant_min + 1, 2))
             index = None
+            # assert self.param_share_mode == 1, f'param_share_mode can only be "1", when index is None, get {self.param_share_mode}'
         return quant_bits, index
 
     @torch.jit.export
@@ -189,6 +193,8 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
 
     def forward(self, X):
         """Forward computation. """
+        if X.numel() == 0:
+            return X
         quant_bits, index = self.get_dynamic_params()
         if quant_bits == self.FLOAT_BITS:
             return X
@@ -287,7 +293,10 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         _scale, _zero_point = \
             self.activation_post_process.calculate_qparams()
 
-        if self.param_share_mode == 0:
+        if index is None:
+            zp_add = self.zero_point
+            scale_mult = self.scale
+        elif self.param_share_mode == 0:
             zp_add = self.zero_point[:, index]
             scale_mult = self.scale[:, index]
         elif self.param_share_mode == 1:
@@ -329,6 +338,8 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
 
         Forward path returns fake quantized X.
         """
+        if X.numel() == 0:
+            return X
         quant_bits, index = self.get_dynamic_params()
         if quant_bits == self.FLOAT_BITS:
             return X
@@ -380,5 +391,5 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         lsq.static_enabled.data.copy_(self.static_enabled.data)
         lsq.learning_enabled.copy_(self.learning_enabled.data)
         lsq.eps.copy_(self.eps.data)
-        update_qdype_qmin_qmax(lsq, self.bitwidth, quant_min=self.quant_min, quant_max=self.quant_max)
+        update_qdype_qmin_qmax(lsq, self.bitwidth, quant_min=self.quant_min, quant_max=self.quant_max, qdtype=self.dtype)
         return lsq

@@ -9,6 +9,7 @@ from .quantization_loops import (LSQEpochBasedLoop, PTQLoop, QATEpochBasedLoop,
 from .slimmable_val_loop import SlimmableValLoop
 from .subnet_sampler_loop import GreedySamplerTrainLoop
 from .subnet_val_loop import SubnetValLoop
+from .subnet_export_val_loop import SubnetExportValLoop
 from .qnas_loops import QNASEpochBasedLoop, QNASValLoop, QNASEvolutionSearchLoop
 
 __all__ = [
@@ -16,6 +17,6 @@ __all__ = [
     'DartsIterBasedTrainLoop', 'SlimmableValLoop', 'EvolutionSearchLoop',
     'GreedySamplerTrainLoop', 'SubnetValLoop', 'SelfDistillValLoop',
     'ItePruneValLoop', 'AutoSlimGreedySearchLoop', 'QATEpochBasedLoop',
-    'PTQLoop', 'LSQEpochBasedLoop', 'QATValLoop', 'QNASEpochBasedLoop',
-    'QNASValLoop', 'QNASEvolutionSearchLoop'
+    'PTQLoop', 'LSQEpochBasedLoop', 'QATValLoop', 'SubnetExportValLoop',
+    'QNASEpochBasedLoop', 'QNASValLoop', 'QNASEvolutionSearchLoop'
 ]

@@ -53,183 +53,6 @@ def traverse_children(module: nn.Module) -> None:
             traverse_children(mutable._modules)
 
 
-# class _ConvBnNd(nn.modules.conv._ConvNd, nni._FusedModule):
-
-#     _version = 2
-#     _FLOAT_MODULE = MOD
-
-#     def __init__(self,
-#                  # ConvNd args
-#                  in_channels, out_channels, kernel_size, stride,
-#                  padding, dilation, transposed, output_padding,
-#                  groups,
-#                  bias,
-#                  padding_mode,
-#                  # BatchNormNd args
-#                  # num_features: out_channels
-#                  eps=1e-05, momentum=0.1,
-#                  # affine: True
-#                  # track_running_stats: True
-#                  # Args for this module
-#                  freeze_bn=False,
-#                  qconfig=None,
-#                  dim=2):
-#         nn.modules.conv._ConvNd.__init__(self, in_channels, out_channels, kernel_size,
-#                                          stride, padding, dilation, transposed,
-#                                          output_padding, groups, False, padding_mode)
-#         assert qconfig, 'qconfig must be provided for QAT module'
-#         self.qconfig = qconfig
-#         self.freeze_bn = freeze_bn if self.training else True
-#         self.bn = _BN_CLASS_MAP[dim](out_channels, eps, momentum, True, True)
-#         self.weight_fake_quant = self.qconfig.weight()
-#         if bias:
-#             self.bias = Parameter(torch.empty(out_channels))
-#         else:
-#             self.register_parameter('bias', None)
-#         self.reset_bn_parameters()
-
-#         # this needs to be called after reset_bn_parameters,
-#         # as they modify the same state
-#         if self.training:
-#             if freeze_bn:
-#                 self.freeze_bn_stats()
-#             else:
-#                 self.update_bn_stats()
-#         else:
-#             self.freeze_bn_stats()
-
-#         self._enable_slow_path_for_better_numerical_stability = False
-
-
-#     def _forward(self, input):
-#         if self._enable_slow_path_for_better_numerical_stability:
-#             return self._forward_slow(input)
-#         return self._forward_approximate(input)
-
-#     def _forward_approximate(self, input):
-#         """Approximated method to fuse conv and bn. It requires only one forward pass.
-#         conv_orig = conv / scale_factor where scale_factor = bn.weight / running_std
-#         """
-#         assert self.bn.running_var is not None
-#         running_std = torch.sqrt(self.bn.running_var + self.bn.eps)
-#         scale_factor = self.bn.weight / running_std
-#         weight_shape = [1] * len(self.weight.shape)
-#         weight_shape[0] = -1
-#         bias_shape = [1] * len(self.weight.shape)
-#         bias_shape[1] = -1
-#         scaled_weight = self.weight_fake_quant(self.weight * scale_factor.reshape(weight_shape))
-#         # using zero bias here since the bias for original conv
-#         # will be added later
-#         if self.bias is not None:
-#             zero_bias = torch.zeros_like(self.bias, dtype=input.dtype)
-#         else:
-#             zero_bias = torch.zeros(self.out_channels, device=scaled_weight.device, dtype=input.dtype)
-#         conv = self._conv_forward(input, scaled_weight, zero_bias)
-#         conv_orig = conv / scale_factor.reshape(bias_shape)
-#         if self.bias is not None:
-#             conv_orig = conv_orig + self.bias.reshape(bias_shape)
-#         conv = self.bn(conv_orig)
-#         return conv
-
-#     def _forward_slow(self, input):
-#         """
-#         A more accurate but slow method to compute conv bn fusion, following https://arxiv.org/pdf/1806.08342.pdf
-#         It requires two forward passes but handles the case bn.weight == 0
-
-#         Conv: Y = WX + B_c
-#         Conv without bias: Y0 = WX = Y - B_c, Y = Y0 + B_c
-
-#         Batch statistics:
-#           mean_Y = Y.mean()
-#                  = Y0.mean() + B_c
-#           var_Y = (Y - mean_Y)^2.mean()
-#                 = (Y0 - Y0.mean())^2.mean()
-#         BN (r: bn.weight, beta: bn.bias):
-#           Z = r * (Y - mean_Y) / sqrt(var_Y + eps) + beta
-#             = r * (Y0 - Y0.mean()) / sqrt(var_Y + eps) + beta
-
-#         Fused Conv BN training (std_Y = sqrt(var_Y + eps)):
-#           Z = (r * W / std_Y) * X + r * (B_c - mean_Y) / std_Y + beta
-#             = (r * W / std_Y) * X - r * Y0.mean() / std_Y + beta
-
-#         Fused Conv BN inference (running_std = sqrt(running_var + eps)):
-#           Z = (r * W / running_std) * X - r * (running_mean - B_c) / running_std + beta
-
-#         QAT with fused conv bn:
-#           Z_train = fake_quant(r * W / running_std) * X * (running_std / std_Y) - r * Y0.mean() / std_Y + beta
-#                   = conv(X, fake_quant(r * W / running_std)) * (running_std / std_Y) - r * Y0.mean() / std_Y + beta
-#           Z_inference = conv(X, fake_quant(r * W / running_std)) - r * (running_mean - B_c) / running_std + beta
-#         """
-
-#         assert self.bn.running_var is not None
-#         assert self.bn.running_mean is not None
-
-#         # using zero bias here since the bias for original conv
-#         # will be added later
-#         zero_bias = torch.zeros(self.out_channels, device=self.weight.device, dtype=input.dtype)
-
-#         weight_shape = [1] * len(self.weight.shape)
-#         weight_shape[0] = -1
-#         bias_shape = [1] * len(self.weight.shape)
-#         bias_shape[1] = -1
-
-#         if self.bn.training:
-#             # needed to compute batch mean/std
-#             conv_out = self._conv_forward(input, self.weight, zero_bias)
-#             # update bn statistics
-#             with torch.no_grad():
-#                 conv_out_bias = (
-#                     conv_out if self.bias is None else conv_out + self.bias.reshape(bias_shape)
-#                 )
-#                 self.bn(conv_out_bias)
-
-#         # fused conv + bn without bias using bn running statistics
-#         running_std = torch.sqrt(self.bn.running_var + self.bn.eps)
-#         scale_factor = self.bn.weight / running_std
-#         scaled_weight = self.weight_fake_quant(
-#             self.weight * scale_factor.reshape(weight_shape)
-#         )
-#         # fused conv without bias for inference: (r * W / running_std) * X
-#         conv_bn = self._conv_forward(input, scaled_weight, zero_bias)
-
-#         if self.bn.training:
-#             avg_dims = [0] + list(range(2, len(self.weight.shape)))
-#             batch_mean = conv_out.mean(avg_dims)
-#             batch_var = torch.square(conv_out - batch_mean.reshape(bias_shape)).mean(
-#                 avg_dims
-#             )
-#             batch_std = torch.sqrt(batch_var + self.bn.eps)
-
-#             # scale to use batch std in training mode
-#             # conv(X, r * W / std_Y) = conv(X, r * W / running_std) * (running_std / std_Y)
-#             unscale_factor = running_std / batch_std
-#             conv_bn *= unscale_factor.reshape(bias_shape)
-
-#             fused_mean = batch_mean
-#             fused_std = batch_std
-#         else:
-#             fused_mean = self.bn.running_mean - (self.bias if self.bias is not None else 0)
-#             fused_std = running_std
-
-#         # fused bias = beta - r * mean / std
-#         fused_bias = self.bn.bias - self.bn.weight * fused_mean / fused_std
-#         conv_bn += fused_bias.reshape(bias_shape)
-
-#         # HACK to let conv bias particpiate in loss to avoid DDP error (parameters
-#         #   were not used in producing loss)
-#         if self.bias is not None:
-#             conv_bn += (self.bias - self.bias).reshape(bias_shape)
-
-#         return conv_bn
-
-#     def extra_repr(self):
-#         # TODO(jerryzh): extend
-#         return super(_ConvBnNd, self).extra_repr()
-
-#     def forward(self, input):
-#         return self._forward(input)
-
-
 class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
 
     _FLOAT_MODULE = DynamicConvBn2d
@@ -241,7 +64,7 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         with substitute_bn_class_map():
             super().__init__(*args, **kwarg)
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
-        self._enable_slow_path_for_better_numerical_stability = True
+        self._enable_slow_path_for_better_numerical_stability = False # True
 
     def _forward_approximate(self, input):
         """Approximated method to fuse conv and bn. It requires only one forward pass.
@@ -259,9 +82,9 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         bias_shape = [1] * len(self.weight.shape)
         bias_shape[1] = -1
         scaled_weight = self.weight * scale_factor.reshape(weight_shape)
+        scaled_weight = self.weight_fake_quant(scaled_weight)
         scaled_weight, bias, padding, out_mask = self.get_dynamic_params(scaled_weight, self.bias)
         scale_factor = scale_factor[out_mask]
-        scaled_weight = self.weight_fake_quant(scaled_weight)
         # using zero bias here since the bias for original conv
         # will be added later
         if bias is not None:
@@ -319,8 +142,7 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         weight_shape[0] = -1
         bias_shape = [1] * len(self.weight.shape)
         bias_shape[1] = -1
-
-        weight, bias, padding, out_mask = self.get_dynamic_params(self.weight, self.bias)
+        weight, bias, padding, out_mask = self.get_dynamic_params(self.weight_fake_quant(self.weight), self.bias)
         zero_bias = zero_bias[out_mask]
 
         if self.bn.training:
@@ -339,9 +161,7 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         running_std = torch.sqrt(self.bn.running_var + self.bn.eps)
         scale_factor = self.bn.weight / running_std
         scale_factor = scale_factor[out_mask]
-        scaled_weight = self.weight_fake_quant(
-            weight * scale_factor.reshape(weight_shape)
-        )
+        scaled_weight = weight * scale_factor.reshape(weight_shape)
         # fused conv without bias for inference: (r * W / running_std) * X
         conv_bn = self.conv_func(input, scaled_weight, zero_bias,
                                  self.stride, padding, self.dilation, groups)
@@ -384,7 +204,6 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
                `mod`: a float module, either produced by torch.ao.quantization utilities
                or directly from user
         """
-        # import pdb; pdb.set_trace()
         qat_conv = super(DynamicQConvBn2d, cls).from_float(mod)
 
         for attr, value in mod[0].mutable_attrs.items():
@@ -409,58 +228,65 @@ class DynamicQConvBn2d(nniqat.ConvBn2d, DynamicConvMixin):
         return cls.from_float(module)
 
     def to_static_op(self):
-        # cls = type(self)
-        # conv = cls._FLOAT_CONV_MODULE(  # type: ignore[attr-defined]
-        #     self.in_channels,
-        #     self.out_channels,
-        #     self.kernel_size,
-        #     self.stride,
-        #     self.padding,
-        #     self.dilation,
-        #     self.groups,
-        #     self.bias is not None,
-        #     self.padding_mode)
-        # conv.weight = torch.nn.Parameter(self.weight.detach())
-        # if self.bias is not None:
-        #     conv.bias = torch.nn.Parameter(self.bias.detach())
+        weight, bias, padding, out_mask = self.get_dynamic_params(self.weight, self.bias)
+        groups = self.groups
+        if groups == self.in_channels == self.out_channels and \
+                self.mutable_in_channels is not None:
+            mutable_in_channels = self.mutable_attrs['in_channels']
+            groups = mutable_in_channels.current_mask.sum().item()
+        out_channels = weight.size(0)
+        in_channels = weight.size(1) * groups
+        kernel_size = tuple(weight.shape[2:])
 
-        # bn = cls._FLOAT_BN_MODULE(
-        #     num_features=self.bn.num_features,
-        #     eps=self.bn.eps,
-        #     momentum=self.bn.momentum,
-        #     affine=self.bn.affine,
-        #     track_running_stats=self.bn.track_running_stats)
-        # if self.bn.running_mean is not None:
-        #     bn.running_mean.copy_(self.bn.running_mean)
-        #     bn.running_mean = bn.running_mean.to(
-        #         self.bn.running_mean.device)
-        # if self.bn.running_var is not None:
-        #     bn.running_var.copy_(self.bn.running_var)
-        #     bn.running_var = bn.running_var.to(
-        #         self.bn.running_var.device)
-        # if self.bn.weight is not None:
-        #     bn.weight = nn.Parameter(self.bn.weight)
-        # if self.bn.bias is not None:
-        #     bn.bias = nn.Parameter(self.bn.bias)
+        cls = self.static_op_factory
+        conv = cls._FLOAT_CONV_MODULE(  # type: ignore[attr-defined]
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            groups=groups,
+            bias=self.bias is not None,
+            padding_mode=self.padding_mode)
+        conv.weight = torch.nn.Parameter(weight)
+        if bias is not None:
+            conv.bias = torch.nn.Parameter(bias)
 
-        # modules = [conv, bn]
-        # if cls._FLOAT_RELU_MODULE:  # type: ignore[attr-defined]
-        #     relu = cls._FLOAT_RELU_MODULE()  # type: ignore[attr-defined]
-        #     modules.append(relu)
-        # mod = cls._FLOAT_MODULE(*modules)  # type: ignore[attr-defined]
-        # mod.train(self.training)
+        running_mean, running_var, weight, bias = self.bn.get_dynamic_params()
+        bn = cls._FLOAT_BN_MODULE(
+            num_features=out_channels,
+            eps=self.bn.eps,
+            momentum=self.bn.momentum,
+            affine=self.bn.affine,
+            track_running_stats=self.bn.track_running_stats)
+        if running_mean is not None:
+            bn.running_mean.copy_(running_mean)
+            bn.running_mean = bn.running_mean.to(running_mean.device)
+        if running_var is not None:
+            bn.running_var.copy_(running_var)
+            bn.running_var = bn.running_var.to(running_var.device)
+        if weight is not None:
+            bn.weight = nn.Parameter(weight)
+        if bias is not None:
+            bn.bias = nn.Parameter(bias)
 
-        # for attr, value in self.mutable_attrs.items():
-        #     mod[0].register_mutable_attr(attr, value)
-        # if 'out_channels' in self.mutable_attrs:
-        #     mod[1].register_mutable_attr('num_features', self.mutable_attrs['out_channels'])
-        # elif 'in_channels' in self.mutable_attrs:
-        #     mod[1].register_mutable_attr('num_features', self.mutable_attrs['in_channels'])
-        mod = copy.deepcopy(self)
-        traverse_children(mod._modules)
+        modules = [conv, bn]
+        if cls._FLOAT_RELU_MODULE:  # type: ignore[attr-defined]
+            relu = cls._FLOAT_RELU_MODULE()  # type: ignore[attr-defined]
+            modules.append(relu)
 
-        # mod = self.static_op_factory._FLOAT_MODULE(*mod._modules.values())
-        # mod = self.static_op_factory.from_float(mod)
+        fake_quant = self.weight_fake_quant.to_static_op()
+        if len(fake_quant.scale) > 1 and len(fake_quant.scale) != out_channels:
+          fake_quant.scale.data = fake_quant.scale.data[out_mask]
+          fake_quant.zero_point.data = fake_quant.zero_point.data[out_mask]
+
+        mod = cls._FLOAT_MODULE(*modules)  # type: ignore[attr-defined]
+        mod.qconfig = self.qconfig
+        mod.train(self.training)
+        mod = cls.from_float(mod)
+        mod.weight_fake_quant = fake_quant
+
         return mod
 
     def get_dynamic_params(
@@ -496,7 +322,6 @@ class DynamicQConvBnReLU2d(DynamicQConvBn2d):
     _FUSED_FLOAT_MODULE = DynamicConvReLU2d
 
     def forward(self, input):
-        # import pdb; pdb.set_trace()
         return F.relu(DynamicQConvBn2d._forward(self, input))
 
     @classmethod
@@ -527,7 +352,7 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
                `mod`: a float module, either produced by torch.ao.quantization utilities
                or directly from user
         """
-        # import pdb; pdb.set_trace()        
+        # import pdb; pdb.set_trace()
         qat_conv = super(DynamicQConvReLU2d, cls).from_float(mod)
 
         for attr, value in mod[0].mutable_attrs.items():
@@ -553,15 +378,51 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
         groups = self.groups
         if self.groups == self.in_channels == self.out_channels:
             groups = input.size(1)
-        weight, bias, padding = self.get_dynamic_params(
+        weight, bias, padding, out_mask = self.get_dynamic_params(
             self.weight_fake_quant(self.weight), self.bias)
         return F.relu(
             self.conv_func(input, weight, bias,
                            self.stride, padding, self.dilation, groups))
 
     def to_static_op(self):
-        mod = copy.deepcopy(self)
-        traverse_children(mod._modules)
+        weight, bias, padding, out_mask = self.get_dynamic_params(self.weight, self.bias)
+        groups = self.groups
+        if groups == self.in_channels == self.out_channels and \
+                self.mutable_in_channels is not None:
+            mutable_in_channels = self.mutable_attrs['in_channels']
+            groups = mutable_in_channels.current_mask.sum().item()
+        out_channels = weight.size(0)
+        in_channels = weight.size(1) * groups
+        kernel_size = tuple(weight.shape[2:])
+
+        cls = self.static_op_factory
+        conv = cls._FLOAT_CONV_MODULE(  # type: ignore[attr-defined]
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=self.stride,
+            padding=self.padding,
+            dilation=self.dilation,
+            groups=groups,
+            bias=self.bias is not None,
+            padding_mode=self.padding_mode)
+        conv.weight = torch.nn.Parameter(weight)
+        if bias is not None:
+            conv.bias = torch.nn.Parameter(bias)
+
+        modules = [conv, cls._FLOAT_RELU_MODULE()]
+
+        fake_quant = self.weight_fake_quant.to_static_op()
+        if len(fake_quant.scale) > 1 and len(fake_quant.scale) != out_channels:
+          fake_quant.scale.data = fake_quant.scale.data[out_mask]
+          fake_quant.zero_point.data = fake_quant.zero_point.data[out_mask]
+
+        mod = cls._FLOAT_MODULE(*modules)  # type: ignore[attr-defined]
+        mod.qconfig = self.qconfig
+        mod.train(self.training)
+        mod = cls.from_float(mod)
+        mod.weight_fake_quant = fake_quant
+
         return mod
 
     def get_dynamic_params(
@@ -576,7 +437,15 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
         # mutable in_channels/out_channels
         weight, bias = self._get_dynamic_params_by_mutable_channels(
             orig_weight, orig_bias)
-        return weight, bias, self.padding
+
+        if 'out_channels' in self.mutable_attrs:
+            mutable_out_channels = self.mutable_attrs['out_channels']
+            out_mask = mutable_out_channels.current_mask.to(orig_weight.device)
+        else:
+            out_mask = torch.ones(orig_weight.size(0)).bool().to(orig_weight.device)
+
+        return weight, bias, self.padding, out_mask
+
 
 def update_bn_stats(mod):
     if type(mod) in set([DynamicQConvBnReLU2d, DynamicQConvBn2d, DynamicQConvReLU2d]):

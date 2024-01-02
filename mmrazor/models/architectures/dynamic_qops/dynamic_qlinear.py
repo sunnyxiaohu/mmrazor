@@ -34,8 +34,7 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
         self.mutable_attrs: Dict[str, BaseMutable] = nn.ModuleDict()
 
     def forward(self, input):
-        weight, bias = self.get_dynamic_params(self.weight, self.bias)
-        weight = self.weight_fake_quant(weight)
+        weight, bias, out_mask = self.get_dynamic_params(self.weight_fake_quant(self.weight), self.bias)
         return F.linear(input, weight, bias)
 
     @classmethod
@@ -89,9 +88,29 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
         weight = orig_weight[out_mask][:, in_mask]
         bias = orig_bias[out_mask] if orig_bias is not None else None
 
-        return weight, bias
+        return weight, bias, out_mask
 
     def to_static_op(self):
-        mod = copy.deepcopy(self)
-        traverse_children(mod._modules)
+        weight, bias, out_mask = self.get_dynamic_params(self.weight, self.bias)
+        out_channels = weight.size(0)
+        in_channels = weight.size(1)
+
+        cls = self.static_op_factory
+        mod = cls._FLOAT_MODULE(  # type: ignore[attr-defined]
+            in_channels,
+            out_channels,
+            bias=self.bias is not None)
+        mod.weight = torch.nn.Parameter(weight)
+        if bias is not None:
+            mod.bias = torch.nn.Parameter(bias)
+
+        fake_quant = self.weight_fake_quant.to_static_op()
+        if len(fake_quant.scale) > 1 and len(fake_quant.scale) != out_channels:
+          fake_quant.scale.data = fake_quant.scale.data[out_mask]
+          fake_quant.zero_point.data = fake_quant.zero_point.data[out_mask]
+
+        mod.qconfig = self.config
+        mod.train(self.training)
+        mod = cls.from_float(mod)
+        mod.weight_fake_quant = fake_quant
         return mod

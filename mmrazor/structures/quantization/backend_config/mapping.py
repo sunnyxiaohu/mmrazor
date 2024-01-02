@@ -6,6 +6,7 @@ from .academic import get_academic_backend_config
 from .native import get_native_backend_config
 from .openvino import get_openvino_backend_config
 from .tensorrt import get_tensorrt_backend_config
+from .superacme import get_superacme_backend_config
 
 if digit_version(torch.__version__) >= digit_version('1.13.0'):
     BackendConfigs = {
@@ -13,6 +14,7 @@ if digit_version(torch.__version__) >= digit_version('1.13.0'):
         'native': get_native_backend_config(),
         'tensorrt': get_tensorrt_backend_config(),
         'openvino': get_openvino_backend_config(),
+        # 'superacme': get_superacme_backend_config(),
     }
 else:
     BackendConfigs = {
@@ -20,4 +22,5 @@ else:
         'native': None,
         'tensorrt': None,
         'openvino': None,
+        'superacme': None,
     }

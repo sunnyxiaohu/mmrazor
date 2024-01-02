@@ -4,12 +4,9 @@ from .base import BaseQuantizer
 from .native_quantizer import TorchNativeQuantizer
 from .openvino_quantizer import OpenVINOQuantizer
 from .tensorrt_quantizer import TensorRTQuantizer
-from .weightonly_quantizer import WeightOnlyQuantizer
-from .snpe_quantizer import SNPEQuantizer
-from .openvinox_quantizer import OpenVINOXQuantizer
+from .superacme_quantizer import SuperAcmeQuantizer
 
 __all__ = [
     'BaseQuantizer', 'AcademicQuantizer', 'TorchNativeQuantizer',
-    'TensorRTQuantizer', 'OpenVINOQuantizer', 'WeightOnlyQuantizer',
-    'SNPEQuantizer', 'OpenVINOXQuantizer'
+    'TensorRTQuantizer', 'OpenVINOQuantizer', 'SuperAcmeQuantizer'
 ]

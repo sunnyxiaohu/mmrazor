@@ -68,8 +68,8 @@ class UntracedMethodRegistry:
 
             def method(*args, **kwargs):
                 return self.method(mod, *args, **kwargs)
-
-            return self.tracer.call_method(mod, self.name, method, args,
+            name = self.name.split('.')[-1]
+            return self.tracer.call_method(mod, name, method, args,
                                            kwargs)
 
         return wrapped_method
@@ -146,9 +146,10 @@ def _prepare_module_dict(model: torch.nn.Module, fx_graph):
             for special_node in special_nodes:
                 if special_node in node.args or \
                         special_node in node.kwargs.values():
-                    origin_module = getattr(model, special_node.target)
-                    setattr(module_dict[special_node.target], node.target,
-                            getattr(origin_module, node.target))
+                    origin_module = _get_attrs(model, special_node.target)
+                    method_str = node.target.split('.')[-1]
+                    setattr(module_dict[special_node.target], method_str,
+                            getattr(origin_module, method_str))
 
     return module_dict
 
@@ -277,6 +278,9 @@ class CustomTracer(QuantizationTracer):
             method = getattr(imported_cls, method_str)
 
             method_registry = UntracedMethodRegistry(method)
+            method_str = s_method
+            if method_str in method_registry.method_dict:
+                raise KeyError(f'{method_str} has been regitried.')
             method_registry.__set_name__(imported_cls, method_str)
 
     def call_method(self, m: torch.nn.Module, name: str, method: Callable,
@@ -408,6 +412,7 @@ class CustomTracer(QuantizationTracer):
 
             for name, value in UntracedMethodRegistry.method_dict.items():
                 wrapped = value['wrapped']
+                name = name.split('.')[-1]
                 patcher.patch_method(
                     value['mod'], name, wrapped, deduplicate=False)
 

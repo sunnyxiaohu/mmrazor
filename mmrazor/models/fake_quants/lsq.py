@@ -92,7 +92,6 @@ class LearnableFakeQuantize(FakeQuantizeBase):
                  zero_point=0.,
                  use_grad_scaling=True,
                  zero_point_trainable=False,
-                 only_init_mixed_bit=False,
                  **observer_kwargs):
         super(LearnableFakeQuantize, self).__init__()
         assert quant_min < quant_max, \
@@ -226,6 +225,8 @@ class LearnableFakeQuantize(FakeQuantizeBase):
 
         Forward path returns fake quantized X.
         """
+        if X.numel() == 0:
+            return X
         if self.static_enabled[0] == 1:
             self.activation_post_process(X.detach())
             _scale, _zero_point = \

@@ -99,8 +99,13 @@ class CalibrateMixin:
             var_average_meter: AverageMeter = bn_module.__var_average_meter__
 
             real_input = input[0]
-            mean = real_input.mean((0, 2, 3))
-            var = real_input.var((0, 2, 3), unbiased=True)
+            x_dim = real_input.size()
+            new_axis_list = [i for i in range(len(x_dim))]  # noqa: C416
+            new_axis_list[1] = 0
+            new_axis_list[0] = 1
+            real_input = real_input.permute(new_axis_list).flatten(start_dim=1)
+            mean = real_input.mean((1,))
+            var = real_input.var((1,), unbiased=True)
 
             mean_average_meter.update(mean, real_input.size(0))
             var_average_meter.update(var, real_input.size(0))
@@ -343,10 +348,7 @@ class QNASEpochBasedLoop(QATEpochBasedLoop):
         """Iterate one epoch."""
         self.runner.call_hook('before_train_epoch')
         self.runner.model.train()
-        # if self._epoch < 5:
-        #     self.runner.model.module.sample_kinds = ['min']
-        # else:
-        #     self.runner.model.module.sample_kinds = ['max', 'min', 'random0', 'random1']
+
         for idx, data_batch in enumerate(self.dataloader):
             if self.is_first_batch:
                 # lsq observer init
@@ -413,7 +415,10 @@ class QNASValLoop(ValLoop, CalibrateMixin):
         self.architecture.data_preprocessor = data_preprocessor
         self.evaluate_fixed_subnet = evaluate_fixed_subnet
         self.calibrate_sample_num = calibrate_sample_num
-        self.estimator = TASK_UTILS.build(estimator_cfg)
+        default_args = dict()
+        default_args['dataloader'] = self.dataloader
+        self.estimator = TASK_UTILS.build(
+            estimator_cfg, default_args=default_args)
         self.quant_bits = quant_bits
 
     def run(self) -> dict:
@@ -447,7 +452,7 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                     else:
                         choices = self.quant_bits
                     for bit in choices:
-                        sample_kinds.extend([f'max_q{bit}'])  # , f'min_q{bit}'])
+                        sample_kinds.extend([f'max_q{bit}', f'min_q{bit}'])
 
             def qmaxmin(bit=32, is_max=True):
                 def sample(mutables):
@@ -495,15 +500,6 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                 self.architecture, slice_weight=True)
             metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
             resource_metrics = self.estimator.estimate(sliced_model)
-            # for mode in self.params_modes:
-            #     filename = f'{self.runner.log_dir}/subnet-{kind}_{mode}_params_boxplot_ep{self.runner.epoch}.png'
-            #     if mode == 'fuse_conv_bn':
-            #         from mqbench.cle_superacme.batch_norm_fold import fold_all_batch_norms
-            #         folded_pairs = fold_all_batch_norms(sliced_model, self.input_shapes)
-            #     elif mode == 'cle':
-            #         from mqbench.cle_superacme.cle import apply_cross_layer_equalization
-            #         apply_cross_layer_equalization(model=sliced_model, input_shape=self.input_shapes)
-            #     draw_params_boxplot(sliced_model, filename, topk_params=self.topk_params)
 
             metrics.update(resource_metrics)
         return metrics
@@ -541,6 +537,11 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                 qat_metrics[ori_key] = value
                 # self.runner.message_hub.log_scalars.pop(f'val/{qat_key}', None)
 
+        _, sliced_model = export_fix_subnet(
+            self.model, slice_weight=True)
+        resource_metrics = self.estimator.estimate(sliced_model)
+        qat_metrics.update(resource_metrics)
+
         return qat_metrics
 
     @torch.no_grad()
@@ -564,24 +565,15 @@ class QNASValLoop(ValLoop, CalibrateMixin):
             outputs=outputs)
 
 
-def nonqmin(mutables):
-    """Sample choice for mutables except `quant_bits`"""
-    if mutables[0].alias and 'quant_bits' in mutables[0].alias:
-        choice = mutables[0].current_choice
-    else:
-        choice = mutables[0].min_choice
-    return choice
-
 @LOOPS.register_module()
 class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
     """Loop for evolution searching."""
 
-    def __init__(self, *args, export_fix_subnet=None, solve_mode='ilp', **kwargs):
+    def __init__(self, *args, export_fix_subnet=None, solve_mode='evo_org', **kwargs):
         super().__init__(*args, **kwargs)
-        self.export_float_model = False
         self.export_fix_subnet = export_fix_subnet
         self.solve_mode = solve_mode
-        assert solve_mode in ['evo', 'prob', 'ilp']
+        assert solve_mode in ['evo', 'prob', 'ilp', 'evo_org']
 
     def get_qrange_probs(self):
         # 1. get all the spec_modules.
@@ -820,61 +812,63 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         candidate = self.model.mutator.current_choices
         return candidate
 
-    def sample_candidates(self) -> None:
-        """Update candidate pool contains specified number of candicates."""
-        candidates_resources = []
-        init_candidates = len(self.candidates)
-        idx = 0
-        filterd_results, prob_results = self.get_qrange_probs()
-        if self.solve_mode == 'ilp':
-            num_candidates = self.num_candidates - init_candidates
-            act_alphas = [3*(i+1.0) / num_candidates for i in range(num_candidates)]
-            w_act_alphas = [(1.0, 0.0), (0.0, 1.0)]
-            w_act_alphas += [(1.0, i) for i in act_alphas]
-            # filterd_results, prob_results = self.get_qrange_probs()
-        # elif self.solve_mode == 'prob':
-            # _, prob_results = self.get_qrange_probs()
-        while len(self.candidates) < self.num_candidates:
-            idx += 1
-            if self.solve_mode == 'ilp' and idx <= len(w_act_alphas):
-                candidate = self.sample_ilp_once(
-                    filterd_results, prob_results, *w_act_alphas[idx-1])
-                if candidate is None:
-                    continue
-            elif self.solve_mode == 'prob':
-                candidate = self.sample_qrange_prob_once(prob_results)
-            elif idx == 1:
-                candidate = self.model.mutator.sample_choices('max')
-            elif idx == 2:
-                candidate = self.model.mutator.sample_choices('min')
-            else:
-                # candidate = self.model.mutator.sample_choices()
-                this_prob_results = deepcopy(prob_results)
-                for k, v in this_prob_results.items():
-                    for b in v:
-                        p = random.random()
-                        this_prob_results[k][b] = p
-                candidate = self.sample_ilp_once(
-                    filterd_results, this_prob_results)
-                if candidate is None:
-                    continue
-            self.model.mutator.set_choices(candidate)
-            is_pass, result = self._check_constraints(
-                random_subnet=candidate)
-            if is_pass:
-                self.candidates.append(candidate)
-                candidates_resources.append(result)
-        self.candidates = Candidates(self.candidates.data)
+    # def sample_candidates(self) -> None:
+    #     """Update candidate pool contains specified number of candicates."""
+    #     candidates_resources = []
+    #     init_candidates = len(self.candidates)
+    #     idx = 0
+    #     if self.solve_mode in ['evo', 'prob', 'ilp']:
+    #         filterd_results, prob_results = self.get_qrange_probs()
+    #     if self.solve_mode == 'ilp':
+    #         num_candidates = self.num_candidates - init_candidates
+    #         act_alphas = [3*(i+1.0) / num_candidates for i in range(num_candidates)]
+    #         w_act_alphas = [(1.0, 0.0), (0.0, 1.0)]
+    #         w_act_alphas += [(1.0, i) for i in act_alphas]
+    #         # filterd_results, prob_results = self.get_qrange_probs()
+    #     # elif self.solve_mode == 'prob':
+    #         # _, prob_results = self.get_qrange_probs()
+    #     while len(self.candidates) < self.num_candidates:
+    #         idx += 1
+    #         if self.solve_mode == 'ilp' and idx <= len(w_act_alphas):
+    #             candidate = self.sample_ilp_once(
+    #                 filterd_results, prob_results, *w_act_alphas[idx-1])
+    #             if candidate is None:
+    #                 continue
+    #         elif self.solve_mode == 'prob':
+    #             candidate = self.sample_qrange_prob_once(prob_results)
+    #         # elif idx == 1:
+    #         #     candidate = self.model.mutator.sample_choices('max')
+    #         # elif idx == 2:
+    #         #     candidate = self.model.mutator.sample_choices('min')
+    #         elif self.solve_mode == 'evo':
+    #             this_prob_results = deepcopy(prob_results)
+    #             for k, v in this_prob_results.items():
+    #                 for b in v:
+    #                     p = random.random()
+    #                     this_prob_results[k][b] = p
+    #             candidate = self.sample_ilp_once(
+    #                 filterd_results, this_prob_results)
+    #             if candidate is None:
+    #                 continue
+    #         else:
+    #             candidate = self.model.mutator.sample_choices()
+    #         self.model.mutator.set_choices(candidate)
+    #         is_pass, result = self._check_constraints(
+    #             random_subnet=candidate)
+    #         if is_pass:
+    #             self.candidates.append(candidate)
+    #             candidates_resources.append(result)
+    #     self.candidates = Candidates(self.candidates.data)
 
-        if len(candidates_resources) > 0:
-            self.candidates.update_resources(
-                candidates_resources,
-                start=len(self.candidates.data) - len(candidates_resources))
-            assert init_candidates + len(
-                candidates_resources) == self.num_candidates
+    #     if len(candidates_resources) > 0:
+    #         self.candidates.update_resources(
+    #             candidates_resources,
+    #             start=len(self.candidates.data) - len(candidates_resources))
+    #         assert init_candidates + len(
+    #             candidates_resources) == self.num_candidates
 
-        # broadcast candidates to val with multi-GPUs.
-        broadcast_object_list(self.candidates.data)
+    #     # broadcast candidates to val with multi-GPUs.
+    #     broadcast_object_list(self.candidates.data)
 
     @torch.no_grad()
     def _val_candidate(self, use_predictor: bool = False) -> Dict:
@@ -901,21 +895,21 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
         return metrics
 
-    def _check_constraints(
-            self, random_subnet: SupportRandomSubnet) -> Tuple[bool, Dict]:
-        """Check whether is beyond constraints.
+    # def _check_constraints(
+    #         self, random_subnet: SupportRandomSubnet) -> Tuple[bool, Dict]:
+    #     """Check whether is beyond constraints.
 
-        Returns:
-            bool, result: The result of checking.
-        """
-        is_pass, results = check_subnet_resources(
-            model=self.model,
-            subnet=random_subnet,
-            estimator=self.estimator,
-            constraints_range=self.constraints_range,
-            export=False)
+    #     Returns:
+    #         bool, result: The result of checking.
+    #     """
+    #     is_pass, results = check_subnet_resources(
+    #         model=self.model,
+    #         subnet=random_subnet,
+    #         estimator=self.estimator,
+    #         constraints_range=self.constraints_range,
+    #         export=self.solve_mode == 'evo_org')
 
-        return is_pass, results
+    #     return is_pass, results
 
     def _save_best_fix_subnet(self):
         """Save best subnet in searched top-k candidates."""
@@ -930,13 +924,6 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 self.model.sync_qparams(src_mode='predict')
             best_fix_subnet, sliced_model = \
                 export_fix_subnet(self.model.architecture, slice_weight=True)
-        float_sliced_model = None
-        with adabn_context(self.model.architecture.architecture):
-            if self.export_float_model and self.calibrate_sample_num > 0:
-                self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
-                                                      model = self.model.architecture.architecture,
-                                                      calibrate_sample_num = self.calibrate_sample_num)
-                _, float_sliced_model = export_fix_subnet(self.model.architecture, slice_weight=True)
         if self.runner.rank == 0:
             timestamp_subnet = time.strftime('%Y%m%d_%H%M', time.localtime())
             model_name = f'subnet_{timestamp_subnet}.pth'
@@ -947,15 +934,6 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
             }, save_path)
             self.runner.logger.info(f'Subnet checkpoint {model_name} saved in '
                                     f'{self.runner.work_dir}')
-            if self.export_float_model:
-                model_name = 'float_' + model_name
-                save_path = osp.join(self.runner.work_dir, model_name)
-                torch.save({
-                    'state_dict': float_sliced_model.state_dict(),
-                    'meta': {}
-                }, save_path)
-                self.runner.logger.info(f'Subnet checkpoint {model_name} saved in '
-                                        f'{self.runner.work_dir}')
             save_name = 'best_fix_subnet.yaml'
             best_fix_subnet = convert_fix_subnet(best_fix_subnet)
             fileio.dump(best_fix_subnet,
@@ -976,7 +954,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         for name, module in model.named_modules():
             if isinstance(module, FakeQuantizeBase):
                 quant_info = {
-                    'bit': module.bitwidth,
+                    'bit': int(np.log2(module.quant_max - module.quant_min + 1)),
                     'quant_min': module.quant_min,
                     'quant_max': module.quant_max,
                 }

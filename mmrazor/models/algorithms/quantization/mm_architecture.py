@@ -14,6 +14,7 @@ from torch import nn
 from mmrazor.registry import MODEL_WRAPPERS, MODELS
 from mmrazor.structures.quantization import QConfigHandler
 from ..base import BaseAlgorithm, BaseModel
+from ...task_modules.tracer.fx.graph_utils import update_qdype_qmin_qmax
 
 try:
     from torch.ao.quantization import (FakeQuantizeBase, MinMaxObserver,
@@ -378,11 +379,15 @@ class MMArchitectureQuant(BaseAlgorithm):
         the backend's requirement.
         """
         device = next(self.parameters()).device
-        quantized_state_dict = self.qmodels['predict'].state_dict()
-        fp32_model = self.architecture
-        self.quantizer.convert_batchnorm2d(fp32_model)
-        observed_model = self.quantizer.prepare(fp32_model)
-        observed_model.load_state_dict(quantized_state_dict)
+        # Note that rebuilding observed_model will break mixed-precision, we just use deepcopy.
+        observed_model = copy.deepcopy(self.qmodels['tensor'])
+        # # mode = 'tensor' ??
+        # quantized_state_dict = self.qmodels['predict'].state_dict()
+        # fp32_model = self.architecture
+        # self.quantizer.convert_batchnorm2d(fp32_model)
+        # concrete_args = {'mode': 'tensor'}
+        # observed_model = self.quantizer.prepare(fp32_model, concrete_args)
+        # observed_model.load_state_dict(quantized_state_dict, strict=False)
 
         self.quantizer.post_process_for_deploy(
             observed_model,
@@ -396,10 +401,12 @@ class MMArchitectureQuant(BaseAlgorithm):
             if 'activation_post_process_' in node.name:
                 module_name = node.target
                 module = getattr(observed_model, module_name)
+                extra_observer_kwargs = {'dtype': module.dtype, 'quant_min': module.quant_min, 'quant_max': module.quant_max}
                 fakequant_new = QConfigHandler.replace_fakequant(
                     module,
                     self.quantizer.qconfig.a_qscheme,
-                    update_qparams=True)
+                    update_qparams=True,
+                    extra_observer_kwargs=extra_observer_kwargs)
                 setattr(observed_model, module_name, fakequant_new)
 
         observed_model.apply(disable_observer)
@@ -448,31 +455,3 @@ class MMArchitectureQuantDDP(MMDistributedDataParallel):
         """
 
         self.module.sync_qparams(src_mode)
-
-
-def update_qdype_qmin_qmax(fake_quant, bit, quant_min=None, quant_max=None):
-    # TODO: calc qdype according quant_min, quant_max (rely on backend support)
-    # reduce_range is False by default.
-    if quant_min is None or quant_max is None:
-        qdtype = fake_quant.dtype
-        quant_min = fake_quant.quant_min
-        quant_max = fake_quant.quant_max
-
-        is_symmetric_range = False
-        if abs(quant_min) == abs(quant_max):
-            is_symmetric_range = True
-        if qdtype == torch.quint8:
-            quant_min = 0
-            quant_max = 2**bit - 1
-        elif qdtype == torch.qint8:
-            quant_max = 2**(bit - 1) - 1
-            if is_symmetric_range:
-                quant_min = -2**(bit - 1) + 1
-            else:
-                quant_min = -2**(bit - 1)
-        else:
-            raise ValueError(f'Only support qint8 and quint8, got {qdtype}')
-    fake_quant.quant_max = \
-        fake_quant.activation_post_process.quant_max = quant_max
-    fake_quant.quant_min = \
-        fake_quant.activation_post_process.quant_min = quant_min

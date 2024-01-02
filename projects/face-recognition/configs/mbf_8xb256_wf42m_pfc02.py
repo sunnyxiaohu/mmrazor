@@ -2,7 +2,6 @@ _base_ = ['mmcls::_base_/default_runtime.py']
 
 custom_imports = dict(
     imports=[
-        'projects.commons.models.task_modules.estimators.ov_estimator',
         'projects.commons.engine.runner.subnet_ov_val_loop',
         'projects.face-recognition.models.algorithms.spos_partialfc',
         'projects.face-recognition.models.losses.margin_loss',
@@ -263,17 +262,25 @@ test_cfg = dict(
     evaluate_fixed_subnet=True,
     calibrate_sample_num=0,
     estimator_cfg=dict(
-        type='mmrazor.OVResourceEstimator',
-        ovmodel_cfg=dict(
+        type='mmrazor.HERONResourceEstimator',
+        heronmodel_cfg=dict(
             work_dir='work_dirs/mbf_8xb256_wf42m_pfc02',
-            qdef_file_dir='projects/commons/ov_qdefs',
-            qfnodes='qdef_ifm_q8.qfnodes',
-            qfops='qdef_q8.qfops',
-            ifmq='q8',
-            # Uncomment and adjust `num_infer` for QoR
-            # infer_metric=test_evaluator,
-            num_infer=200,
-            num_calib=5)))
+            ptq_json='projects/commons/heron_files/face_config_ptq.json',
+            HeronCompiler = '/alg-data/ftp-upload/private/wangshiguang/HeronRT/HeronRT_v0.8.0_2023.06.15/tool/HeronCompiler',
+            HeronProfiler = '/alg-data/ftp-upload/private/wangshiguang/HeronRT/HeronRT_v0.8.0_2023.06.15/tool/HeronProfiler'
+        )))
+    # estimator_cfg=dict(
+    #     type='mmrazor.OVResourceEstimator',
+    #     ovmodel_cfg=dict(
+    #         work_dir='work_dirs/mbf_8xb256_wf42m_pfc02',
+    #         qdef_file_dir='projects/commons/ov_qdefs',
+    #         qfnodes='qdef_ifm_q8.qfnodes',
+    #         qfops='qdef_q8.qfops',
+    #         ifmq='q8',
+    #         # Uncomment and adjust `num_infer` for QoR
+    #         # infer_metric=test_evaluator,
+    #         num_infer=200,
+    #         num_calib=5)))
 
 # NOTE: `auto_scale_lr` is for automatically scaling LR,
 # based on the actual training batch size.

@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import copy
+import logging
 from typing import Dict, List, Optional
 
 from mmengine import print_log
@@ -87,7 +88,7 @@ class ONNXOptimUtils():
             if node.op_type == 'Pad':
                 pads = name2data[node.input[1]]
                 if all([x == 0 for x in pads]):
-                    print_log(f'Remove pad op: <{node.name}>.')
+                    print_log(f'Remove pad op: <{node.name}>.', logger='current', level=logging.DEBUG)
                     next_nodes = inp2node[node.output[0]]
                     for next_node, idx in next_nodes:
                         next_node.input[idx] = node.input[0]
@@ -95,6 +96,42 @@ class ONNXOptimUtils():
 
         for node in nodes_to_be_removed:
             onnx_model.graph.node.remove(node)
+       
+            
+    @classmethod
+    def replace_resize_op_with_upsample(cls, onnx_model,out2node):
+        # align with mqbench ,superacme backend only support upsample type resize op,it is fixed for yolx debug
+        def get_constant_inputs(node, out2node):
+            node_list = []
+            for inp in node.input:
+                if inp == node.input[2]:
+                    continue
+                if inp in out2node and out2node[inp].op_type == 'Constant':
+                    node_list.append(out2node[inp])
+            return node_list
+        nodes_to_be_removed = []
+        idx = 0
+        while idx < len(onnx_model.graph.node):
+            node = onnx_model.graph.node[idx]
+            if node.op_type == 'Resize':
+                print_log(f"Replace resize op: <{node.name}> with upsample.", logger='current', level=logging.DEBUG)
+                mode = 'nearest'
+                for attr in node.attribute:
+                    if attr.name == 'mode':
+                        mode = attr.s
+                upsample_node = onnx.helper.make_node('Upsample',
+                                                      name=node.name,
+                                                      inputs=[node.input[0], node.input[2]],
+                                                      outputs=node.output,
+                                                      mode=mode)
+                nodes_to_be_removed.append(node)
+                nodes_to_be_removed.extend(get_constant_inputs(node, out2node))
+                onnx_model.graph.node.insert(idx, upsample_node)
+                idx += 1
+            idx += 1
+        for node in nodes_to_be_removed:
+            onnx_model.graph.node.remove(node)
+        return
 
     @classmethod
     def insert_node_to_onnx(cls,
@@ -252,13 +289,13 @@ class ONNXOptimUtils():
                                                      output2node)
         for node in standalone_nodes:
             cls.remove_node_from_onnx(node, onnx_model)
-            print_log(f'Remove node {node.name}')
+            print_log(f'Remove node {node.name}', logger='current', level=logging.DEBUG)
 
         redundant_inits = cls.find_redundant_initializers(
             onnx_model, input2node)
         for init in redundant_inits:
             cls.remove_initializer_from_onnx(init, onnx_model)
-            print_log(f'Remove initializer {init.name}')
+            print_log(f'Remove initializer {init.name}', logger='current', level=logging.DEBUG)
 
         sorted_onnx_model = cls.topo_sort(onnx_model)
 

@@ -1,5 +1,7 @@
 import numbers
 import os
+import random
+
 from typing import Callable, List, Sequence, Union
 
 import mxnet as mx
@@ -52,12 +54,14 @@ class MatchFaceDataset(BaseDataset):
                  key_file: str,
                  data_root: str = '',
                  data_prefix: Union[str, dict] = '',
+                 sample_ratio: float = None,
                  extensions: Sequence[str] = ('.jpg', '.jpeg', '.png', '.ppm',
                                               '.bmp', '.pgm', '.tif'),
                  pipeline: List[Union[dict, Callable]] = []):
 
         self.dataset_name = dataset_name
         self.extensions = tuple(set([i.lower() for i in extensions]))
+        self.sample_ratio = sample_ratio
         super(MatchFaceDataset, self).__init__(
             ann_file=key_file,
             data_root=data_root,
@@ -106,6 +110,15 @@ class MatchFaceDataset(BaseDataset):
             filter(
                 lambda path: path.split('/')[-1].split('.')[0] in all_samples,
                 data_list))
+        if self.sample_ratio is not None:
+            assert self.sample_ratio > 0  and self.sample_ratio <= 1
+            org_len = len(data_list)
+            new_len = int(self.sample_ratio * org_len)
+            data_list = random.sample(data_list, new_len)
+            print_log(
+                f'Sample "{new_len}" from total {org_len} data_list in "{self.dataset_name}"',
+                logger='current')
+
         # align dix with data_list
         all_samples = [path.split('/')[-1].split('.')[0] for path in data_list]
 
