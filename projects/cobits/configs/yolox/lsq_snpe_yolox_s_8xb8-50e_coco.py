@@ -1,26 +1,48 @@
-_base_ = './spos_openvinox_yolox_s_supernet_8xb8_coco.py'
+_base_ = [
+    'mmdet::yolox/yolox_s_8xb8-300e_coco.py'
+]
+
+float_checkpoint = 'https://download.openmmlab.com/mmdetection/v2.0/yolox/yolox_s_8x8_300e_coco/yolox_s_8x8_300e_coco_20211121_095711-4592a793.pth'
+
+_base_.train_dataloader.dataset.pipeline = [
+    dict(type='YOLOXHSVRandomAug'),
+    dict(type='RandomFlip', prob=0.5),
+    # According to the official implementation, multi-scale
+    # training is not considered here but in the
+    # 'mmdet/models/detectors/yolox.py'.
+    # Resize and Pad are for the last 15 epochs when Mosaic,
+    # RandomAffine, and MixUp are closed by YOLOXModeSwitchHook.
+    dict(type='Resize', scale=_base_.img_scale, keep_ratio=True),
+    dict(
+        type='Pad',
+        pad_to_square=True,
+        # If the image is three-channel, the pad value needs
+        # to be set separately for each channel.
+        pad_val=dict(img=(114.0, 114.0, 114.0))),
+    dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
+    dict(type='PackDetInputs')
+]
+
+# optimizer
+# default 8 gpu
+optim_wrapper = dict(
+    type='OptimWrapper',
+    optimizer=dict(
+        type='SGD', lr=1e-6, momentum=0.9, weight_decay=5e-4,
+        nesterov=True),
+    paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0., bypass_duplicate=True),
+)
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.LSQPerChannelObserver'),
+    w_observer=dict(type='mmrazor.LSQObserver'),
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True, is_symmetric_range=True),
-    a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
+    w_qscheme=dict(
+        qdtype='qint8', bit=4, is_symmetry=False, zero_point_trainable=True),
+    a_qscheme=dict(
+        qdtype='qint8', bit=8, is_symmetry=False, zero_point_trainable=True),
 )
-
-qmodel = dict(
-    _delete_=True,
-    _scope_='mmrazor',
-    type='sub_model',
-    cfg=_base_.architecture,
-    # NOTE: You can replace the yaml with the mutable_cfg searched by yourself
-    fix_subnet='work_dirs/cobits_openvinox_yolox_s_search_8xb8_coco/best_fix_subnet.yaml',
-    # You can load the checkpoint of supernet instead of the specific
-    # subnet by modifying the `checkpoint`(path) in the following `init_cfg`
-    # with `init_weight_from_supernet = True`.
-    init_weight_from_supernet=False,
-    init_cfg=None)
 
 model = dict(
     _delete_=True,
@@ -38,11 +60,11 @@ model = dict(
                 size_divisor=32,
                 interval=10)],
     ),
-    architecture=qmodel,  # architecture,
-    float_checkpoint=None,
+    architecture=_base_.model,  # architecture,
+    float_checkpoint=float_checkpoint,
     input_shapes =(1, 3, 416, 416),
     quantizer=dict(
-        type='mmrazor.OpenVINOXQuantizer',
+        type='mmrazor.SNPEQuantizer',
         quant_bits_skipped_module_names=[
             'backbone.stem.conv.conv',
             'bbox_head.multi_level_conv_cls.2',
@@ -57,10 +79,14 @@ model = dict(
                 'mmdet.models.dense_heads.yolox_head.YOLOXHead.loss_by_feat',
             ])))
 
-optim_wrapper = dict(optimizer=dict(lr=1e-6))
+
+model_wrapper_cfg = dict(
+    type='mmrazor.MMArchitectureQuantDDP',
+    broadcast_buffers=False,
+    find_unused_parameters=True)
 
 # learning policy
-max_epochs = 25
+max_epochs = 50  # 100
 warm_epochs = 1
 # learning policy
 param_scheduler = [
@@ -83,23 +109,21 @@ param_scheduler = [
         end=max_epochs,
     ),
 ]
-
-model_wrapper_cfg = dict(
-    _delete_=True,
-    type='mmrazor.MMArchitectureQuantDDP',
-    broadcast_buffers=False,
-    find_unused_parameters=True)
-
 # train, val, test setting
 train_cfg = dict(
     _delete_=True,
     type='mmrazor.LSQEpochBasedLoop',
     max_epochs=max_epochs,
     val_interval=1,
-    is_first_batch=False,
+    calibrate_steps=100,
     freeze_bn_begin=-1)
+
 val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop')
 
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
 default_hooks = dict(sync=dict(type='SyncBuffersHook'))
+custom_hooks = []
+# custom_hooks = [
+#     dict(type='YOLOXModeSwitchHook', num_last_epochs=299, priority=48),]
+#     # dict(type='SyncNormHook', num_last_epochs=299, interval=10, priority=48)]

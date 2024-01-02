@@ -8,12 +8,12 @@ global_qconfig = dict(
     w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True, is_symmetric_range=True),
     a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
 )
-_base_.qmodel.quantizer.global_qconfig = global_qconfig
-model = dict(
+
+qmodel = dict(
     _delete_=True,
     _scope_='mmrazor',
     type='sub_model',
-    cfg=_base_.qmodel,
+    cfg=_base_.architecture,
     # NOTE: You can replace the yaml with the mutable_cfg searched by yourself
     fix_subnet='work_dirs/cobits_openvinox_yolox_s_search_8xb8_coco/best_fix_subnet.yaml',
     # You can load the checkpoint of supernet instead of the specific
@@ -21,11 +21,41 @@ model = dict(
     # with `init_weight_from_supernet = True`.
     init_weight_from_supernet=False,
     init_cfg=None)
-    # init_cfg=dict(
-    #     type='Pretrained',
-    #     checkpoint=  # noqa: E251
-    #     'work_dirs/cobits_resnet18_search_8xb256_in1k/subnet_20230904_1400.pth',  # noqa: E501
-    #     prefix='architecture.'))
+
+model = dict(
+    _delete_=True,
+    type='mmrazor.MMArchitectureQuant',
+    data_preprocessor=dict(
+        type='DetDataPreprocessor',
+        pad_size_divisor=32,
+        mean=[0.0, 0.0, 0.0],
+        std=[1.0, 1.0, 1.0],
+        bgr_to_rgb=False,
+        batch_augments=[
+            dict(
+                type='BatchSyncRandomResize',
+                random_size_range=(480, 800),
+                size_divisor=32,
+                interval=10)],
+    ),
+    architecture=qmodel,  # architecture,
+    float_checkpoint=None,
+    input_shapes =(1, 3, 416, 416),
+    quantizer=dict(
+        type='mmrazor.OpenVINOXQuantizer',
+        quant_bits_skipped_module_names=[
+            'backbone.stem.conv.conv',
+            'bbox_head.multi_level_conv_cls.2',
+            'bbox_head.multi_level_conv_reg.2',
+            'bbox_head.multi_level_conv_obj.2'
+        ],
+        global_qconfig=global_qconfig,
+        tracer=dict(
+            type='mmrazor.CustomTracer',
+            skipped_methods=[
+                'mmdet.models.dense_heads.yolox_head.YOLOXHead.predict_by_feat',  # noqa: E501
+                'mmdet.models.dense_heads.yolox_head.YOLOXHead.loss_by_feat',
+            ])))
 
 optim_wrapper = dict(optimizer=dict(lr=1e-6))
 

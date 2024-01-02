@@ -5,6 +5,7 @@ _base_ = [
 train_cfg = dict(
     _delete_=True,
     type='mmrazor.QNASEvolutionSearchLoop',
+    solve_mode='ilp',
     dataloader=_base_.val_dataloader,
     evaluator=_base_.val_evaluator,
     max_epochs=1,

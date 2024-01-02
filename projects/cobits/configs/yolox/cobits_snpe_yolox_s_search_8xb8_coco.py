@@ -1,5 +1,5 @@
 _base_ = [
-    './spos_snpe_yolox_s_supernet_8xb8_coco.py'
+    './cobits_snpe_yolox_s_supernet_8xb8_coco.py'
 ]
 
 train_cfg = dict(

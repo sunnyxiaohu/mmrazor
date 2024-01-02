@@ -1,11 +1,11 @@
-_base_ = './spos_openvinox_yolox_s_supernet_8xb8_coco.py'
+_base_ = './cobits_weightonly_mbv2_supernet_8xb64_in1k.py'
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.LSQPerChannelObserver'),
+    w_observer=dict(type='mmrazor.LSQObserver'),
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True, is_symmetric_range=True),
+    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True),
     a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
 )
 
@@ -15,7 +15,7 @@ qmodel = dict(
     type='sub_model',
     cfg=_base_.architecture,
     # NOTE: You can replace the yaml with the mutable_cfg searched by yourself
-    fix_subnet='work_dirs/cobits_openvinox_yolox_s_search_8xb8_coco/best_fix_subnet.yaml',
+    fix_subnet='work_dirs/cobits_resnet18_search_8xb256_in1k/best_fix_subnet.yaml',
     # You can load the checkpoint of supernet instead of the specific
     # subnet by modifying the `checkpoint`(path) in the following `init_cfg`
     # with `init_weight_from_supernet = True`.
@@ -24,45 +24,38 @@ qmodel = dict(
 
 model = dict(
     _delete_=True,
-    type='mmrazor.MMArchitectureQuant',
+    _scope_='mmrazor',
+    type='MMArchitectureQuant',
     data_preprocessor=dict(
-        type='DetDataPreprocessor',
-        pad_size_divisor=32,
-        mean=[0.0, 0.0, 0.0],
-        std=[1.0, 1.0, 1.0],
-        bgr_to_rgb=False,
-        batch_augments=[
-            dict(
-                type='BatchSyncRandomResize',
-                random_size_range=(480, 800),
-                size_divisor=32,
-                interval=10)],
-    ),
-    architecture=qmodel,  # architecture,
-    float_checkpoint=None,
-    input_shapes =(1, 3, 416, 416),
+        type='mmcls.ClsDataPreprocessor',
+        num_classes=1000,
+        # RGB format normalization parameters
+        mean=[123.675, 116.28, 103.53],
+        std=[58.395, 57.12, 57.375],
+        # convert image from BGR to RGB
+        to_rgb=True),
+    architecture=mbv2net,
+    float_checkpoint=float_checkpoint,
     quantizer=dict(
-        type='mmrazor.OpenVINOXQuantizer',
+        type='mmrazor.WeightOnlyQuantizer',
         quant_bits_skipped_module_names=[
-            'backbone.stem.conv.conv',
-            'bbox_head.multi_level_conv_cls.2',
-            'bbox_head.multi_level_conv_reg.2',
-            'bbox_head.multi_level_conv_obj.2'
+            'backbone.conv1.conv',
+            'head.fc'
         ],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
             skipped_methods=[
-                'mmdet.models.dense_heads.yolox_head.YOLOXHead.predict_by_feat',  # noqa: E501
-                'mmdet.models.dense_heads.yolox_head.YOLOXHead.loss_by_feat',
+                'mmcls.models.heads.ClsHead._get_loss',
+                'mmcls.models.heads.ClsHead._get_predictions'
             ])))
 
-optim_wrapper = dict(optimizer=dict(lr=1e-6))
+train_dataloader = dict(batch_size=64)
+optim_wrapper = dict(optimizer=dict(lr=0.002))
 
 # learning policy
-max_epochs = 25
+max_epochs = 75
 warm_epochs = 1
-# learning policy
 param_scheduler = [
     # warm up learning rate scheduler
     dict(
@@ -95,7 +88,7 @@ train_cfg = dict(
     _delete_=True,
     type='mmrazor.LSQEpochBasedLoop',
     max_epochs=max_epochs,
-    val_interval=1,
+    val_interval=5,
     is_first_batch=False,
     freeze_bn_begin=-1)
 val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop')
