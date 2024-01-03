@@ -52,7 +52,7 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
 
     @property
     def static_op_factory(self):
-        return nn.Linear
+        return nnqat.Linear
 
     @classmethod
     def convert_from(cls, module):
@@ -66,10 +66,6 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
         """
         if orig_weight is None and orig_bias is None:
             orig_weight, orig_bias = self.weight, self.bias
-
-        if 'in_features' not in self.mutable_attrs and \
-                'out_features' not in self.mutable_attrs:
-            return orig_weight, orig_bias
 
         if 'in_features' in self.mutable_attrs:
             in_mask = self.mutable_attrs['in_features'].current_mask.to(
@@ -109,7 +105,7 @@ class DynamicQLinear(nnqat.Linear, DynamicLinearMixin):
           fake_quant.scale.data = fake_quant.scale.data[out_mask]
           fake_quant.zero_point.data = fake_quant.zero_point.data[out_mask]
 
-        mod.qconfig = self.config
+        mod.qconfig = self.qconfig
         mod.train(self.training)
         mod = cls.from_float(mod)
         mod.weight_fake_quant = fake_quant

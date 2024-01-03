@@ -62,7 +62,7 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
 
     @property
     def static_op_factory(self):
-        return nn.Conv2d
+        return nnqat.Conv2d
 
     @classmethod
     def convert_from(cls, module):
@@ -115,7 +115,7 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
           fake_quant.scale.data = fake_quant.scale.data[out_mask]
           fake_quant.zero_point.data = fake_quant.zero_point.data[out_mask]
 
-        mod.qconfig = self.config
+        mod.qconfig = self.qconfig
         mod.train(self.training)
         mod = cls.from_float(mod)
         mod.weight_fake_quant = fake_quant
