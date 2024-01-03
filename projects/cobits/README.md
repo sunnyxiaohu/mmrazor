@@ -28,3 +28,7 @@ bash tools/dist_train.sh projects/cobits/configs/mobilenetv2/cobits_snpe_mbv2_se
 ```bash
 bash tools/dist_train.sh projects/cobits/configs/mobilenetv2/cobits_snpe_mbv2_subnet_8xb64_in1k.py 8 --cfg-options randomness.seed=777 model.architecture.fix_subnet=$STEP2/best_fix_subnet.yaml model.fix_subnet=$STEP2/best_fix_subnet_by_module_name.yaml load_from=$STEP2/subnet_ckpt.pth
 ```
+### step4: Evaluate the searched subnet
+```bash
+bash tools/dist_test.sh projects/cobits/configs/mobilenetv2/cobits_snpe_mbv2_subnet_8xb64_in1k.py $STEP2/subnet_ckpt.pth 8 --cfg-options randomness.seed=777 model.architecture.fix_subnet=$STEP2/best_fix_subnet.yaml model.fix_subnet=$STEP2/best_fix_subnet_by_module_name.yaml
+```
