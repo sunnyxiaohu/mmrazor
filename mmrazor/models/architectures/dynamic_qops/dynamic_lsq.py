@@ -49,6 +49,7 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
     """
     accepted_mutable_attrs = {'quant_bits'}
     FLOAT_BITS = 32
+    accepted_param_share_modes = {0, 1, 2, 3, 4}
 
     def __init__(self, *args, param_share_mode = 1, M=0.4, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -57,7 +58,8 @@ class DynamicLearnableFakeQuantize(LearnableFakeQuantize, DynamicMixin):
         # mode 2: Reparameter and partially shared
         # mode 3: Full shared with `1.0 / 2 ** (quant_bits - self.BASE_BITS)`
         # mode 4: mode 2 with adelta constrained
-        assert param_share_mode in [0, 1, 2, 3, 4], f'Unexpected param_share_mode: {param_share_mode}'
+        # mode 5: mode 4 with channel-wise theta learnable
+        assert param_share_mode in self.accepted_param_share_modes, f'Unexpected param_share_mode: {param_share_mode}'
         self.param_share_mode = param_share_mode
         if self.param_share_mode in [2, 4]:
             self.scale_theta = Parameter(torch.tensor([0.]))
@@ -275,16 +277,19 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
     Note that the differences between LSQ and BatchLSQ:
         1. during training, instead of learning the scale and zero_point,
         we use extreme value estimators to caputre the range variation in the
-        current batch, and learn a multiplicative residual delta_scale and
-        an additive residual delta_zero_point.
+        current batch, and learn a multiplicative residual scale_mult and
+        an additive residual zero_point.
         2. during test, we have to recalibrate the minmax statics by
         enabling the observer updatable and forwarding a few batches fo data.
     """
+    accepted_param_share_modes = {0, 1, 2, 3, 4, 5}
+
     def __init__(self, *args, M=0.1, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        assert self.param_share_mode in [0, 1, 2, 4], f'Unexpected param_share_mode: {self.param_share_mode}'
         self.register_buffer('calib_stats_fixed',
                              torch.tensor([0], dtype=torch.uint8))
+        if self.param_share_mode == 5:
+            self.scale_theta = Parameter(torch.tensor([0.]))
         self.M = M #0.2 #0.4 #0.3
 
     @torch.jit.export
@@ -302,10 +307,22 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
         elif self.param_share_mode == 1:
             zp_add = self.zero_point
             scale_mult = self.scale
-        elif self.param_share_mode in [2, 4]:
+        elif self.param_share_mode in [2, 4, 5]:
             zp_add = self.zero_point[:, index]
             scale_mult = self.scale
-            if self.param_share_mode == 4:
+
+            scale_initialized = not torch.equal(scale_mult, torch.ones_like(scale_mult))
+            # scale_initialized = scale_initialized or not self.training
+            if not scale_initialized and self.param_share_mode == 5:
+                if self.qscheme in (torch.per_channel_symmetric,
+                                    torch.per_channel_affine) and scale_mult.shape != _scale.shape:
+                    self.scale.data = self.scale.data.repeat(len(_scale))
+                    self.scale_theta.data = self.scale_theta.data.repeat(len(_scale), 1)
+                    self.zero_point.data = self.zero_point.data.repeat(len(_zero_point), 1)
+                    zp_add = self.zero_point[:, index]
+                    scale_mult = self.scale
+
+            if self.param_share_mode in [4, 5]:
                 m = (quant_bits - self.BASE_BITS)
                 clip_m2 = ((1 + self.M) ** m - 1) * scale_mult
                 clip_m1 = torch.zeros_like(clip_m2)
@@ -325,7 +342,7 @@ class DynamicBatchLearnableFakeQuantize(DynamicLearnableFakeQuantize):
             if self.param_share_mode == 0:
                 self.scale.data = torch.ones(1, len(mutable.choices)).to(device)
                 self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
-            elif self.param_share_mode in [2, 4]:
+            elif self.param_share_mode in [2, 4, 5]:
                 self.scale_theta.data = torch.zeros(1, len(mutable.choices)).to(device)
                 self.zero_point.data = torch.zeros(1, len(mutable.choices)).to(device)
             self.mutable_attrs['quant_bits'] = mutable

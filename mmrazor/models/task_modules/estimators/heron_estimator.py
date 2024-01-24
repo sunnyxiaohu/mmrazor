@@ -143,7 +143,7 @@ class HERONModelWrapper:
         # heron tool load
         self.shape = (1, ) + next(iter(self.dataloader))['inputs'].shape[1:]
         self.is_quantized = is_quantized
-        if self.is_quantized:
+        if self.is_quantized and get_rank() == 0:
             quant_json = load(self.mnn_quant_json)
             quant_json['qatfile'] = self.onnx_file.replace('.onnx', '_superacme_clip_ranges.json')
             dump(quant_json, self.mnn_quant_json, indent=4)
@@ -358,7 +358,7 @@ class HERONModelWrapperDet(HERONModelWrapper):
         # heron tool load
         self.shape = (1, ) + next(iter(self.dataloader))['inputs'][0].shape
         self.is_quantized = is_quantized
-        if self.is_quantized:
+        if self.is_quantized and get_rank() == 0:
             quant_json = load(self.mnn_quant_json)
             quant_json['qatfile'] = self.onnx_file.replace('.onnx', '_superacme_clip_ranges.json')
             dump(quant_json, self.mnn_quant_json, indent=4)

@@ -7,10 +7,13 @@ import math
 import random
 import time
 import warnings
+from functools import partial
+from itertools import product
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from collections import defaultdict, OrderedDict
 from copy import deepcopy
-from pulp import LpProblem, lpSum, LpVariable, LpInteger, LpMinimize, value, LpMaximize
+from pulp import (LpProblem, lpSum, LpVariable, LpInteger, LpMinimize, value,
+                  LpMaximize, PULP_CBC_CMD)
 
 import numpy as np
 import torch
@@ -39,7 +42,7 @@ except ImportError:
 
 from mmrazor.models import (BaseAlgorithm, register_torch_fake_quants,
                             register_torch_observers, LearnableFakeQuantize,
-                            BatchLSQObserver)
+                            BatchLSQObserver, OneShotMutableChannel, DerivedMutable)
 from mmrazor.models.architectures.dynamic_ops import (DynamicConvMixin,
                                                       DynamicLinearMixin)
 from mmrazor.models.architectures.dynamic_qops import (freeze_bn_stats,
@@ -417,8 +420,7 @@ class QNASValLoop(ValLoop, CalibrateMixin):
         self.calibrate_sample_num = calibrate_sample_num
         default_args = dict()
         default_args['dataloader'] = self.dataloader
-        self.estimator = TASK_UTILS.build(
-            estimator_cfg, default_args=default_args)
+        self.estimator = TASK_UTILS.build(estimator_cfg, default_args=default_args)
         self.quant_bits = quant_bits
 
     def run(self) -> dict:
@@ -574,6 +576,10 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         self.export_fix_subnet = export_fix_subnet
         self.solve_mode = solve_mode
         assert solve_mode in ['evo', 'prob', 'ilp', 'evo_org']
+        auxiliary_estimator_cfg = dict(type='mmrazor.ResourceEstimator',
+                                       input_shape=self.estimator.input_shape)
+        # Auxiliary estimator could help estimate spec module's resources.
+        self.auxiliary_estimator = TASK_UTILS.build(auxiliary_estimator_cfg)
 
     def get_qrange_probs(self):
         # 1. get all the spec_modules.
@@ -581,28 +587,31 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         for name, mod in self.model.named_modules():
             if isinstance(mod, (DynamicConvMixin, DynamicLinearMixin)):
                 spec_modules.append(name)
-        # 2. forward and get it's corresponding flops / params.
+        # 2. forward and get it's corresponding flops / params. we use its min_choices as reference.
         self.model.mutator.set_min_choices()
-        results = self.estimator.estimate_separation_modules(
+        results = self.auxiliary_estimator.estimate_separation_modules(
             model=self.model, flops_params_cfg=dict(spec_modules=spec_modules, seperate_return=True))
         # filter results
         filterd_results = {}
         for key, val in results.items():
             if val['flops'] != 0 or val['params'] != 0:
                 filterd_results[key] = val
-        # get every FakeQaunt's qrange
+        # 3. get every FakeQaunt's qrange
         qrange_results = defaultdict(int)
         prefix = 'architecture.qmodels.tensor'
         prepared_model = _get_attrs(self.model, prefix)
         kinds = ['max', 'min']
         kinds += ['random'] * 5
+        calibrate_sample_num = self.calibrate_sample_num
+        if self.solve_mode in ['evo', 'evo_org']:
+            calibrate_sample_num = 0
         for kind in kinds:
             self.model.mutator.set_choices(self.model.mutator.sample_choices(kind=kind))
             with adabn_context(self.model):
-                if self.calibrate_sample_num > 0:
+                if calibrate_sample_num > 0:
                     self.calibrate_bn_observer_statistics(self.calibrate_dataloader,
                                                           model=self.model,
-                                                          calibrate_sample_num=self.calibrate_sample_num)
+                                                          calibrate_sample_num=calibrate_sample_num)
                 for node in prepared_model.graph.nodes:
                     if node.op == 'call_module':
                         maybe_lsq = _get_attrs(prepared_model, node.target)
@@ -610,13 +619,12 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                             # weights
                             maybe_lsq = maybe_lsq.weight_fake_quant
                         if isinstance(maybe_lsq, DynamicLearnableFakeQuantize):
-                            # activation
                             quant_bits = maybe_lsq.mutable_attrs['quant_bits']
                             bit = quant_bits.current_choice
                             scale, zero_point = maybe_lsq.calculate_qparams()
+                            assert quant_bits.alias, f'quant_bits: {quant_bits.alias} already exists.'
                             qrange_results[quant_bits.alias] += scale.mean().item() * (2**bit - 1)
-        # import pdb; pdb.set_trace()
-        # normalize qrange_results
+        # 4. normalize qrange_results to range [-1, 1]
         belta, eps = 2.0, 10e-6
         filter_fns = [
             # lambda x: 'act_quant_bits_' in x[0],
@@ -629,10 +637,6 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
             values = belta * ((values - values.min()) / (values.max() - values.min() + eps) - 0.5)
             f_qrange_results = dict(zip(f_qrange_results.keys(), values))
             qrange_results.update(f_qrange_results)
-
-        # Suppose fakequant A and fakequant B,
-        # if qrange(A) > qrange(B), then the higher bit-width of A should get more selection prob
-        # if qrange(A) < qrange(B), then the lower bit-width of A should get less selection prob.
 
         def adjust_function(fixed_point, ratio, inputs, ftype='linear'):
             assert ftype in ['linear', 'exp', 'log']
@@ -649,6 +653,10 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
             outputs = softmax(np.array(outputs))
             return dict(zip(inputs, outputs))
 
+        # 5. get each quant_bits's prob according `qrange_results`
+        # Suppose fakequant A and fakequant B,
+        # if qrange(A) > qrange(B), then the higher bit-width of A should get more selection prob
+        # if qrange(A) < qrange(B), then the lower bit-width of A should get less selection prob.
         prob_results = {}
         for node in prepared_model.graph.nodes:
             if node.op == 'call_module':
@@ -665,25 +673,8 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
 
         return filterd_results, prob_results
 
-    def sample_qrange_prob_once(self, prob_results):
-        prefix = 'architecture.qmodels.tensor'
-        prepared_model = _get_attrs(self.model, prefix)        
-        for node in prepared_model.graph.nodes:
-            if node.op == 'call_module':
-                maybe_lsq = _get_attrs(prepared_model, node.target)
-                if hasattr(maybe_lsq, 'weight_fake_quant'):
-                    # weights
-                    maybe_lsq = maybe_lsq.weight_fake_quant
-                if isinstance(maybe_lsq, DynamicLearnableFakeQuantize):
-                    # activation
-                    quant_bits = maybe_lsq.mutable_attrs['quant_bits']
-                    quant_bits.current_choice = np.random.choice(
-                        quant_bits.choices, p=list(prob_results[quant_bits.alias].values()))
-        candidate = self.model.mutator.current_choices
-        return candidate
-
     def _map_actfqnode2outputs(self, prepared_model):
-        actfqnode2outputs = {}
+        actfqnode2outputs = defaultdict(list)
         for node in prepared_model.graph.nodes:
             for maybe_act_fq in node.args:
                 if not hasattr(maybe_act_fq, 'op') or maybe_act_fq.op != 'call_module':
@@ -692,19 +683,101 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 if not isinstance(maybe_act_fq, DynamicLearnableFakeQuantize):
                     continue
                 quant_bits = maybe_act_fq.mutable_attrs['quant_bits']
-                if quant_bits.alias not in actfqnode2outputs:
-                    actfqnode2outputs[quant_bits.alias] = [node]
-                else:
-                    actfqnode2outputs[quant_bits.alias].append(node)
+                actfqnode2outputs[quant_bits].append(node)
 
         return actfqnode2outputs
 
-    def sample_ilp_once(self, filterd_results, prob_results, w_alpha=1.0, act_alpha=1.0, default_bit=4) -> None:
+    def _get_mod_mutable_or_choices(self, mod, chmutable2mods=None):
+        if isinstance(mod, (DynamicConvMixin, DynamicLinearMixin)):
+            out_channels = [mod.out_channels] if isinstance(mod, DynamicConvMixin) else [mod.out_features]
+            out_mutable = mod.get_mutable_attr('out_channels')
+            if out_mutable is not None:
+                out_channels = list(set(out_mutable.choices))
+            in_channels = [mod.in_channels] if isinstance(mod, DynamicConvMixin) else [mod.in_features]
+            in_mutable = mod.get_mutable_attr('in_channels')
+            if in_mutable is not None:
+                in_channels = list(set(in_mutable.choices))
+        else:
+            raise TypeError(f'Unsupported mod {type(mod)}')
+        w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
+        act_quant_bits = mod._ACT_QUANT_BITS
+
+        if chmutable2mods is not None:
+            if out_mutable is not None:
+                chmutable2mods[out_mutable].append((mod, True))
+            if in_mutable is not None:
+                chmutable2mods[in_mutable].append((mod, False))
+        return out_channels, in_channels, w_quant_bits, act_quant_bits
+
+    def _set_mod_chs(self, mod, ich, och, derived_mutables, origin_mutables):
+        if isinstance(mod, (DynamicConvMixin, DynamicLinearMixin)):
+            out_mutable = mod.get_mutable_attr('out_channels')
+            if isinstance(out_mutable, DerivedMutable):
+                if out_mutable in derived_mutables and derived_mutables[out_mutable] != och:
+                    raise ValueError(f'Multiple mutable get different choices')
+                derived_mutables[out_mutable] = och
+            elif out_mutable is not None:
+                if out_mutable in origin_mutables and origin_mutables[out_mutable] != och:
+                    raise ValueError(f'Multiple mutable get different choices')
+                origin_mutables[out_mutable] = och
+                out_mutable.current_choice = och
+            in_mutable = mod.get_mutable_attr('in_channels')
+            if isinstance(in_mutable, DerivedMutable):
+                if in_mutable in derived_mutables and derived_mutables[in_mutable] != ich:
+                    raise ValueError(f'Multiple mutable get different choices')
+                derived_mutables[in_mutable] = ich
+            elif in_mutable is not None:
+                if in_mutable in origin_mutables and origin_mutables[in_mutable] != ich:
+                    raise ValueError(f'Multiple mutable get different choices')
+                origin_mutables[in_mutable] = ich
+                in_mutable.current_choices = ich
+            str = ''
+            if out_mutable is not None:
+                str += f'set out_mutable: {out_mutable.alias} to {och}'
+            if in_mutable is not None:
+                str += f'; ... set in_mutable: {in_mutable.alias} ot {ich}'
+            self.runner.logger.debug(str)
+        else:
+            raise TypeError(f'Unsupported mod {type(mod)}')
+
+    def sample_ilp_once(self, filterd_results, prob_results, w_alpha=1.0, act_alpha=1.0) -> None:
         others_prob_results = deepcopy(prob_results)
         filterd_mods = dict((name, mod) for name, mod in self.model.named_modules() if name in filterd_results)
+
+        # build interger linear programming and solve it.
+        problem = LpProblem('Bit-width allocation', LpMinimize)
+        variables = {}
+        target, bitops, bitparams = 0, 0, 0
+        key_temp = 'och.{och}-ich.{ich}-{wb_alias}.{wb}-{ab_alias}.{ab}'
+        chmutable2mods = defaultdict(list)
+        for name, mod in filterd_mods.items():
+            out_channels, in_channels, \
+                w_quant_bits, act_quant_bits = self._get_mod_mutable_or_choices(mod, chmutable2mods)
+            all_choices = product(out_channels, in_channels, w_quant_bits.choices, act_quant_bits.choices)
+            key_temp1 = partial(key_temp.format, wb_alias=w_quant_bits.alias, ab_alias=act_quant_bits.alias)
+            for och, ich, wb, ab in all_choices:
+                key = key_temp1(och=och, ich=ich, wb=wb, ab=ab)
+                variables[key] = LpVariable(key, 0, 1, LpInteger)
+                # target
+                # TODO(shiguang): make different channel get different prob_results.
+                if act_quant_bits.alias not in prob_results and len(act_quant_bits.choices) == 1:
+                    target += (w_alpha * prob_results[w_quant_bits.alias][wb]) * variables[key]
+                else:
+                    target += (w_alpha * prob_results[w_quant_bits.alias][wb] + act_alpha * prob_results[act_quant_bits.alias][ab]) * variables[key]
+                bitops += filterd_results[name]['flops'] / min(out_channels) * och / min(in_channels) * ich / min(w_quant_bits.choices) * wb / min(act_quant_bits.choices) * ab * variables[key]
+                bitparams += filterd_results[name]['params'] / min(out_channels) * och / min(in_channels) * ich  / min(w_quant_bits.choices) * wb * variables[key]
+            others_prob_results.pop(w_quant_bits.alias, None)
+            others_prob_results.pop(act_quant_bits.alias, None)
+            # constraint 1: only select one bit for weight, one bit for activation, one bit for output channel and one bit for input channel.
+            problem += sum(variables[key_temp1(och=och, ich=ich, wb=wb, ab=ab)]
+                           for och in out_channels for ich in in_channels for wb in w_quant_bits.choices for ab in act_quant_bits.choices) == 1
+
+        problem += target
+
+        # constraint 2: make sure multiple targets share the same quant_bits.
         prefix = 'architecture.qmodels.tensor'
         prepared_model = _get_attrs(self.model, prefix)
-        # find activation fakequant that have multiple targets, which is in filterd_results.
+        # find activation fakequant that have multiple targets, which is also in filterd_results.
         actfqnode2outputs = self._map_actfqnode2outputs(prepared_model)
         filterd_actfqnode2outputs = defaultdict(list)
         for fq, outputs in actfqnode2outputs.items():
@@ -715,73 +788,133 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                     count += 1
             if count == 1:
                 del filterd_actfqnode2outputs[fq]
-        # build interger linear programming and solve it.
-        problem = LpProblem('Bit-width allocation', LpMinimize)
-        variables = {}
-        target, bitops, bitparams = 0, 0, 0
-        for name, mod in filterd_mods.items():
-            w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
-            act_quant_bits = mod._ACT_QUANT_BITS
-            for wb in w_quant_bits.choices:
-                w_quant_bits.current_choice = wb
-                for ab in act_quant_bits.choices:
-                    act_quant_bits.current_choice = ab
-                    key = f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}'
-                    variables[key] = LpVariable(key, 0, 1, LpInteger)
-                    # target
-                    target += (w_alpha * prob_results[w_quant_bits.alias][wb] + act_alpha * prob_results[act_quant_bits.alias][ab]) * variables[key]
-                    bitops += filterd_results[name]['flops'] / w_quant_bits.choices[0] / act_quant_bits.choices[0] * wb * ab * variables[key]
-                    bitparams += filterd_results[name]['params'] / w_quant_bits.choices[0] * wb * variables[key]
-            others_prob_results.pop(w_quant_bits.alias, None)
-            others_prob_results.pop(act_quant_bits.alias, None)
-            # constraint 1: only select one bit for weight and one bit for activation.
-            problem += sum(variables[f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}']
-                           for wb in w_quant_bits.choices for ab in act_quant_bits.choices) == 1
-        for name, mod in filterd_mods.items():
-            act_quant_bits = mod._ACT_QUANT_BITS
-            # constraint 2: make sure multiple targets share the same quant_bits.
-            outputs = filterd_actfqnode2outputs.pop(act_quant_bits.alias, None)
-            if outputs is not None:
-                base_w_quant_bits = outputs[0].weight_fake_quant.mutable_attrs['quant_bits']
-                for ab in act_quant_bits.choices:
-                    base_w_value = sum(variables[f'{base_w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}']
-                                       for wb in base_w_quant_bits.choices)
-                    for output in outputs[1:]:
-                        selected_w_quant_bits = output.weight_fake_quant.mutable_attrs['quant_bits']
-                        selected_w_value = sum(variables[f'{selected_w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}']
-                                               for wb in base_w_quant_bits.choices)
-                        problem += base_w_value == selected_w_value
+        for act_quant_bits, outputs in filterd_actfqnode2outputs.items():
+            base_out_channels, base_in_channels, \
+                base_w_quant_bits, _ = self._get_mod_mutable_or_choices(outputs[0])
+            key_temp1 = partial(key_temp.format, wb_alias=base_w_quant_bits.alias, ab_alias=act_quant_bits.alias)
+            for ab in act_quant_bits.choices:
+                base_w_value = sum(variables[key_temp1(och=och, ich=ich, wb=wb, ab=ab)]
+                                   for och in base_out_channels for ich in base_in_channels for wb in base_w_quant_bits.choices)
+                for output in outputs[1:]:
+                    select_out_channels, select_in_channels, \
+                        selected_w_quant_bits, _ = self._get_mod_mutable_or_choices(output)
+                    key_temp2 = partial(key_temp.format, wb_alias=selected_w_quant_bits.alias, ab_alias=act_quant_bits.alias)
+                    selected_w_value = sum(variables[key_temp2(och=och, ich=ich, wb=wb, ab=ab)]
+                                           for och in select_out_channels for ich in select_in_channels for wb in selected_w_quant_bits.choices)
+                    problem += base_w_value == selected_w_value
 
-        problem += target
-        # constraint 3
-        if 'flops' in self.constraints_range:
-            problem += bitops >= self.constraints_range['flops'][0]
-            problem += bitops <= self.constraints_range['flops'][1]
+        # constraint 3: make sure multiple mod share the same channel mutable.
+        for chmutable, mod_list in chmutable2mods.items():
+            if len(mod_list) < 2:
+                continue
+            base_mod, base_is_out_channel = mod_list[0]
+            base_out_channels, base_in_channels, \
+                base_w_quant_bits, base_act_quant_bits = self._get_mod_mutable_or_choices(base_mod)
+
+            ref_channels = list(set(chmutable.choices))
+            for rch in ref_channels:
+                key_temp1 = partial(key_temp.format, wb_alias=base_w_quant_bits.alias, ab_alias=base_act_quant_bits.alias)
+                if base_is_out_channel:
+                    base_ref_value = sum(variables[key_temp1(och=rch, ich=ich, wb=wb, ab=ab)]
+                                         for ich in base_in_channels for wb in base_w_quant_bits.choices for ab in base_act_quant_bits.choices)
+                else:
+                    base_ref_value = sum(variables[key_temp1(och=och, ich=rch, wb=wb, ab=ab)]
+                                         for och in base_out_channels for wb in base_w_quant_bits.choices for ab in base_act_quant_bits.choices)
+                for select_mod, select_is_out_channel in mod_list[1:]:
+                    select_out_channels, select_in_channels, \
+                        selected_w_quant_bits, selected_act_quant_bits = self._get_mod_mutable_or_choices(select_mod)
+                    key_temp2 = partial(key_temp.format, wb_alias=selected_w_quant_bits.alias, ab_alias=selected_act_quant_bits.alias)
+                    if select_is_out_channel:
+                        select_ref_value = sum(variables[key_temp2(och=rch, ich=ich, wb=wb, ab=ab)]
+                                               for ich in select_in_channels for wb in selected_w_quant_bits.choices for ab in selected_act_quant_bits.choices)
+                    else:
+                        select_ref_value = sum(variables[key_temp2(och=och, ich=rch, wb=wb, ab=ab)]
+                                               for och in select_out_channels for wb in selected_w_quant_bits.choices for ab in selected_act_quant_bits.choices)
+
+                    problem += base_ref_value == select_ref_value
+
+        # # constraint 4(debuging): make sure the derived mutable and source mutables satisify derive rule.
+        # for chmutable, mod_list in chmutable2mods.items():
+        #     if not isinstance(chmutable, DerivedMutable):
+        #         continue
+        #     base_mod, base_is_out_channel = mod_list[0]
+        #     base_out_channels, base_in_channels, \
+        #         base_w_quant_bits, base_act_quant_bits = self._get_mod_mutable_or_choices(base_mod)
+
+        #     all_choices = [m.choices for m in chmutable.source_mutables]
+        #     product_choices = product(*all_choices)
+        #     for item_choices in product_choices:
+        #         for m, choice in zip(chmutable.source_mutables, item_choices):
+        #             m.current_choice = choice
+        #         derived_ch = chmutable.current_choice
+        #         key_temp1 = partial(key_temp.format, wb_alias=base_w_quant_bits.alias, ab_alias=base_act_quant_bits.alias)
+        #         if base_is_out_channel:
+        #             base_ref_value = sum(variables[key_temp1(och=derived_ch, ich=ich, wb=wb, ab=ab)]
+        #                                  for ich in base_in_channels for wb in base_w_quant_bits.choices for ab in base_act_quant_bits.choices)
+        #         else:
+        #             base_ref_value = sum(variables[key_temp1(och=och, ich=derived_ch, wb=wb, ab=ab)]
+        #                                  for och in base_out_channels for wb in base_w_quant_bits.choices for ab in base_act_quant_bits.choices)
+        #         for m, choice in zip(chmutable.source_mutables, item_choices):
+        #             if m not in chmutable2mods:
+        #                 continue
+        #             select_mod, select_is_out_channel = chmutable2mods[m][0]
+        #             select_out_channels, select_in_channels, \
+        #                 selected_w_quant_bits, selected_act_quant_bits = self._get_mod_mutable_or_choices(select_mod)
+        #             key_temp2 = partial(key_temp.format, wb_alias=selected_w_quant_bits.alias, ab_alias=selected_act_quant_bits.alias)
+        #             if select_is_out_channel:
+        #                 select_ref_value = sum(variables[key_temp2(och=choice, ich=ich, wb=wb, ab=ab)]
+        #                                        for ich in select_in_channels for wb in selected_w_quant_bits.choices for ab in selected_act_quant_bits.choices)
+        #             else:
+        #                 select_ref_value = sum(variables[key_temp2(och=och, ich=choice, wb=wb, ab=ab)]
+        #                                        for och in select_out_channels for wb in selected_w_quant_bits.choices for ab in selected_act_quant_bits.choices)
+
+        #             problem += base_ref_value == select_ref_value
+
+        # Note that there may be some modules are not searchable and not calculate
+        # there `params` and `flops` in `estimate_separation_modules` phase,
+        # however, the `estimate` phase will calculate all the `params` and `flops`,
+        # hence, we have to subtract the differences.
+        self.model.mutator.set_min_choices()
+        results = self.auxiliary_estimator.estimate(model=self.model)
         # constraint 4
+        if 'flops' in self.constraints_range:
+            searchable_flops = sum(v['flops'] for k, v in filterd_results.items())
+            fixed_flops = results['flops'] - searchable_flops
+            problem += bitops >= (self.constraints_range['flops'][0] - fixed_flops)
+            problem += bitops <= (self.constraints_range['flops'][1] - fixed_flops)
+        # constraint 5
         if 'params' in self.constraints_range:
-            problem += bitparams >= self.constraints_range['params'][0]
-            problem += bitparams <= self.constraints_range['params'][1]            
-        # TODO: constraint 5: avg_quant_bits for weight and act, seperately.
-        ret = problem.solve()
+            searchable_params = sum(v['params'] for k, v in filterd_results.items())
+            fixed_params = results['params'] - searchable_params
+            problem += bitparams >= (self.constraints_range['params'][0] - fixed_params)
+            problem += bitparams <= (self.constraints_range['params'][1] - fixed_params)
+        # TODO: constraint 7: avg_quant_bits for weight and act, seperately.
+        time_limit_in_seconds = 60
+        ret = problem.solve(PULP_CBC_CMD(msg=1, maxSeconds=time_limit_in_seconds))
         if ret != 1:
             return None
         # get results for weight-only nn.Modules
+        origin_mutables = dict()
+        derived_mutables = dict()
         for name, mod in filterd_mods.items():
-            w_quant_bits = mod.weight_fake_quant.mutable_attrs['quant_bits']
-            act_quant_bits = mod._ACT_QUANT_BITS
-            chosen = False
-            for wb in w_quant_bits.choices:
-                for ab in act_quant_bits.choices:
-                    key = f'{w_quant_bits.alias}.{wb}-{act_quant_bits.alias}.{ab}'
-                    if value(variables[key]) == 1.0:
-                        chosen = True
-                        break
-                if chosen is True:
-                    break
-            assert chosen
-            act_quant_bits.current_choice = default_bit if act_alpha == 0.0 and default_bit in act_quant_bits.choices else ab
-            w_quant_bits.current_choice = default_bit if w_alpha ==0.0 and default_bit in w_quant_bits.choices else wb
-        # get results for Others
+            out_channels, in_channels, \
+                w_quant_bits, act_quant_bits = self._get_mod_mutable_or_choices(mod)
+            all_choices = product(out_channels, in_channels, w_quant_bits.choices, act_quant_bits.choices)
+            key_temp1 = partial(key_temp.format, wb_alias=w_quant_bits.alias, ab_alias=act_quant_bits.alias)
+            matched_item_choices = []
+            for och, ich, wb, ab in all_choices:
+                key = key_temp1(och=och, ich=ich, wb=wb, ab=ab)
+                if value(variables[key]) == 1.0:
+                    matched_item_choices.append((och, ich, wb, ab))
+            assert len(matched_item_choices) == 1, f'Unmatched or multiple matched item choices: {len(matched_item_choices)}'
+            och, ich, wb, ab = matched_item_choices[0]
+            self._set_mod_chs(mod, ich, och, derived_mutables, origin_mutables)
+            w_quant_bits.current_choice = wb
+            act_quant_bits.current_choice = ab
+
+        self._solve_derived_mutables(derived_mutables, origin_mutables)
+
+        # get results for Others quant_bits
         others_select_mode = 2
         for node in prepared_model.graph.nodes:
             if node.op == 'call_module':
@@ -804,13 +937,68 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                         quant_bits.current_choice = keys[values.index(min(values))]
                     elif others_select_mode == 3:
                         # select the highest bit;
-                        quant_bits.current_choice = default_bit
+                        quant_bits.current_choice = max(quant_bits.choices)
                     else:
-                        # random                        
+                        # random
                         quant_bits.current_choice = random.choice(quant_bits.choices)
 
         candidate = self.model.mutator.current_choices
         return candidate
+
+    def _solve_derived_mutables(self, derived_mutables, origin_mutables):
+        derived_mutables_choices = defaultdict(list)
+        # get all candidate choices.
+        for dm, target_choice in derived_mutables.items():
+            all_choices = [m.choices for m in dm.source_mutables]
+            product_choices = product(*all_choices)
+            current_choices = [m.current_choice for m in dm.source_mutables]
+            for item_choices in product_choices:
+                for m, choice in zip(dm.source_mutables, item_choices):
+                    m.current_choice = choice
+
+                if dm.current_choice == target_choice:
+                    derived_mutables_choices[dm].append(item_choices)
+                # reset back
+                for m, choice in zip(dm.source_mutables, current_choices):
+                    m.current_choice = choice
+        # infer final choices from the candidates.
+        derived_mutables = list(derived_mutables.keys())
+        for dm, item_choices_list in derived_mutables_choices.items():
+            if len(item_choices_list) == 1:
+                item_choices = item_choices_list[0]
+                for m, choice in zip(dm.source_mutables, item_choices):
+                    if m in origin_mutables and origin_mutables[m] != choice:
+                        import pdb; pdb.set_trace()
+                        raise ValueError(f'mutable {m.alias} get different choices among multifple sets.')
+                    m.current_choice = choice
+                    origin_mutables[m] = choice
+                derived_mutables.pop(derived_mutables.index(dm))
+
+        idx = len(derived_mutables) * 20
+        while(derived_mutables and idx > 0):
+            idx -= 1
+            dm = derived_mutables.pop(0)
+            item_choices_list = derived_mutables_choices[dm]
+            in_origin = np.array([True if m in origin_mutables else False for m in dm.source_mutables])
+            current_choices = [m.current_choice for m in dm.source_mutables]
+            match_mat = np.array(item_choices_list) == np.array(current_choices)
+            match_mat = match_mat & in_origin
+            # if there at most one origin is not visited, we can infer it.
+            matched_item_choices = list(np.array(item_choices_list)[match_mat.sum(axis=1) + 1 >=len(in_origin)])
+            if len(matched_item_choices) > 0:
+                if len(matched_item_choices) > 1:
+                    import pdb; pdb.set_trace()
+                    print('Multiple matched, just take any one you what?')
+                for m, choice in zip(dm.source_mutables, matched_item_choices[0]):
+                    if m in origin_mutables and origin_mutables[m] != choice:
+                        raise ValueError(f'Multiple mutable get different choices')
+                    m.current_choice = choice
+                    origin_mutables[m] = choice
+            else:
+                derived_mutables.append(dm)
+        if len(derived_mutables) > 0:
+            import pdb; pdb.set_trace()
+            raise RuntimeError(f'Unable to infer all the origin mutables, maybe you can rewrite your searchable backbone')
 
     def sample_candidates(self, num_candidates=None) -> None:
         """Update candidate pool contains specified number of candicates."""
@@ -828,35 +1016,37 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
             act_alphas = [3*(i+1.0) / num_candidates for i in range(num_candidates)]
             w_act_alphas = [(1.0, 0.0), (0.0, 1.0)]
             w_act_alphas += [(1.0, i) for i in act_alphas]
+        if self.runner.rank == 0:
+            while len(self.candidates) < num_candidates:
+                idx += 1
+                # Note that not all the seachable mutables will be searched by `sample_ilp_once`,
+                # we first make a random choice for all the mutables, and then use the solve_mode
+                # to modify the specific mutables (DynamicQConv, DynamicQLinear).
+                self.model.mutator.set_choices(self.model.mutator.sample_choices())
+                if self.solve_mode == 'ilp':
+                    if idx > len(w_act_alphas):
+                        break
+                    candidate = self.sample_ilp_once(
+                        filterd_results, prob_results, *w_act_alphas[idx-1])
+                elif self.solve_mode == 'evo':
+                    this_prob_results = deepcopy(prob_results)
+                    for k, v in this_prob_results.items():
+                        for b in v:
+                            p = random.random()
+                            this_prob_results[k][b] = p
+                    candidate = self.sample_ilp_once(
+                        filterd_results, this_prob_results)
 
-        while len(self.candidates) < num_candidates:
-            idx += 1
-            if self.solve_mode == 'ilp' and idx <= len(w_act_alphas):
-                candidate = self.sample_ilp_once(
-                    filterd_results, prob_results, *w_act_alphas[idx-1])
                 if candidate is None:
                     continue
-            elif self.solve_mode == 'prob':
-                candidate = self.sample_qrange_prob_once(prob_results)
-            elif self.solve_mode == 'evo':
-                this_prob_results = deepcopy(prob_results)
-                for k, v in this_prob_results.items():
-                    for b in v:
-                        p = random.random()
-                        this_prob_results[k][b] = p
-                candidate = self.sample_ilp_once(
-                    filterd_results, this_prob_results)
-                if candidate is None:
-                    continue
-            else:
-                candidate = self.model.mutator.sample_choices()
-            self.model.mutator.set_choices(candidate)
-            is_pass, result = self._check_constraints(
-                random_subnet=candidate)
-            if is_pass:
-                self.candidates.append(candidate)
-                candidates_resources.append(result)
-        self.candidates = Candidates(self.candidates.data)
+                is_pass, result = self._check_constraints(
+                    random_subnet=candidate)
+                if is_pass:
+                    self.candidates.append(candidate)
+                    candidates_resources.append(result)
+            self.candidates = Candidates(self.candidates.data)
+        else:
+            self.candidates = Candidates([dict(a=0)] * num_candidates)
 
         if len(candidates_resources) > 0:
             self.candidates.update_resources(
@@ -900,13 +1090,33 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         Returns:
             bool, result: The result of checking.
         """
-        is_pass, results = check_subnet_resources(
-            model=self.model,
-            subnet=random_subnet,
-            estimator=self.estimator,
-            constraints_range=self.constraints_range,
-            export=self.solve_mode == 'evo_org')
-
+        is_pass = True
+        results = dict()
+        constraints_range = deepcopy(self.constraints_range)
+        if self.solve_mode != 'evo_org':
+            default_constraints = dict()
+            for k in self.constraints_range:
+                if k in ('flops', 'params'):
+                    default_constraints[k] = constraints_range.pop(k)
+            assert len(default_constraints) > 0
+            is_pass1, results1 = check_subnet_resources(
+                model=self.model,
+                subnet=random_subnet,
+                estimator=self.auxiliary_estimator,
+                constraints_range=default_constraints,
+                export=False)
+            is_pass &= is_pass1
+            results.update(results1)
+        if type(self.auxiliary_estimator) != type(self.estimator):
+            is_pass1, results1 = check_subnet_resources(
+                model=self.model,
+                subnet=random_subnet,
+                estimator=self.estimator,
+                constraints_range=constraints_range,
+                export=True)
+            is_pass &= is_pass1
+            results.update(results1)
+        # import pdb; pdb.set_trace()
         return is_pass, results
 
     def _save_best_fix_subnet(self):
@@ -983,7 +1193,6 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
             self._resume()
 
         while self._epoch < self._max_epochs:
-            # import pdb; pdb.set_trace()
             self.run_epoch()
             self._save_searcher_ckpt()
 

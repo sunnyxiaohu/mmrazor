@@ -547,9 +547,10 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
                 if nested_quant_bits_in_layer:
                     maybe_act = recursive_find_act_fakequant(prepared_model, node)
                     if maybe_act is None:
-                        maybe_dynamic._ACT_QUANT_BITS = OneShotMutableValue(alias=node.target + '.quant_bits', value_list=[8])
+                        act_quant_bits = OneShotMutableValue(alias=node.target + '.default_act.quant_bits', value_list=[8])
+                        maybe_dynamic._ACT_QUANT_BITS = act_quant_bits
                         print_log(
-                            f'Nested quant_bits with w_bits: {node.target} with default bit "8"', logger='current')
+                            f'Nested quant_bits with w_bits: {node.target} with default a_bits {act_quant_bits.alias}', logger='current')
                     else:
                         print_log(
                             f'Nested quant_bits with w_bits: {node.target} and a_bits: {maybe_act.target}', logger='current')
@@ -571,6 +572,9 @@ def recursive_find_act_fakequant(prepared_model, dynamic_node):
     if len(dynamic_node.args) == 0:
         return None
     maybe_act = dynamic_node.args[0]
+    if isinstance(maybe_act, tuple):
+        maybe_act = maybe_act[0]
+        print_log(f"[WARNING] Node ({dynamic_node.name})'s input is a tuple, is it a node caused by `torch.fx.wrap`?", logger='current')
     # TODO(shiguang): more general.
     if not (maybe_act.op == 'call_module' and isinstance(
             _get_attrs(prepared_model, maybe_act.target), DynamicLearnableFakeQuantize)):

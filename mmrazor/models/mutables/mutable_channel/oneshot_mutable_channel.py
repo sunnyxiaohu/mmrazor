@@ -56,3 +56,7 @@ class OneShotMutableChannel(SquentialMutableChannel):
     def max_choice(self) -> Union[int, float]:
         """Get Maximal choice."""
         return self.candidate_choices[-1]
+
+    @property
+    def choices(self):
+        return self.candidate_choices
