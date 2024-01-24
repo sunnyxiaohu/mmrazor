@@ -1,4 +1,4 @@
-_base_ = './cobits_weightonly_resnet18_supernet_8xb64_in1k.py'
+_base_ = './nasmq_weightonly_resnet18_supernet_8xb64_in1k.py'
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),

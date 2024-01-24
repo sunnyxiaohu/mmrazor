@@ -1,8 +1,9 @@
+import scienceplots
 import matplotlib.pyplot as plt
-
+plt.style.use(['science', 'ieee'])
 
 def plot_scatter_with_lines(data, labels, x_labels, save_path=None):
-    plt.rcParams.update({'font.size': 18})
+    plt.rcParams.update({'font.size': 22})
     fig, axs = plt.subplots(1, 2, figsize=(12, 8))
 
     for i, points in enumerate(data):
@@ -53,5 +54,6 @@ data_points = [
 group_labels = ['Cobits_S1', 'Cobits_S2', 'LSQ_S1', 'LSQ_S2']
 
 # 将图保存为文件
+# with plt.style.context(['science', 'ieee']):
 plot_scatter_with_lines(data_points, group_labels, x_labels=['BitOps(G)', 'Params(M)'], save_path='ofa_results.png')
 

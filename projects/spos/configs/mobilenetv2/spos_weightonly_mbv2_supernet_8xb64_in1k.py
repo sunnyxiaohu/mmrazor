@@ -56,10 +56,7 @@ model = dict(
     _delete_=True,
     _scope_='mmrazor',
     type='QNAS',
-    drop_path_rate=0.0,
     num_random_samples=2,
-    # Note index start from 1
-    backbone_dropout_stages=[3, 4],
     architecture=qmodel,
     use_spos=True,
     mutator=dict(type='mmrazor.NasMutator'))

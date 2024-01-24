@@ -1,18 +1,29 @@
-_base_ = [
-    './mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k.py',
-]
+_base_ = ['mmcls::resnet/resnet18_8xb32_in1k.py', './resnet18_supernet.py']
 
-_base_.data_preprocessor.type = 'mmcls.ClsDataPreprocessor'
-_base_.model.backbone.conv_cfg = dict(type='mmrazor.BigNasConv2d')
-_base_.model.backbone.norm_cfg = dict(type='mmrazor.DynamicBatchNorm2d')
-_base_.model.head.type = 'mmrazor.DynamicLinearClsHead'
-_base_.model.init_cfg = dict(
-    type='Pretrained',
-    checkpoint=  # noqa: E251
-    'https://download.openmmlab.com/mmclassification/v0/mobilenet_v2/mobilenet_v2_batch256_imagenet_20200708-3b2dc3af.pth')
+custom_imports = dict(
+    imports =['projects.nasmq.models.architectures.backbones.searchable_resnet'])
 
-architecture = _base_.model
-
+data_preprocessor = dict(
+    type='mmcls.ClsDataPreprocessor',
+    mean=[123.675, 116.28, 103.53,],
+    std=[58.395, 57.12, 57.375,],
+    to_rgb=True)
+architecture = dict(
+    _scope_='mmcls',
+    type='mmrazor.SearchableImageClassifier',
+    backbone=_base_.nas_backbone,
+    neck=dict(type='GlobalAveragePooling'),
+    head=dict(
+        type='mmrazor.DynamicLinearClsHead',
+        num_classes=1000,
+        in_channels=512,
+        loss=dict(
+            type='LabelSmoothLoss',
+            loss_weight=1.0,
+            label_smooth_val=0.1,
+            num_classes=1000),
+    ),
+    connect_head=dict(connect_with_backbone='backbone.last_mutable_channels'))
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.PerChannelBatchLSQObserver'),
     a_observer=dict(type='mmrazor.BatchLSQObserver'),
@@ -25,14 +36,14 @@ global_qconfig = dict(
 qmodel = dict(
     _scope_='mmcls',
     type='mmrazor.MMArchitectureQuant',
-    data_preprocessor=_base_.data_preprocessor,
+    data_preprocessor=data_preprocessor,
     architecture=architecture,
     float_checkpoint=None,
     forward_modes=('tensor', 'predict', 'loss'),
     quantizer=dict(
         type='mmrazor.OpenVINOXQuantizer',
         quant_bits_skipped_module_names=[
-            'backbone.conv1.conv',
+            'backbone.conv1',
             'head.fc'
         ],
         w_bits=[3,4,5,6],
@@ -41,7 +52,6 @@ qmodel = dict(
         tracer=dict(
             type='mmrazor.CustomTracer',
             skipped_module_classes=[
-                # 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_container.DynamicSequential',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_conv.BigNasConv2d',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_function.DynamicInputResizer',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_linear.DynamicLinear',
@@ -63,8 +73,10 @@ model = dict(
 train_dataloader = dict(batch_size=64)
 optim_wrapper = dict(
     _delete_=True,
-    paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0., bypass_duplicate=True),
-    optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.00001))
+    optimizer=dict(type='SGD', lr=0.004, momentum=0.9, weight_decay=0.0001, nesterov=True),
+    paramwise_cfg=dict(
+        bypass_duplicate=True
+    ),)
 
 model_wrapper_cfg = dict(
     type='mmrazor.QNASDDP',
@@ -72,7 +84,7 @@ model_wrapper_cfg = dict(
     find_unused_parameters=True)
 
 # learning policy
-max_epochs = 25
+max_epochs = 50  # 25
 warm_epochs = 1
 param_scheduler = [
     # warm up learning rate scheduler
@@ -99,11 +111,32 @@ train_cfg = dict(
     type='mmrazor.QNASEpochBasedLoop',
     max_epochs=max_epochs,
     val_interval=5,
-    qat_begin=1,
+    qat_begin=10,
     freeze_bn_begin=-1)
 
 # total calibrate_sample_num = 256 * 8 * 2
 val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536, quant_bits=[3,4,5,6])
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
-default_hooks = dict(sync=dict(type='SyncBuffersHook'))
+default_hooks = dict(sync=dict(type='SyncBuffersHook'),
+                     checkpoint=dict(save_best=None, max_keep_ckpts=1))
+
+# _base_.train_dataloader.dataset.pipeline = [
+#     dict(type='LoadImageFromFile'),
+#     dict(type='RandomResizedCrop', scale=224, backend='pillow'),
+#     dict(type='RandomFlip', prob=0.5, direction='horizontal'),
+#     dict(type='ColorJitter', brightness=0.2, contrast=0.2, saturation=0.2),
+#     dict(type='PackClsInputs'),
+# ]
+# _base_.train_dataloader.batch_size = 256
+# test_pipeline = [
+#     dict(type='LoadImageFromFile'),
+#     dict(edge='short', scale=256, type='ResizeEdge', backend='pillow'),
+#     dict(crop_size=224, type='CenterCrop'),
+#     dict(type='PackClsInputs')
+# ]
+# _base_.val_dataloader.dataset.pipeline = test_pipeline
+# _base_.test_dataloader.dataset.pipeline = test_pipeline
+# optim_wrapper = dict(
+#     _delete_=True,
+#     optimizer=dict(type='SGD', lr=0.8, momentum=0.9, weight_decay=0.0001, nesterov=True))
