@@ -81,6 +81,8 @@ class QNAS(BaseAlgorithm):
                  drop_path_rate: float = 0.2,
                  backbone_dropout_stages: List = [6, 7],
                  use_spos: bool = False,
+                 use_hard_loss: bool = False,
+                 use_soft_loss: bool = True,
                  init_cfg: Optional[Dict] = None) -> None:
         super().__init__(architecture, data_preprocessor, init_cfg)
         # import pdb; pdb.set_trace()
@@ -89,15 +91,22 @@ class QNAS(BaseAlgorithm):
         # before distiller initialized.
         self.mutator.prepare_from_supernet(self.architecture)
 
-        assert distiller is None, 'Unsupposed qat_distiller, except "None"'
-        assert qat_distiller is None, 'Unsupposed qat_distiller, except "None"'
-        # self.distiller = self._build_distiller(distiller)
-        # self.distiller.prepare_from_teacher(self.architecture.architecture)
-        # self.distiller.prepare_from_student(self.architecture.architecture)
+        self.distiller = distiller
+        if distiller is not None:
+            self.distiller = self._build_distiller(distiller)
+            self.distiller.prepare_from_teacher(self.architecture.architecture)
+            self.distiller.prepare_from_student(self.architecture.architecture)
 
-        # self.qat_distiller = self._build_distiller(qat_distiller)
-        # self.qat_distiller.prepare_from_teacher(self.architecture.qmodels['loss'])
-        # self.qat_distiller.prepare_from_student(self.architecture.qmodels['loss'])
+        self.qat_distiller = qat_distiller
+        if qat_distiller is not None:
+            self.qat_distiller = self._build_distiller(qat_distiller)
+            self.qat_distiller.prepare_from_teacher(self.architecture.qmodels['loss'])
+            self.qat_distiller.prepare_from_student(self.architecture.qmodels['loss'])
+
+        self.use_hard_loss = use_hard_loss
+        self.use_soft_loss = use_soft_loss
+        if not self.use_hard_loss  and not self.use_soft_loss:
+            raise ValueError(f'Can not both set hard loss and soft loss factor to False')
 
         if use_spos:
             self.sample_kinds = []
@@ -176,9 +185,6 @@ class QNAS(BaseAlgorithm):
             # update the max subnet loss.
             if kind == 'max':
                 self.mutator.set_max_choices()
-                # qnas_backbone.set_dropout(
-                #     dropout_stages=self.backbone_dropout_stages,
-                #     drop_path_rate=self.drop_path_rate)
                 with optim_wrapper.optim_context(
                         self
                 ), distiller.teacher_recorders:  # type: ignore
@@ -192,18 +198,12 @@ class QNAS(BaseAlgorithm):
             # update the min subnet loss.
             elif kind == 'min':
                 self.mutator.set_min_choices()
-                # qnas_backbone.set_dropout(
-                #     dropout_stages=self.backbone_dropout_stages,
-                #     drop_path_rate=0.)
                 min_subnet_losses = distill_step(batch_inputs, data_samples)
                 total_losses.update(
                     add_prefix(min_subnet_losses, 'min_subnet'))
             # update the random subnets loss.
             elif 'random' in kind:
                 self.mutator.set_choices(self.mutator.sample_choices())
-                # qnas_backbone.set_dropout(
-                #     dropout_stages=self.backbone_dropout_stages,
-                #     drop_path_rate=0.)
                 random_subnet_losses = distill_step(batch_inputs, data_samples)
                 total_losses.update(
                     add_prefix(random_subnet_losses, f'{kind}_subnet'))
@@ -305,10 +305,10 @@ class QNASDDP(MMDistributedDataParallel):
     def train_step(self, data: List[dict],
                    optim_wrapper: OptimWrapper) -> Dict[str, torch.Tensor]:
         if self.module.current_stage == 'float':
-            # distiller = self.module.distiller
+            distiller = self.module.distiller
             mode = 'float.loss'
         elif self.module.current_stage == 'qat':
-            # distiller = self.module.qat_distiller
+            distiller = self.module.qat_distiller
             mode = 'loss'
         else:
             raise ValueError(f'Unsupported current_stage: {self.module.current_stage}')
@@ -319,18 +319,26 @@ class QNASDDP(MMDistributedDataParallel):
                 batch_inputs: torch.Tensor, data_samples: List[BaseDataElement]
         ) -> Dict[str, torch.Tensor]:
             subnet_losses = dict()
-            with optim_wrapper.optim_context(
-                    self
-            ):  #, distiller.student_recorders:  # type: ignore
-                hard_loss = self(batch_inputs, data_samples, mode=mode)
-                subnet_losses.update(hard_loss)
-                # soft_loss = distiller.compute_distill_losses()
-                # subnet_losses.update(soft_loss)
-
-                parsed_subnet_losses, _ = self.module.parse_losses(
-                    subnet_losses)
-                optim_wrapper.update_params(parsed_subnet_losses)
-
+            if distiller is not None:
+                with optim_wrapper.optim_context(
+                        self
+                ), distiller.student_recorders:  # type: ignore
+                    hard_loss = self(batch_inputs, data_samples, mode=mode)
+                    if self.module.use_hard_loss:
+                        subnet_losses.update(hard_loss)
+                    if self.module.use_soft_loss:
+                        soft_loss = distiller.compute_distill_losses()
+                        subnet_losses.update(soft_loss)
+                    parsed_subnet_losses, _ = self.module.parse_losses(
+                        subnet_losses)
+                    optim_wrapper.update_params(parsed_subnet_losses)
+            else:
+                with optim_wrapper.optim_context(self):  # type: ignore
+                    hard_loss = self(batch_inputs, data_samples, mode=mode)
+                    subnet_losses.update(hard_loss)
+                    parsed_subnet_losses, _ = self.module.parse_losses(
+                        subnet_losses)
+                    optim_wrapper.update_params(parsed_subnet_losses)
             return subnet_losses
 
         if not self._optim_wrapper_count_status_reinitialized:
@@ -350,26 +358,28 @@ class QNASDDP(MMDistributedDataParallel):
             if kind == 'max':
                 self.module.mutator.set_max_choices()
                 # self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
-                # qnas_backbone.set_dropout(
-                #     dropout_stages=self.module.backbone_dropout_stages,
-                #     drop_path_rate=self.module.drop_path_rate)
-                with optim_wrapper.optim_context(
-                        self
-                ):  # , distiller.teacher_recorders:  # type: ignore
-                    max_subnet_losses = self(
-                        batch_inputs, data_samples, mode=mode)
-                    parsed_max_subnet_losses, _ = self.module.parse_losses(
-                        max_subnet_losses)
-                    optim_wrapper.update_params(parsed_max_subnet_losses)
+                if distiller is not None:
+                    with optim_wrapper.optim_context(
+                            self
+                    ), distiller.teacher_recorders:  # type: ignore
+                        max_subnet_losses = self(
+                            batch_inputs, data_samples, mode=mode)
+                        parsed_max_subnet_losses, _ = self.module.parse_losses(
+                            max_subnet_losses)
+                        optim_wrapper.update_params(parsed_max_subnet_losses)
+                else:
+                    with optim_wrapper.optim_context(self):
+                        max_subnet_losses = self(
+                            batch_inputs, data_samples, mode=mode)
+                        parsed_max_subnet_losses, _ = self.module.parse_losses(
+                            max_subnet_losses)
+                        optim_wrapper.update_params(parsed_max_subnet_losses)
                 total_losses.update(
                     add_prefix(max_subnet_losses, 'max_subnet'))
             # update the min subnet loss.
             elif kind == 'min':
                 self.module.mutator.set_min_choices()
                 # self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
-                # qnas_backbone.set_dropout(
-                #     dropout_stages=self.module.backbone_dropout_stages,
-                #     drop_path_rate=0.)
                 min_subnet_losses = distill_step(batch_inputs, data_samples)
                 total_losses.update(
                     add_prefix(min_subnet_losses, 'min_subnet'))
@@ -377,18 +387,16 @@ class QNASDDP(MMDistributedDataParallel):
             elif 'random' in kind:
                 self.module.mutator.set_choices(self.module.mutator.sample_choices())
                 # self.module.mutator.set_choices(self.module.mutator.sample_choices(kind=qsample(cur_epoch, kind)))
-                # qnas_backbone.set_dropout(
-                #     dropout_stages=self.module.backbone_dropout_stages,
-                #     drop_path_rate=0.)
                 random_subnet_losses = distill_step(batch_inputs, data_samples)
                 total_losses.update(
                     add_prefix(random_subnet_losses, f'{kind}_subnet'))
 
         # Clear data_buffer so that we could implement deepcopy.
-        # for key, recorder in distiller.teacher_recorders.recorders.items():
-        #     recorder.reset_data_buffer()
-        # for key, recorder in distiller.student_recorders.recorders.items():
-        #     recorder.reset_data_buffer()
+        if distiller is not None:
+            for key, recorder in distiller.teacher_recorders.recorders.items():
+                recorder.reset_data_buffer()
+            for key, recorder in distiller.student_recorders.recorders.items():
+                recorder.reset_data_buffer()
 
         return total_losses
 

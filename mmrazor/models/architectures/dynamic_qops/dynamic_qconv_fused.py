@@ -446,15 +446,3 @@ class DynamicQConvReLU2d(nniqat.ConvReLU2d, DynamicConvMixin):
 
         return weight, bias, self.padding, out_mask
 
-
-def update_bn_stats(mod):
-    if type(mod) in set([DynamicQConvBnReLU2d, DynamicQConvBn2d, DynamicQConvReLU2d]):
-        mod.update_bn_stats()
-    else:
-        nniqat.update_bn_stats(mod)
-
-def freeze_bn_stats(mod):
-    if type(mod) in set([DynamicQConvBnReLU2d, DynamicQConvBn2d, DynamicQConvReLU2d]):
-        mod.freeze_bn_stats()
-    else:
-        nniqat.freeze_bn_stats(mod)

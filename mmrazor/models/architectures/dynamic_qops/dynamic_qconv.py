@@ -36,7 +36,7 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
         groups = self.groups
         if self.groups == self.in_channels == self.out_channels:
             groups = input.size(1)
-        weight, bias, padding = self.get_dynamic_params(self.weight_fake_quant(self.weight), self.bias)
+        weight, bias, padding, out_mask = self.get_dynamic_params(self.weight_fake_quant(self.weight), self.bias)
         return self.conv_func(input, weight, bias,
                               self.stride, padding, self.dilation, groups)
 
@@ -82,7 +82,14 @@ class DynamicQConv2d(nnqat.Conv2d, DynamicConvMixin):
         # mutable in_channels/out_channels
         weight, bias = self._get_dynamic_params_by_mutable_channels(
             orig_weight, orig_bias)
-        return weight, bias, self.padding
+
+        if 'out_channels' in self.mutable_attrs:
+            mutable_out_channels = self.mutable_attrs['out_channels']
+            out_mask = mutable_out_channels.current_mask.to(orig_weight.device)
+        else:
+            out_mask = torch.ones(orig_weight.size(0)).bool().to(orig_weight.device)
+
+        return weight, bias, self.padding, out_mask
 
     def to_static_op(self):
         weight, bias, padding, out_mask = self.get_dynamic_params(self.weight, self.bias)
