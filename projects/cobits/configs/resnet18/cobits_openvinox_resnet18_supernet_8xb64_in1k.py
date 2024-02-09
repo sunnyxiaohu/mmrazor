@@ -18,7 +18,7 @@ global_qconfig = dict(
     a_observer=dict(type='mmrazor.BatchLSQObserver'),
     w_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=True, extreme_estimator=1, param_share_mode=4),
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=False, extreme_estimator=1, param_share_mode=4),
     a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, extreme_estimator=1, param_share_mode=4)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
@@ -62,7 +62,7 @@ model = dict(
 train_dataloader = dict(batch_size=64)
 optim_wrapper = dict(
     _delete_=True,
-    optimizer=dict(type='SGD', lr=0.002, momentum=0.9, weight_decay=0.0001, nesterov=True),
+    optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001, nesterov=True),
     paramwise_cfg=dict(
         bypass_duplicate=True
     ),)

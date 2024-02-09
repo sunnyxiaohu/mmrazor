@@ -5,7 +5,7 @@ global_qconfig = dict(
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True, is_symmetric_range=True),
+    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True, is_symmetric_range=False),
     a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
 )
 
@@ -92,7 +92,7 @@ train_cfg = dict(
     val_interval=5,
     is_first_batch=False,
     freeze_bn_begin=-1)
-val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop')
+val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop', calibrate_sample_num=8192)
 test_cfg = val_cfg
 
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same

@@ -2,6 +2,23 @@ _base_ = [
     './resnet18_8xb256-warmup-lbs-coslr_in1k.py',
 ]
 
+is_finetune = False
+if is_finetune:
+    lr = 0.02
+    weight_decay = 2.5e-5
+    max_epochs = 90
+    evaluate_fixed_subnet = True
+    param_share_mode = 2
+    show_indicator = False
+    work_dir = 'work_dirs/cobits_weightonly_resnet18_finetune_8xb64_in1k'
+else:
+    lr = 0.01
+    weight_decay = 0.0001
+    max_epochs = 5
+    evaluate_fixed_subnet = False
+    param_share_mode = 4
+    show_indicator = True
+
 _base_.data_preprocessor.type = 'mmcls.ClsDataPreprocessor'
 _base_.model.backbone.conv_cfg = dict(type='mmrazor.BigNasConv2d')
 _base_.model.backbone.norm_cfg = dict(type='mmrazor.DynamicBatchNorm2d')
@@ -18,8 +35,8 @@ global_qconfig = dict(
     a_observer=dict(type='mmrazor.BatchLSQObserver'),
     w_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, extreme_estimator=1, param_share_mode=4),
-    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, extreme_estimator=1, param_share_mode=4)
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, extreme_estimator=1, param_share_mode=param_share_mode),
+    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, extreme_estimator=1, param_share_mode=param_share_mode)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
 qmodel = dict(
@@ -35,8 +52,8 @@ qmodel = dict(
             'backbone.conv1',
             'head.fc'
         ],
-        w_bits=[3,4,5,6],
-        a_bits=[3,4,5,6],
+        w_bits=[2,3,4,5,6],
+        a_bits=[2,3,4,5,6],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
@@ -62,7 +79,7 @@ model = dict(
 train_dataloader = dict(batch_size=64)
 optim_wrapper = dict(
     _delete_=True,
-    optimizer=dict(type='SGD', lr=0.004, momentum=0.9, weight_decay=0.0001, nesterov=True),
+    optimizer=dict(type='SGD', lr=lr, momentum=0.9, weight_decay=weight_decay, nesterov=True),
     paramwise_cfg=dict(
         bypass_duplicate=True
     ),)
@@ -73,7 +90,6 @@ model_wrapper_cfg = dict(
     find_unused_parameters=True)
 
 # learning policy
-max_epochs = 25
 warm_epochs = 1
 param_scheduler = [
     # warm up learning rate scheduler
@@ -104,7 +120,11 @@ train_cfg = dict(
     freeze_bn_begin=-1)
 
 # total calibrate_sample_num = 256 * 8 * 2
-val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536, quant_bits=[3,4,5,6])
+val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop',
+               calibrate_sample_num=65536, quant_bits=[2,3,4,5,6],
+               evaluate_fixed_subnet=evaluate_fixed_subnet,
+               only_quantized=True,
+               show_indicator=show_indicator)
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
 default_hooks = dict(sync=dict(type='SyncBuffersHook'))

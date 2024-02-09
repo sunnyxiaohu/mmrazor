@@ -4,6 +4,7 @@ import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
+from torch.nn.modules.batchnorm import _BatchNorm
 from mmengine import fileio
 from mmengine.config import Config
 from mmengine.model import MMDistributedDataParallel
@@ -132,7 +133,7 @@ class MMArchitectureQuant(BaseAlgorithm):
                 if module is None:
                     continue
                 child_name = f'{prefix}{name}'
-                if isinstance(child, FakeQuantizeBase):
+                if isinstance(child, (FakeQuantizeBase, _BatchNorm)):
                     for name, param in child.named_parameters():
                         param_name = f'{child_name}.{name}'
                         src_param = src_state_dict[param_name]
@@ -434,10 +435,12 @@ class MMArchitectureQuantDDP(MMDistributedDataParallel):
         super().__init__(device_ids=device_ids, **kwargs)
         # After moving all model parameters and buffers to the GPU
         # (`model.cuda()`), the buffers in model are different.
-        self.module.qmodels = self.module._build_qmodels(
-            self.module.architecture)
-        self.module.sync_qparams('tensor')
-        self.module.reset_observer_and_fakequant_statistics(self)
+        # (shiguang): However, if rebuild qmodels, it will cause
+        # the rebuild parameters in model are different.
+        # self.module.qmodels = self.module._build_qmodels(
+        #     self.module.architecture)
+        # self.module.sync_qparams('tensor')
+        # self.module.reset_observer_and_fakequant_statistics(self)
 
     def calibrate_step(self, data: Union[Dict, Tuple, List]):
         """PTQ method need calibrate by cali data."""

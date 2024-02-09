@@ -27,6 +27,8 @@ from mmrazor.models.fake_quants import (enable_param_learning,
                                         enable_static_estimate, enable_val)
 from mmrazor.registry import LOOPS
 
+from .utils import CalibrateBNMixin
+
 TORCH_observers = register_torch_observers()
 TORCH_fake_quants = register_torch_fake_quants()
 
@@ -95,7 +97,7 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
     def run(self):
         """Launch training."""
         self.runner.call_hook('before_train')
-
+        self.runner.val_loop.run()
         while self._epoch < self._max_epochs:
             self.prepare_for_run_epoch()
             self.run_epoch()
@@ -244,7 +246,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
 
 
 @LOOPS.register_module()
-class QATValLoop(ValLoop):
+class QATValLoop(ValLoop, CalibrateBNMixin):
     """`ValLoop` for `QuantizationAwareTraining`
 
     Args:
@@ -260,8 +262,10 @@ class QATValLoop(ValLoop):
                  runner,
                  dataloader: Union[DataLoader, Dict],
                  evaluator: Union[Evaluator, Dict, List],
+                 calibrate_sample_num: int = -1,
                  fp16: bool = False) -> None:
         super().__init__(runner, dataloader, evaluator, fp16)
+        self.calibrate_sample_num = calibrate_sample_num
         if self.runner.distributed:
             assert hasattr(self.runner.model.module, 'architecture')
             # TODO: remove hard code after mmcls add data_preprocessor
@@ -280,6 +284,10 @@ class QATValLoop(ValLoop):
         """Launch validation."""
         self.runner.call_hook('before_val')
         self.runner.call_hook('before_val_epoch')
+        if self.calibrate_sample_num > 0:
+            self.calibrate_bn_statistics(self.runner.train_dataloader,
+                                         model = self.runner.model,
+                                         calibrate_sample_num = self.calibrate_sample_num)
         self.runner.model.eval()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch, self.runner.model)
@@ -296,6 +304,10 @@ class QATValLoop(ValLoop):
         self.runner.call_hook('after_val_epoch', metrics=qat_metrics)
 
         self.runner.call_hook('before_val_epoch')
+        if self.calibrate_sample_num > 0:
+            self.calibrate_bn_statistics(self.runner.train_dataloader,
+                                         model = self.architecture,
+                                         calibrate_sample_num = self.calibrate_sample_num)
         self.runner.model.eval()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch, self.architecture)

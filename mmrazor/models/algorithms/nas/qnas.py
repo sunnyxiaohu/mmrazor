@@ -5,6 +5,7 @@ import random
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
+from mmengine import fileio
 from mmengine.logging import MessageHub
 from mmengine.model import BaseModel, MMDistributedDataParallel
 from mmengine.optim import OptimWrapper
@@ -18,6 +19,7 @@ from mmrazor.models.utils import (add_prefix,
                                   reinitialize_optim_wrapper_count_status)
 from mmrazor.registry import MODEL_WRAPPERS, MODELS
 from mmrazor.structures.quantization import QConfigHandler
+from mmrazor.structures.subnet.fix_subnet import _load_fix_subnet_by_mutable
 
 from ..base import BaseAlgorithm
 
@@ -83,6 +85,7 @@ class QNAS(BaseAlgorithm):
                  use_spos: bool = False,
                  use_hard_loss: bool = False,
                  use_soft_loss: bool = True,
+                 fix_subnet: str = None,
                  init_cfg: Optional[Dict] = None) -> None:
         super().__init__(architecture, data_preprocessor, init_cfg)
         # import pdb; pdb.set_trace()
@@ -107,6 +110,10 @@ class QNAS(BaseAlgorithm):
         self.use_soft_loss = use_soft_loss
         if not self.use_hard_loss  and not self.use_soft_loss:
             raise ValueError(f'Can not both set hard loss and soft loss factor to False')
+        self.fix_subnet = fix_subnet
+        if self.fix_subnet is not None:
+            subnet_dict = fileio.load(self.fix_subnet)
+            _load_fix_subnet_by_mutable(self, subnet_dict)
 
         if use_spos:
             self.sample_kinds = []
@@ -115,6 +122,8 @@ class QNAS(BaseAlgorithm):
             self.sample_kinds = ['max', 'min']
         for i in range(num_random_samples):
             self.sample_kinds.append('random' + str(i))
+        if self.fix_subnet is not None:
+            self.sample_kinds = ['fixed']
         # import pdb; pdb.set_trace()
         self.drop_path_rate = drop_path_rate
         self.backbone_dropout_stages = backbone_dropout_stages
@@ -294,13 +303,19 @@ class QNASDDP(MMDistributedDataParallel):
         # Hackly, we rebuild qmodels and the corresonding modules based on the architecture
         # that have aleady moved to GPU, so that the buffers can be shared among qmodels
         # and the architecture.
-        self.module.architecture.qmodels = self.module.architecture._build_qmodels(
-            self.module.architecture.architecture)
-        self.module.mutator.prepare_from_supernet(self.module.architecture)
-        # self.module.qat_distiller.prepare_from_teacher(self.module.architecture.qmodels['loss'])
-        # self.module.qat_distiller.prepare_from_student(self.module.architecture.qmodels['loss'])        
-        self.module.sync_qparams('tensor')
-        self.module.architecture.reset_observer_and_fakequant_statistics(self)
+        # (shiguang): However, if rebuild qmodels, it will cause
+        # the rebuild parameters in model are different.
+        # self.module.architecture.qmodels = self.module.architecture._build_qmodels(
+        #     self.module.architecture.architecture)
+        # self.module.mutator.prepare_from_supernet(self.module.architecture)
+        # if self.module.qat_distiller is not None:
+        #    self.module.qat_distiller.prepare_from_teacher(self.module.architecture.qmodels['loss'])
+        #    self.module.qat_distiller.prepare_from_student(self.module.architecture.qmodels['loss'])
+        # self.module.sync_qparams('tensor')
+        # self.module.architecture.reset_observer_and_fakequant_statistics(self)
+        # if self.module.fix_subnet is not None:
+        #     subnet_dict = fileio.load(self.module.fix_subnet)
+        #     _load_fix_subnet_by_mutable(self.module, subnet_dict)
 
     def train_step(self, data: List[dict],
                    optim_wrapper: OptimWrapper) -> Dict[str, torch.Tensor]:
@@ -390,6 +405,10 @@ class QNASDDP(MMDistributedDataParallel):
                 random_subnet_losses = distill_step(batch_inputs, data_samples)
                 total_losses.update(
                     add_prefix(random_subnet_losses, f'{kind}_subnet'))
+            else:
+                fixed_subnet_losses = distill_step(batch_inputs, data_samples)
+                total_losses.update(
+                    add_prefix(fixed_subnet_losses, f'{kind}_subnet'))
 
         # Clear data_buffer so that we could implement deepcopy.
         if distiller is not None:

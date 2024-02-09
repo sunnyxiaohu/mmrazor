@@ -9,9 +9,10 @@ train_cfg = dict(
     dataloader=_base_.val_dataloader,
     evaluator=_base_.val_evaluator,
     max_epochs=1,
-    num_candidates=10,
+    num_candidates=5,
     num_mutation=0,
     num_crossover=0,
+    w_act_alphas=[(1.0, 1.0), (0.5, 1.0), (1.0, 1.5), (1.0, 2.0), (1.0, 3.0)],
     calibrate_dataloader=_base_.train_dataloader,
     calibrate_sample_num=65536,
     # w4a4: Flops: 5394.053 Params: 19.011

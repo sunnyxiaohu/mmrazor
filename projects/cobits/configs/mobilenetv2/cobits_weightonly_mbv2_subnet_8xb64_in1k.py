@@ -34,8 +34,8 @@ model = dict(
         std=[58.395, 57.12, 57.375],
         # convert image from BGR to RGB
         to_rgb=True),
-    architecture=mbv2net,
-    float_checkpoint=float_checkpoint,
+    architecture=qmodel,
+    float_checkpoint=None,
     quantizer=dict(
         type='mmrazor.WeightOnlyQuantizer',
         quant_bits_skipped_module_names=[
@@ -51,11 +51,11 @@ model = dict(
             ])))
 
 train_dataloader = dict(batch_size=64)
-optim_wrapper = dict(optimizer=dict(lr=0.002))
+optim_wrapper = dict(optimizer=dict(lr=0.008))
 
 # learning policy
-max_epochs = 75
-warm_epochs = 1
+max_epochs = 90
+warm_epochs = 5
 param_scheduler = [
     # warm up learning rate scheduler
     dict(
@@ -91,7 +91,7 @@ train_cfg = dict(
     val_interval=5,
     is_first_batch=False,
     freeze_bn_begin=-1)
-val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop')
+val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop', calibrate_sample_num=8192)
 test_cfg = val_cfg
 
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same

@@ -401,6 +401,8 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                  calibrate_sample_num: int = 4096,
                  estimator_cfg: Optional[Dict] = dict(type='mmrazor.ResourceEstimator'),
                  quant_bits = None,
+                 only_quantized = False,
+                 show_indicator = False,
                  fp16: bool = False) -> None:
         super().__init__(runner, dataloader, evaluator, fp16)
         if self.runner.distributed:
@@ -422,6 +424,8 @@ class QNASValLoop(ValLoop, CalibrateMixin):
         default_args['dataloader'] = self.dataloader
         self.estimator = TASK_UTILS.build(estimator_cfg, default_args=default_args)
         self.quant_bits = quant_bits
+        self.only_quantized = only_quantized
+        self.show_indicator = show_indicator
 
     def run(self) -> dict:
         """Launch validation."""
@@ -454,7 +458,8 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                     else:
                         choices = self.quant_bits
                     for bit in choices:
-                        sample_kinds.extend([f'max_q{bit}', f'min_q{bit}'])
+                        skinds = [f'max_q{bit}'] if self.only_quantized else [f'max_q{bit}', f'min_q{bit}']
+                        sample_kinds.extend(skinds)
 
             def qmaxmin(bit=32, is_max=True):
                 def sample(mutables):
@@ -486,6 +491,41 @@ class QNASValLoop(ValLoop, CalibrateMixin):
                 all_metrics.update(add_prefix(metrics, f'{kind}_subnet'))
         self.runner.call_hook('after_val_epoch', metrics=all_metrics)
         self.runner.call_hook('after_val')
+        if self.show_indicator:
+            self.get_sensetive_indicators()
+
+    def get_sensetive_indicators(self):
+        indicators_results = defaultdict(int)
+        prefix = 'architecture.qmodels.tensor'
+        prepared_model = _get_attrs(self.model, prefix)
+        kinds = ['max', 'min']
+        kinds += ['random'] * 5
+        calibrate_sample_num = self.calibrate_sample_num
+        for kind in kinds:
+            self.model.mutator.set_choices(self.model.mutator.sample_choices(kind=kind))
+            with adabn_context(self.model):
+                if calibrate_sample_num > 0:
+                    self.calibrate_bn_observer_statistics(self.runner.train_dataloader,
+                                                          model=self.model,
+                                                          calibrate_sample_num=calibrate_sample_num)
+                for node in prepared_model.graph.nodes:
+                    if node.op == 'call_module':
+                        maybe_lsq = _get_attrs(prepared_model, node.target)
+                        if hasattr(maybe_lsq, 'weight_fake_quant'):
+                            # weights
+                            maybe_lsq = maybe_lsq.weight_fake_quant
+                        if isinstance(maybe_lsq, DynamicLearnableFakeQuantize):
+                            quant_bits = maybe_lsq.mutable_attrs['quant_bits']
+                            bit = quant_bits.current_choice
+                            scale, zero_point = maybe_lsq.calculate_qparams()
+                            assert quant_bits.alias, f'quant_bits: {quant_bits.alias} already exists.'
+                            indicators_results[quant_bits.alias] += scale.mean().item() * (2**bit - 1)
+        indicators_strs = '\n Indicators Results: '
+        sorted_results = sorted(indicators_results.items(), key=lambda x: x[1])
+        for ind, rst in sorted_results:
+            indicators_strs += f'\n {ind}: {rst}'
+        self.runner.logger.info(indicators_strs)
+        return indicators_results
 
     def _evaluate_once(self, kind='') -> Dict:
         """Evaluate a subnet once with BN re-calibration."""
@@ -571,10 +611,11 @@ class QNASValLoop(ValLoop, CalibrateMixin):
 class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
     """Loop for evolution searching."""
 
-    def __init__(self, *args, export_fix_subnet=None, solve_mode='evo_org', **kwargs):
+    def __init__(self, *args, export_fix_subnet=None, solve_mode='evo_org', w_act_alphas=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.export_fix_subnet = export_fix_subnet
         self.solve_mode = solve_mode
+        self.w_act_alphas = w_act_alphas
         assert solve_mode in ['evo', 'prob', 'ilp', 'evo_org']
         auxiliary_estimator_cfg = dict(type='mmrazor.ResourceEstimator',
                                        input_shape=self.estimator.input_shape)
@@ -1013,9 +1054,13 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
             filterd_results, prob_results = self.get_qrange_probs()
         if self.solve_mode == 'ilp':
             num_candidates = num_candidates - init_candidates
-            act_alphas = [3*(i+1.0) / num_candidates for i in range(num_candidates)]
-            w_act_alphas = [(1.0, 0.0), (0.0, 1.0)]
-            w_act_alphas += [(1.0, i) for i in act_alphas]
+            if self.w_act_alphas is not None:
+                assert len(self.w_act_alphas) == num_candidates, 'Unmatched w_act_alphas'
+                w_act_alphas = self.w_act_alphas
+            else:
+                act_alphas = [3*(i+1.0) / num_candidates for i in range(num_candidates)]
+                w_act_alphas = [(1.0, 0.0), (0.0, 1.0)]
+                w_act_alphas += [(1.0, i) for i in act_alphas]
         if self.runner.rank == 0:
             while len(self.candidates) < num_candidates:
                 idx += 1
