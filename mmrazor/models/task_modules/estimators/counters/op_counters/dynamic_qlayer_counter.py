@@ -67,6 +67,10 @@ class DynamicQConvBn2dCounter(DynamicQConv2dCounter):
     pass
 
 @TASK_UTILS.register_module()
+class DynamicQConvReLU2dCounter(DynamicQConv2dCounter):
+    pass
+
+@TASK_UTILS.register_module()
 class DynamicQLinearCounter(BaseCounter):
     """FLOPs/params counter for Linear operation series."""
 
@@ -86,3 +90,11 @@ class DynamicQLinearCounter(BaseCounter):
         assert w_quant_bits <= 8 and act_quant_bits <= 8
         module.__flops__ += overall_flops
         module.__params__ += int(get_model_parameters_number(module) * w_quant_bits)
+
+@TASK_UTILS.register_module()
+class DynamicQLinearBn1dCounter(DynamicQLinearCounter):
+    pass
+
+@TASK_UTILS.register_module()
+class DynamicQLinearReLUCounter(DynamicQLinearCounter):
+    pass

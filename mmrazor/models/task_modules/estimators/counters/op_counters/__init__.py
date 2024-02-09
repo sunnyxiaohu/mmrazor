@@ -14,7 +14,9 @@ from .norm_layer_counter import (BatchNorm1dCounter, BatchNorm2dCounter,
 from .pooling_layer_counter import *  # noqa: F403, F405, F401
 from .upsample_layer_counter import UpsampleCounter
 from .dynamic_qlayer_counter import (DynamicQConv2dCounter, DynamicQConvBnReLU2dCounter,
-                                     DynamicQConvBn2dCounter, DynamicQLinearCounter)
+                                     DynamicQConvBn2dCounter, DynamicQLinearCounter,
+                                     DynamicQConvReLU2dCounter, DynamicQLinearBn1dCounter,
+                                     DynamicQLinearReLUCounter)
 
 __all__ = [
     'ReLUCounter', 'PReLUCounter', 'ELUCounter', 'LeakyReLUCounter',
@@ -25,5 +27,6 @@ __all__ = [
     'InstanceNorm3dCounter', 'LayerNormCounter', 'BaseCounter',
     'DMCPBatchNorm2dCounter', 'DynamicConv2dCounter', 'DynamicLinearCounter',
     'DynamicQConv2dCounter', 'DynamicQConvBnReLU2dCounter', 'DynamicQConvBn2dCounter',
-    'DynamicQLinearCounter'
+    'DynamicQLinearCounter', 'DynamicQConvReLU2dCounter', 'DynamicQLinearBn1dCounter',
+    'DynamicQLinearReLUCounter',
 ]

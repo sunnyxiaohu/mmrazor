@@ -715,6 +715,37 @@ def fuse_dynamic_conv_bn_relu(is_qat, conv, bn, relu):
             raise NotImplementedError("Cannot fuse eval modules: {}".format((conv, bn, relu)))
 
 
+def fuse_dynamic_linear_bn(is_qat, linear, bn):
+    r"""Given the linear and bn modules, fuses them and returns the fused module
+
+    Args:
+        is_qat: a flag for whether we are using quantization aware training fusion
+        or post training quantization fusion
+        linear: Module instance of type Linear
+        bn: BatchNorm1d instance that needs to be fused with the linear layer
+
+    Examples::
+
+        >>> m1 = nn.Linear(20, 10)
+        >>> b1 = nn.BatchNorm1d(10)
+        >>> # xdoctest: +SKIP
+        >>> m2 = fuse_linear_bn(m1, b1)
+    """
+    from mmrazor.models.architectures.dynamic_qops import DynamicLinearBn1d
+    assert(linear.training == bn.training),\
+        "Linear and BN both must be in the same mode (train or eval)."
+
+    if is_qat:
+        assert bn.num_features == linear.out_features,\
+            "Output features of Linear must match num_features of BatchNorm1d"
+        assert bn.affine, "Only support fusing BatchNorm1d with affine set to True"
+        assert bn.track_running_stats,\
+            "Only support fusing BatchNorm1d with tracking_running_stats set to True"
+        return DynamicLinearBn1d(linear, bn)
+    else:
+        return nn.utils.fusion.fuse_linear_bn_eval(linear, bn)
+
+
 def _get_dynamicconv_configs(dtype_configs):
     """Return all configs related to conv modules and ops."""
     from mmrazor.models.architectures.dynamic_ops import BigNasConv2d, DynamicBatchNorm2d
@@ -845,8 +876,9 @@ def _get_dynamicconv_configs(dtype_configs):
 def _get_dynamiclinear_configs(
         dtype_configs: List[DTypeConfig]) -> List[BackendPatternConfig]:
     """Return all configs related to linear modules and ops."""
-    from mmrazor.models.architectures.dynamic_ops import DynamicLinear
-    from mmrazor.models.architectures.dynamic_qops import DynamicQLinear
+    from mmrazor.models.architectures.dynamic_ops import DynamicLinear, DynamicBatchNorm1d
+    from mmrazor.models.architectures.dynamic_qops import (DynamicQLinear, DynamicLinearReLU,
+        DynamicLinearBn1d, DynamicQLinearReLU, DynamicQLinearBn1d)
     observation_type = ObservationType.OUTPUT_USE_DIFFERENT_OBSERVER_AS_INPUT
     linear_configs: List[BackendPatternConfig] = []
 
@@ -865,76 +897,61 @@ def _get_dynamiclinear_configs(
         .set_dtype_configs(dtype_configs).set_root_module(
             DynamicLinear))
 
-    # # (2) Linear + relu
-    # # -------------------
-    # # 2.1 linear module + relu fusion config
-    # # linear relu, linear module + relu module
-    # linear_configs.append(
-    #     BackendPatternConfig(
-    #         (torch.nn.ReLU,
-    #          torch.nn.Linear)).set_dtype_configs(dtype_configs)  # noqa: E131
-    #     .set_fuser_method(reverse_sequential_wrapper2(
-    #         nni.LinearReLU)).set_fused_module(nni.LinearReLU))
-    # # linear relu, linear module + functional relu
-    # linear_configs.append(
-    #     BackendPatternConfig(
-    #         (torch.nn.functional.relu,
-    #          torch.nn.Linear)).set_dtype_configs(dtype_configs)  # noqa: E131
-    #     .set_fuser_method(reverse_sequential_wrapper2(
-    #         nni.LinearReLU)).set_fused_module(nni.LinearReLU))
+    # (2) Linear + relu
+    # -------------------
+    # 2.1 linear module + relu fusion config
+    # linear relu, linear module + relu module
+    linear_configs.append(
+        BackendPatternConfig(
+            (torch.nn.ReLU,
+             DynamicLinear)).set_dtype_configs(dtype_configs)  # noqa: E131
+        .set_fuser_method(reverse_sequential_wrapper2(
+            DynamicLinearReLU)).set_fused_module(DynamicLinearReLU))
+    # linear relu, linear module + functional relu
+    linear_configs.append(
+        BackendPatternConfig(
+            (torch.nn.functional.relu,
+             DynamicLinear)).set_dtype_configs(dtype_configs)  # noqa: E131
+        .set_fuser_method(reverse_sequential_wrapper2(
+            DynamicLinearReLU)).set_fused_module(DynamicLinearReLU))
 
-    # # 2.2 linear module + relu, fused module configs
-    # # linear relu, fused module
-    # linear_configs.append(
-    #     BackendPatternConfig(nni.LinearReLU).set_observation_type(
-    #         observation_type)  # noqa: E131
-    #     .set_dtype_configs(dtype_configs).set_root_module(
-    #         torch.nn.Linear).set_reference_quantized_module(
-    #             nnqr.Linear).set_qat_module(nniqat.LinearReLU))
-    # # linear relu, qat fused module
-    # linear_configs.append(
-    #     BackendPatternConfig(nniqat.LinearReLU).set_observation_type(
-    #         observation_type)  # noqa: E131
-    #     .set_dtype_configs(dtype_configs).set_root_module(
-    #         torch.nn.Linear).set_reference_quantized_module(nnqr.Linear))
-    # # 2.3 functional linear + relu configs
-    # # linear relu, functional linear + relu module
-    # linear_configs.append(
-    #     BackendPatternConfig(
-    #         (torch.nn.ReLU,
-    #          F.linear)).set_observation_type(observation_type)  # noqa: E131
-    #     .set_dtype_configs(dtype_configs))
-    # # linear relu, functional linear + functional relu
-    # linear_configs.append(
-    #     BackendPatternConfig(
-    #         (F.relu,
-    #          F.linear)).set_observation_type(observation_type)  # noqa: E131
-    #     .set_dtype_configs(dtype_configs))
+    # 2.2 linear module + relu, fused module configs
+    # linear relu, fused module
+    linear_configs.append(
+        BackendPatternConfig(DynamicLinearReLU).set_observation_type(
+            observation_type)  # noqa: E131
+        .set_dtype_configs(dtype_configs).set_root_module(
+            DynamicLinear).set_qat_module(DynamicQLinearReLU))
+    # linear relu, qat fused module
+    linear_configs.append(
+        BackendPatternConfig(DynamicQLinearReLU).set_observation_type(
+            observation_type)  # noqa: E131
+        .set_dtype_configs(dtype_configs).set_root_module(
+            DynamicLinear))
 
-    # # (3) Linear + batchnorm
-    # # ------------------------
-    # # 3.1 linear bn fusion
-    # linear_configs.append(
-    #     BackendPatternConfig(
-    #         (nn.BatchNorm1d,
-    #          nn.Linear)).set_dtype_configs(dtype_configs)  # noqa: E131
-    #     .set_fuser_method(reverse2(fuse_linear_bn)).set_fused_module(
-    #         nni.LinearBn1d))
+    # (3) Linear + batchnorm
+    # ------------------------
+    # 3.1 linear bn fusion
+    linear_configs.append(
+        BackendPatternConfig(
+            (DynamicBatchNorm1d,
+             DynamicLinear)).set_dtype_configs(dtype_configs)  # noqa: E131
+        .set_fuser_method(reverse2(fuse_dynamic_linear_bn)).set_fused_module(
+            DynamicLinearBn1d))
 
-    # # 3.2 linear bn fused
-    # # linear bn, fused module
-    # linear_configs.append(
-    #     BackendPatternConfig(nni.LinearBn1d).set_observation_type(
-    #         observation_type)  # noqa: E131
-    #     .set_dtype_configs(dtype_configs).set_root_module(
-    #         torch.nn.Linear).set_reference_quantized_module(
-    #             nnqr.Linear).set_qat_module(nniqat.LinearBn1d))
-    # # linear bn, qat fused module
-    # linear_configs.append(
-    #     BackendPatternConfig(nniqat.LinearBn1d).set_observation_type(
-    #         observation_type)  # noqa: E131
-    #     .set_dtype_configs(dtype_configs).set_root_module(
-    #         torch.nn.Linear).set_reference_quantized_module(nnqr.Linear))
+    # 3.2 linear bn fused
+    # linear bn, fused module
+    linear_configs.append(
+        BackendPatternConfig(DynamicLinearBn1d).set_observation_type(
+            observation_type)  # noqa: E131
+        .set_dtype_configs(dtype_configs).set_root_module(
+            DynamicLinear).set_qat_module(DynamicQLinearBn1d))
+    # linear bn, qat fused module
+    linear_configs.append(
+        BackendPatternConfig(DynamicQLinearBn1d).set_observation_type(
+            observation_type)  # noqa: E131
+        .set_dtype_configs(dtype_configs).set_root_module(
+            DynamicLinear))
     return linear_configs
 
 

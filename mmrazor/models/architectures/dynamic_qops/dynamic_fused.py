@@ -8,7 +8,7 @@ except ImportError:
     from mmrazor.utils import get_package_placeholder, get_placeholder
     nni = get_package_placeholder('torch>=1.13')
 
-from ..dynamic_ops import BigNasConv2d, DynamicLinear, DynamicBatchNorm2d
+from ..dynamic_ops import BigNasConv2d, DynamicLinear, DynamicBatchNorm2d, DynamicBatchNorm1d
 
 
 class DynamicConvReLU2d(nni._FusedModule):
@@ -46,3 +46,11 @@ class DynamicConvBnReLU2d(nni._FusedModule):
             type_before_parametrizations(relu) == ReLU, 'Incorrect types for input modules{}{}{}' \
             .format(type_before_parametrizations(conv), type_before_parametrizations(bn), type_before_parametrizations(relu))
         super().__init__(conv, bn, relu)
+
+class DynamicLinearBn1d(nni._FusedModule):
+    r"""This is a sequential container which calls the Linear and BatchNorm1d modules.
+    During quantization this will be replaced with the corresponding fused module."""
+    def __init__(self, linear, bn):
+        assert type_before_parametrizations(linear) == DynamicLinear and type_before_parametrizations(bn) == DynamicBatchNorm1d, \
+            'Incorrect types for input modules{}{}'.format(type_before_parametrizations(linear), type_before_parametrizations(bn))
+        super().__init__(linear, bn)
