@@ -60,7 +60,7 @@ model = dict(
 optim_wrapper = dict(optimizer=dict(lr=1e-6))
 
 # learning policy
-max_epochs = 25
+max_epochs = 45
 warm_epochs = 1
 # learning policy
 param_scheduler = [

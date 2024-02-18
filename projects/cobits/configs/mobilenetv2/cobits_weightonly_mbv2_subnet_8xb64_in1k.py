@@ -51,7 +51,7 @@ model = dict(
             ])))
 
 train_dataloader = dict(batch_size=64)
-optim_wrapper = dict(optimizer=dict(lr=0.008))
+optim_wrapper = dict(optimizer=dict(lr=0.008)) # 0.01 for w3a3
 
 # learning policy
 max_epochs = 90
@@ -90,6 +90,7 @@ train_cfg = dict(
     max_epochs=max_epochs,
     val_interval=5,
     is_first_batch=False,
+    dynamic_intervals=[(80, 1)],
     freeze_bn_begin=-1)
 val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop', calibrate_sample_num=8192)
 test_cfg = val_cfg

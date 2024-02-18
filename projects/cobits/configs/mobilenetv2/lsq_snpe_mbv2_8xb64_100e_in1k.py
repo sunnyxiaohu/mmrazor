@@ -49,7 +49,7 @@ optim_wrapper = dict(
 
 # learning policy
 max_epochs = 100
-warm_epochs = 1
+warm_epochs = 5
 # learning policy
 param_scheduler = [
     # warm up learning rate scheduler

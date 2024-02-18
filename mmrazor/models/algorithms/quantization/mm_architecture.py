@@ -133,7 +133,8 @@ class MMArchitectureQuant(BaseAlgorithm):
                 if module is None:
                     continue
                 child_name = f'{prefix}{name}'
-                if isinstance(child, (FakeQuantizeBase, _BatchNorm)):
+                if isinstance(child, FakeQuantizeBase) or (isinstance(
+                    child, _BatchNorm) and child_name.split('.')[-2] in ['conv', 'linear']):
                     for name, param in child.named_parameters():
                         param_name = f'{child_name}.{name}'
                         src_param = src_state_dict[param_name]

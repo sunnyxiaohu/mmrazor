@@ -63,7 +63,7 @@ train_dataloader = dict(batch_size=64)
 optim_wrapper = dict(
     _delete_=True,
     optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001, nesterov=True),
-    clip_grad=dict(type='norm', max_norm=2),
+    # clip_grad=dict(type='norm', max_norm=2),
     paramwise_cfg=dict(
         bypass_duplicate=True
     ),)

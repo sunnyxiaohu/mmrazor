@@ -41,7 +41,7 @@ global_qconfig = dict(
     w_qscheme=dict(
         qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=False),
     a_qscheme=dict(
-        qdtype='quint8', bit=8, is_symmetry=True),
+        qdtype='quint8', bit=4, is_symmetry=True),
 )
 
 model = dict(

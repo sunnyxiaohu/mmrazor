@@ -451,6 +451,8 @@ def modify_fakequant_bits(prepared_model,
         GraphModule: Prepared standalone module after modified.
     """
     def recursive_find_act_fakequant(prepared_model, dynamic_node):
+        if len(dynamic_node.args) == 0:
+            return None
         maybe_act = dynamic_node.args[0]
         if not (maybe_act.op == 'call_module' and isinstance(
                 _get_attrs(prepared_model, maybe_act.target), FakeQuantizeBase)):
@@ -472,7 +474,8 @@ def modify_fakequant_bits(prepared_model,
                 update_qdype_qmin_qmax(maybe_weight, w_bit)
             if a_bit is not None:
                 maybe_act = recursive_find_act_fakequant(prepared_model, node)
-                update_qdype_qmin_qmax(maybe_act, a_bit)
+                if maybe_act is not None:
+                    update_qdype_qmin_qmax(maybe_act, a_bit)
 
     new_graph.lint()
     prepared_model.graph = new_graph

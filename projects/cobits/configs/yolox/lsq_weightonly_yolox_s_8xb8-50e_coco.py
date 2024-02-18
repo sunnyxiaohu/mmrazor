@@ -39,9 +39,9 @@ global_qconfig = dict(
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     w_qscheme=dict(
-        qdtype='qint8', bit=4, is_symmetry=False, zero_point_trainable=True),
+        qdtype='qint8', bit=6, is_symmetry=True),
     a_qscheme=dict(
-        qdtype='qint8', bit=4, is_symmetry=False, zero_point_trainable=True),
+        qdtype='quint8', bit=6, is_symmetry=True),
 )
 
 model = dict(
@@ -64,7 +64,7 @@ model = dict(
     float_checkpoint=float_checkpoint,
     input_shapes =(1, 3, 416, 416),
     quantizer=dict(
-        type='mmrazor.SNPEQuantizer',
+        type='mmrazor.WeightOnlyQuantizer',
         quant_bits_skipped_module_names=[
             'backbone.stem.conv.conv',
             'bbox_head.multi_level_conv_cls.2',
@@ -116,7 +116,7 @@ train_cfg = dict(
     max_epochs=max_epochs,
     val_interval=5,
     calibrate_steps=100,
-    dynamic_intervals=[(45, 1)],
+    dynamic_intervals=[(40, 1)],
     freeze_bn_begin=-1)
 
 val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop')

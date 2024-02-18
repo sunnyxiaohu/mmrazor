@@ -1,15 +1,15 @@
-_base_ = ['./resnet18_8xb256-warmup-lbs-coslr_in1k.py']
+_base_ = ['./mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k.py']
 
-resnet = _base_.model
-float_checkpoint = 'https://download.openmmlab.com/mmclassification/v0/resnet/resnet18_8xb32_in1k_20210831-fbbb1da6.pth'  # noqa: E501
+mbv2net = _base_.model
+float_checkpoint = 'https://download.openmmlab.com/mmclassification/v0/mobilenet_v2/mobilenet_v2_batch256_imagenet_20200708-3b2dc3af.pth'  # noqa: E501
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.LSQObserver'),
+    w_observer=dict(type='mmrazor.LSQPerChannelObserver'),
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True),
-    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True),
+    a_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=False, zero_point_trainable=True),
 )
 
 model = dict(
@@ -24,12 +24,12 @@ model = dict(
         std=[58.395, 57.12, 57.375],
         # convert image from BGR to RGB
         to_rgb=True),
-    architecture=resnet,
+    architecture=mbv2net,
     float_checkpoint=float_checkpoint,
     quantizer=dict(
-        type='mmrazor.WeightOnlyQuantizer',
+        type='mmrazor.SuperAcmeQuantizer',
         quant_bits_skipped_module_names=[
-            'backbone.conv1',
+            'backbone.conv1.conv',
             'head.fc'
         ],
         global_qconfig=global_qconfig,
@@ -44,7 +44,8 @@ train_dataloader = dict(batch_size=64)
 
 optim_wrapper = dict(
     _delete_=True,
-    optimizer=dict(type='SGD', lr=0.004, momentum=0.9, weight_decay=0.0001, nesterov=True))
+    paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0., bypass_duplicate=True),
+    optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.00001))
 
 # learning policy
 max_epochs = 100
