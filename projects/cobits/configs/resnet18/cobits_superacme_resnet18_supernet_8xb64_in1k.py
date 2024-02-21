@@ -18,8 +18,8 @@ global_qconfig = dict(
     a_observer=dict(type='mmrazor.BatchLSQObserver'),
     w_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=False, extreme_estimator=1, param_share_mode=4),
-    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, extreme_estimator=1, param_share_mode=4)
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, extreme_estimator=1, param_share_mode=4),
+    a_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=False, zero_point_trainable=True, extreme_estimator=1, param_share_mode=4)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
 qmodel = dict(
@@ -30,13 +30,13 @@ qmodel = dict(
     float_checkpoint=None,
     forward_modes=('tensor', 'predict', 'loss'),
     quantizer=dict(
-        type='mmrazor.OpenVINOXQuantizer',
+        type='mmrazor.SuperAcmeQuantizer',
         quant_bits_skipped_module_names=[
             'backbone.conv1',
             'head.fc'
         ],
-        w_bits=[2,3,4,5,6],
-        a_bits=[2,3,4,5,6],
+        w_bits=[4,8],
+        a_bits=[4,8],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
@@ -105,7 +105,7 @@ train_cfg = dict(
 
 # total calibrate_sample_num = 256 * 8 * 2
 val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536,
-               quant_bits=[2,3,4,5,6], only_quantized=True)
+               quant_bits=[4,8], only_quantized=True)
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
 default_hooks = dict(sync=dict(type='SyncBuffersHook'))

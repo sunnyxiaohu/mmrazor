@@ -1,5 +1,5 @@
 _base_ = [
-    './resnet18_8xb256-warmup-lbs-coslr_in1k.py',
+    './mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k.py',
 ]
 
 _base_.data_preprocessor.type = 'mmcls.ClsDataPreprocessor'
@@ -9,7 +9,7 @@ _base_.model.head.type = 'mmrazor.DynamicLinearClsHead'
 _base_.model.init_cfg = dict(
     type='Pretrained',
     checkpoint=  # noqa: E251
-'https://download.openmmlab.com/mmclassification/v0/resnet/resnet18_8xb32_in1k_20210831-fbbb1da6.pth')
+    'https://download.openmmlab.com/mmclassification/v0/mobilenet_v2/mobilenet_v2_batch256_imagenet_20200708-3b2dc3af.pth')
 
 architecture = _base_.model
 
@@ -18,8 +18,8 @@ global_qconfig = dict(
     a_observer=dict(type='mmrazor.BatchLSQObserver'),
     w_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.DynamicBatchLearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=False, extreme_estimator=1, param_share_mode=4),
-    a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, extreme_estimator=1, param_share_mode=4)
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, extreme_estimator=1, param_share_mode=4),
+    a_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=False, zero_point_trainable=True, extreme_estimator=1, param_share_mode=4)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
 qmodel = dict(
@@ -30,17 +30,18 @@ qmodel = dict(
     float_checkpoint=None,
     forward_modes=('tensor', 'predict', 'loss'),
     quantizer=dict(
-        type='mmrazor.OpenVINOXQuantizer',
+        type='mmrazor.SuperAcmeQuantizer',
         quant_bits_skipped_module_names=[
-            'backbone.conv1',
+            'backbone.conv1.conv',
             'head.fc'
         ],
-        w_bits=[2,3,4,5,6],
-        a_bits=[2,3,4,5,6],
+        w_bits=[4,8],
+        a_bits=[4,8],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
             skipped_module_classes=[
+                # 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_container.DynamicSequential',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_conv.BigNasConv2d',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_function.DynamicInputResizer',
                 'mmrazor.models.architectures.dynamic_ops.bricks.dynamic_linear.DynamicLinear',
@@ -62,10 +63,8 @@ model = dict(
 train_dataloader = dict(batch_size=64)
 optim_wrapper = dict(
     _delete_=True,
-    optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001, nesterov=True),
-    paramwise_cfg=dict(
-        bypass_duplicate=True
-    ),)
+    paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0., bypass_duplicate=True),
+    optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.00001))
 
 model_wrapper_cfg = dict(
     type='mmrazor.QNASDDP',
@@ -73,7 +72,7 @@ model_wrapper_cfg = dict(
     find_unused_parameters=True)
 
 # learning policy
-max_epochs = 5
+max_epochs = 3
 warm_epochs = 1
 param_scheduler = [
     # warm up learning rate scheduler
@@ -99,13 +98,13 @@ train_cfg = dict(
     _delete_=True,
     type='mmrazor.QNASEpochBasedLoop',
     max_epochs=max_epochs,
-    val_interval=5,
+    val_interval=3,
     qat_begin=1,
     freeze_bn_begin=-1)
 
 # total calibrate_sample_num = 256 * 8 * 2
 val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536,
-               quant_bits=[2,3,4,5,6], only_quantized=True)
+               quant_bits=[4,8], only_quantized=True)
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
 default_hooks = dict(sync=dict(type='SyncBuffersHook'))

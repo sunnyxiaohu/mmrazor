@@ -520,6 +520,7 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
 
     skipped_a_fake_quant = set()
     act_qbits_idx = 0
+    other_act_nodes = set()  # record nodes that not nested in a module.
     for node in new_graph.nodes:
         if node.op == 'call_module':
             maybe_dynamic = _get_attrs(prepared_model, node.target)
@@ -532,6 +533,7 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
                 qbits = OneShotMutableValue(alias=alias, value_list=a_bits)
                 maybe_dynamic.register_mutable_attr('quant_bits', qbits)
                 act_qbits_idx += 1
+                other_act_nodes.add(node)
             # for weights
             elif hasattr(maybe_dynamic, 'weight_fake_quant') and isinstance(
                     maybe_dynamic.weight_fake_quant, DynamicLearnableFakeQuantize):
@@ -551,13 +553,19 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
                     maybe_act = recursive_find_act_fakequant(prepared_model, node)
                     if maybe_act is None:
                         act_quant_bits = OneShotMutableValue(alias=node.target + '.default_act.quant_bits', value_list=[8])
-                        maybe_dynamic._ACT_QUANT_BITS = act_quant_bits
-                        print_log(
-                            f'Nested quant_bits with w_bits: {node.target} with default a_bits {act_quant_bits.alias}', logger='current')
                     else:
-                        print_log(
-                            f'Nested quant_bits with w_bits: {node.target} and a_bits: {maybe_act.target}', logger='current')
-                        maybe_dynamic._ACT_QUANT_BITS = _get_attrs(prepared_model, maybe_act.target).mutable_attrs['quant_bits']
+                        act_quant_bits = _get_attrs(prepared_model, maybe_act.target).mutable_attrs['quant_bits']
+                        if maybe_act in other_act_nodes:
+                            other_act_nodes.remove(maybe_act)
+                    maybe_dynamic._ACT_QUANT_BITS = act_quant_bits
+                    print_log(
+                        f'Nested node w: {node} and a: {maybe_act}, with a_bits: {maybe_dynamic._ACT_QUANT_BITS.alias}', logger='current')
+
+    for node in new_graph.nodes:
+        for consumer_node in node.args:
+            if consumer_node in other_act_nodes:
+                maybe_dynamic = _get_attrs(prepared_model, consumer_node.target)
+                print_log(f'Other node: {node}, consume a_bits: {maybe_dynamic.mutable_attrs["quant_bits"].alias}', logger='current')
 
     for node in new_graph.nodes:
         if node in skipped_a_fake_quant:

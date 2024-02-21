@@ -1,7 +1,4 @@
-_base_ = ['./mobilenet-v2_8xb128-warmup-lbs-coslr-nwd_in1k.py']
-
-mbv2net = _base_.model
-float_checkpoint = 'https://download.openmmlab.com/mmclassification/v0/mobilenet_v2/mobilenet_v2_batch256_imagenet_20200708-3b2dc3af.pth'  # noqa: E501
+_base_ = './cobits_superacme_resnet18_supernet_8xb64_in1k.py'
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQPerChannelObserver'),
@@ -11,6 +8,19 @@ global_qconfig = dict(
     w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True),
     a_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=False, zero_point_trainable=True),
 )
+
+qmodel = dict(
+    _delete_=True,
+    _scope_='mmrazor',
+    type='sub_model',
+    cfg=_base_.architecture,
+    # NOTE: You can replace the yaml with the mutable_cfg searched by yourself
+    fix_subnet='work_dirs/cobits_resnet18_search_8xb256_in1k/best_fix_subnet.yaml',
+    # You can load the checkpoint of supernet instead of the specific
+    # subnet by modifying the `checkpoint`(path) in the following `init_cfg`
+    # with `init_weight_from_supernet = True`.
+    init_weight_from_supernet=False,
+    init_cfg=None)
 
 model = dict(
     _delete_=True,
@@ -24,12 +34,12 @@ model = dict(
         std=[58.395, 57.12, 57.375],
         # convert image from BGR to RGB
         to_rgb=True),
-    architecture=mbv2net,
-    float_checkpoint=float_checkpoint,
+    architecture=qmodel,
+    float_checkpoint=None,
     quantizer=dict(
         type='mmrazor.SuperAcmeQuantizer',
         quant_bits_skipped_module_names=[
-            'backbone.conv1.conv',
+            'backbone.conv1',
             'head.fc'
         ],
         global_qconfig=global_qconfig,
@@ -41,14 +51,10 @@ model = dict(
             ])))
 
 train_dataloader = dict(batch_size=64)
-
-optim_wrapper = dict(
-    _delete_=True,
-    paramwise_cfg=dict(bias_decay_mult=0., norm_decay_mult=0., bypass_duplicate=True),
-    optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.00001))
+optim_wrapper = dict(optimizer=dict(lr=0.001))
 
 # learning policy
-max_epochs = 100
+max_epochs = 90
 warm_epochs = 5
 # learning policy
 param_scheduler = [
@@ -73,6 +79,7 @@ param_scheduler = [
 ]
 
 model_wrapper_cfg = dict(
+    _delete_=True,
     type='mmrazor.MMArchitectureQuantDDP',
     broadcast_buffers=False,
     find_unused_parameters=True)
@@ -83,27 +90,10 @@ train_cfg = dict(
     type='mmrazor.LSQEpochBasedLoop',
     max_epochs=max_epochs,
     val_interval=5,
+    is_first_batch=False,
     freeze_bn_begin=-1)
-val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop')
-# test_cfg = val_cfg
-test_cfg = dict(
-    _delete_=True,
-    type='mmrazor.SubnetExportValLoop',
-    evaluate_fixed_subnet=True,
-    calibrate_sample_num=0,
-    is_supernet=False,
-    estimator_cfg=dict(
-        type='mmrazor.HERONResourceEstimator',
-        heronmodel_cfg=dict(
-            type='mmrazor.HERONModelWrapper',
-            use_flip=True,
-            is_quantized=True,
-            work_dir='work_dirs/lsq_superacme_mbv2_8xb64_100e_in1k',
-            mnn_quant_json='projects/commons/heron_files/config_qat.json',
-            # Uncomment and adjust `num_infer` for QoR
-            num_infer=1000,
-            infer_metric=_base_.test_evaluator
-        )))
+val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop', calibrate_sample_num=8192)
+test_cfg = val_cfg
 
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.

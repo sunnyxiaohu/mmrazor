@@ -105,7 +105,8 @@ train_cfg = dict(
     freeze_bn_begin=-1)
 
 # total calibrate_sample_num = 256 * 8 * 2
-val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536, quant_bits=[2,3,4,5,6])
+val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536,
+               quant_bits=[2,3,4,5,6], only_quantized=True)
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
 default_hooks = dict(sync=dict(type='SyncBuffersHook'))
