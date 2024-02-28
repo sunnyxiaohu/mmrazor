@@ -51,7 +51,7 @@ model = dict(
             ])))
 
 train_dataloader = dict(batch_size=64)
-optim_wrapper = dict(optimizer=dict(lr=0.001))
+optim_wrapper = dict(optimizer=dict(lr=0.02))
 
 # learning policy
 max_epochs = 90

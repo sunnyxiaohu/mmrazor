@@ -1,12 +1,12 @@
-_base_ = './spos_snpe_resnet18_supernet_8xb64_in1k.py'
+_base_ = './spos_weightonly_resnet18_supernet_8xb64_in1k.py'
 
 global_qconfig = dict(
     w_observer=dict(type='mmrazor.LSQObserver'),
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.LearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=False, zero_point_trainable=True),
-    a_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=False, zero_point_trainable=True),
+    w_qscheme=dict(qdtype='qint8', bit=8, is_symmetry=True),
+    a_qscheme=dict(qdtype='quint8', bit=8, is_symmetry=True),
 )
 
 qmodel = dict(
@@ -37,7 +37,7 @@ model = dict(
     architecture=qmodel,
     float_checkpoint=None,
     quantizer=dict(
-        type='mmrazor.SNPEQuantizer',
+        type='mmrazor.WeightOnlyQuantizer',
         quant_bits_skipped_module_names=[
             'backbone.conv1',
             'head.fc'
@@ -51,7 +51,7 @@ model = dict(
             ])))
 
 train_dataloader = dict(batch_size=64)
-optim_wrapper = dict(optimizer=dict(lr=0.02, weight_decay=2.5e-5))
+optim_wrapper = dict(optimizer=dict(lr=0.2, weight_decay=2.5e-5)) # 0.15 for w3a3
 
 # learning policy
 max_epochs = 90
@@ -92,7 +92,7 @@ train_cfg = dict(
     val_interval=5,
     is_first_batch=False,
     freeze_bn_begin=-1)
-val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop', calibrate_sample_num=8192)
+val_cfg = dict(_delete_=True, type='mmrazor.QATValLoop', calibrate_sample_num=0)
 test_cfg = val_cfg
 
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same

@@ -525,6 +525,10 @@ class QNASValLoop(ValLoop, CalibrateMixin):
         for ind, rst in sorted_results:
             indicators_strs += f'\n {ind}: {rst}'
         self.runner.logger.info(indicators_strs)
+        if self.runner.rank == 0:
+            save_name = 'indicators.json'
+            fileio.dump(indicators_results,
+                        osp.join(self.runner.work_dir, save_name), indent=4)
         return indicators_results
 
     def _evaluate_once(self, kind='') -> Dict:
@@ -711,6 +715,12 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                     fixed_point = (np.mean(quant_bits.choices), 0.5)
                     ratio = qrange_results[quant_bits.alias]
                     prob_results[quant_bits.alias] = adjust_function(fixed_point, ratio, quant_bits.choices, ftype='linear')
+                    # indicators = {}
+                    # for bit in quant_bits.choices:
+                    #     quant_bits.current_choice = bit
+                    #     scale, zero_point = maybe_lsq.calculate_qparams()
+                    #     indicators[bit] = scale.mean().item()
+                    # prob_results[quant_bits.alias] = indicators
 
         return filterd_results, prob_results
 
@@ -791,11 +801,14 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         target, bitops, bitparams = 0, 0, 0
         key_temp = 'och.{och}-ich.{ich}-{wb_alias}.{wb}-{ab_alias}.{ab}'
         chmutable2mods = defaultdict(list)
+        bitops_speedup = {}
         for name, mod in filterd_mods.items():
             out_channels, in_channels, \
                 w_quant_bits, act_quant_bits = self._get_mod_mutable_or_choices(mod, chmutable2mods)
             all_choices = product(out_channels, in_channels, w_quant_bits.choices, act_quant_bits.choices)
             key_temp1 = partial(key_temp.format, wb_alias=w_quant_bits.alias, ab_alias=act_quant_bits.alias)
+            bitops_speedup[w_quant_bits.alias] = filterd_results[name]['flops'] / min(w_quant_bits.choices) / min(act_quant_bits.choices)
+            bitops_speedup[act_quant_bits.alias] = filterd_results[name]['flops'] / min(w_quant_bits.choices) / min(act_quant_bits.choices)
             for och, ich, wb, ab in all_choices:
                 key = key_temp1(och=och, ich=ich, wb=wb, ab=ab)
                 variables[key] = LpVariable(key, 0, 1, LpInteger)
@@ -814,7 +827,10 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                            for och in out_channels for ich in in_channels for wb in w_quant_bits.choices for ab in act_quant_bits.choices) == 1
 
         problem += target
-
+        # import pdb; pdb.set_trace()
+        # save_name = 'bitops_speedup.json'
+        # fileio.dump(bitops_speedup,
+        #             osp.join(self.runner.work_dir, save_name), indent=4)
         # constraint 2: make sure multiple targets share the same quant_bits.
         prefix = 'architecture.qmodels.tensor'
         prepared_model = _get_attrs(self.model, prefix)
@@ -1138,7 +1154,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         is_pass = True
         results = dict()
         constraints_range = deepcopy(self.constraints_range)
-        if self.solve_mode != 'evo_org':
+        if self.solve_mode != 'evo_org' and self._epoch == 0:
             default_constraints = dict()
             for k in self.constraints_range:
                 if k in ('flops', 'params'):
@@ -1152,7 +1168,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 export=False)
             is_pass &= is_pass1
             results.update(results1)
-        if type(self.auxiliary_estimator) != type(self.estimator):
+        if type(self.auxiliary_estimator) != type(self.estimator) or self._epoch > 0:
             is_pass1, results1 = check_subnet_resources(
                 model=self.model,
                 subnet=random_subnet,

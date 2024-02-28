@@ -20,7 +20,7 @@ train_cfg = dict(
     # w4a8: Flops: - Params: - fps: 703.4320
     # w8a8: Flops: - Params: - fps: -
     # constraints_range=dict(flops=(0, 10012)),
-    constraints_range=dict(fps=(700, 1000)),
+    constraints_range=dict(fps=(780, 1000)),
     # constraints_range=dict(fps=(1500, 2000), params=(0, 30.0), flops=(0, 7000)),
     estimator_cfg=dict(
         type='mmrazor.HERONResourceEstimator',

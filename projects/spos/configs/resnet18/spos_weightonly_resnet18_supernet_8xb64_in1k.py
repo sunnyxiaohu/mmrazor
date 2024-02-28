@@ -14,11 +14,11 @@ _base_.model.init_cfg = dict(
 architecture = _base_.model
 
 global_qconfig = dict(
-    w_observer=dict(type='mmrazor.LSQPerChannelObserver'),
+    w_observer=dict(type='mmrazor.LSQObserver'),
     a_observer=dict(type='mmrazor.LSQObserver'),
     w_fake_quant=dict(type='mmrazor.DynamicLearnableFakeQuantize'),
     a_fake_quant=dict(type='mmrazor.DynamicLearnableFakeQuantize'),
-    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, is_symmetric_range=False, param_share_mode=0),
+    w_qscheme=dict(qdtype='qint8', bit=4, is_symmetry=True, param_share_mode=0),
     a_qscheme=dict(qdtype='quint8', bit=4, is_symmetry=True, param_share_mode=0)
 )
 # Make sure that the architecture and qmodels have the same data_preprocessor.
@@ -30,7 +30,7 @@ qmodel = dict(
     float_checkpoint=None,
     forward_modes=('tensor', 'predict', 'loss'),
     quantizer=dict(
-        type='mmrazor.OpenVINOXQuantizer',
+        type='mmrazor.WeightOnlyQuantizer',
         quant_bits_skipped_module_names=[
             'backbone.conv1',
             'head.fc'
@@ -102,10 +102,10 @@ train_cfg = dict(
     max_epochs=max_epochs,
     val_interval=5,
     qat_begin=1,
-    freeze_bn_begin=-1)
+    freeze_bn_begin=1)
 
 # total calibrate_sample_num = 256 * 8 * 2
-val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65535,
+val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=0,
                quant_bits=[2,3,4,5,6], only_quantized=True)
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.

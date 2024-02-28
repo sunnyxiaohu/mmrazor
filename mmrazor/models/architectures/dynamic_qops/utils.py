@@ -1,5 +1,6 @@
 from .dynamic_qconv_fused import DynamicQConvBnReLU2d, DynamicQConvBn2d, DynamicQConvReLU2d
 from .dynamic_qlinear import DynamicQLinearBn1d
+import torch.nn.intrinsic.qat as nniqat
 
 bn_modules = [DynamicQConvBnReLU2d, DynamicQConvBn2d, DynamicQConvReLU2d, DynamicQLinearBn1d]
 

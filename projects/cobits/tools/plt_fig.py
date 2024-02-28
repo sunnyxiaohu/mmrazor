@@ -2,8 +2,8 @@ import mmengine
 import numpy as np
 import scienceplots
 import matplotlib.pyplot as plt
-from scipy.stats import norm
-# plt.style.use(['science', 'ieee'])
+from scipy.stats import norm, kendalltau, spearmanr
+plt.style.use(['science', 'ieee'])
 
 def plot_scatter_with_lines(data, labels, x_labels, save_path=None):
     plt.rcParams.update({'font.size': 22})
@@ -38,7 +38,7 @@ def plot_scatter_with_lines(data, labels, x_labels, save_path=None):
         plt.savefig(save_path, bbox_inches='tight')
     else:
         plt.show()
-    plt.cla()
+    plt.clf()
 
 def plot_ofa_data():
     # 4g,   #w4a4,   #w5a5,   #w6a6
@@ -127,44 +127,81 @@ def plot_curve_with_fill(split=2, save_path=None):
     plt.show()
 
     plt.savefig(save_path, bbox_inches='tight')
-    plt.cla()
+    plt.clf()
 
-plot_curve_with_fill(split=2, save_path='demo_split2.png')
-plot_curve_with_fill(split=4, save_path='demo_split4.png')
+# plot_curve_with_fill(split=2, save_path='demo_split2.png')
+# plot_curve_with_fill(split=4, save_path='demo_split4.png')
 
 
-def plot_bits_sensitive(bits_file, layer_index_map, save_path=None):  #, sensitive_file):
+def plot_bits_sensitive(bits_file, layer_index_map, sensitive_file=None,
+                        speedup_file=None, save_path=None):  
     bits = mmengine.load(bits_file)
-    # sensitive = mmengine.load(sensitive_file)
-    # data = [v['chosen'] for k, v in bits.items()]
-    w_bits = []
-    a_bits = []
+    w_bits, a_bits = [], []
     for w_name, a_name in layer_index_map:
         w_bits.append(bits[w_name]['chosen'] if w_name in bits else 0)
         a_bits.append(bits[a_name]['chosen'])
+    # w_bits = w_bits[1:-2]
+    # a_bits = a_bits[1:-2]
     assert len(w_bits) == len(a_bits)
     x = range(len(w_bits))
     labels = range(len(w_bits))
-    plt.figure(figsize=(14, 4))
-    # 绘制柱状图
-    plt.bar(x, w_bits, tick_label=labels, color='skyblue', label='weight')  # weight
-    plt.bar(x, -np.array(a_bits), color='salmon', label='activation') # activation
-    bit_ranges = range(-8, 9)
-    yticks = [str(abs(val)) for val in bit_ranges]
-    plt.yticks(bit_ranges, yticks)
 
-    # 添加标题和标签
-    plt.legend()
-    # plt.title(title)
-    plt.xlabel('Layer Number')
-    plt.ylabel('Bit-widths')
+    fig, ax1 = plt.subplots(figsize=(14, 4))
+    # # 绘制柱状图
+    ax1.bar(x, w_bits, tick_label=labels, color='skyblue', label='Weight')  # weight
+    ax1.bar(x, -np.array(a_bits), color='salmon', label='Activation') # activation
+    # ax1.get_yaxis().set_visible(False)
+    ax1.tick_params(axis='y', which='both', labelleft=False)
+    ax1.set_xlabel('Layer Number (Backend S0)')
+    # ax1.set_ylabel('Bit-widths')
+    # ax1.set_ylabel('Sensitivity')
+    # # bit_ranges = range(-8, 9)
+    # # yticks = [str(abs(val)) for val in bit_ranges]
+    # # ax1.set_yticks(bit_ranges, yticks)
+    ax1.legend(loc='center left')
+
+    if sensitive_file is not None:
+        sensitive = mmengine.load(sensitive_file)
+        delta_sensitive = max(sensitive.values()) - min(sensitive.values())
+        w_sensitive, a_sensitive = [], []
+        for w_name, a_name in layer_index_map:        
+            w_sensitive.append((sensitive[w_name] - min(sensitive.values())) / delta_sensitive if w_name in sensitive else 0)
+            a_sensitive.append((sensitive[a_name] - min(sensitive.values())) / delta_sensitive)
+        # w_sensitive = w_sensitive[1:-2]
+        # a_sensitive = a_sensitive[1:-2]
+        assert len(w_sensitive) == len(a_sensitive)
+        # 创建第二个 y 轴来绘制折线图
+        ax2 = ax1.twinx()
+        ax2.plot(x, w_sensitive, color='green', marker='o', alpha=0.7, label='Weight Sensitivity')
+        ax2.plot(x, -np.array(a_sensitive), color='blue', marker='o', alpha=0.7, label='Activatoin Sensitivity')
+        # ax2.set_ylabel('Sensitivity')  # , color='green')
+        # ax2.tick_params('y', colors='green')
+        ax2.legend(loc='lower center')
+
+    if speedup_file is not None:
+        speedup = mmengine.load(speedup_file)
+        total_speedup = sum(speedup.values())
+        w_speedup, a_speedup = [], []
+        for w_name, a_name in layer_index_map:        
+            w_speedup.append(speedup[w_name] / total_speedup if w_name in speedup else 0)
+            a_speedup.append(speedup[a_name] / total_speedup if a_name in speedup else 0)
+        # w_speedup = w_speedup[1:-2]
+        # a_speedup = a_speedup[1:-2]
+        assert len(w_speedup) == len(a_speedup)
+        # 创建第二个 y 轴来绘制折线图
+        ax3 = ax2.twinx()
+        ax3.plot(x, w_speedup, color='yellow', marker='o', alpha=0.7, label='BitOps Speed-UP')
+        ax3.plot(x, -np.array(a_speedup), color='yellow', marker='o', alpha=0.7)
+        ax3.set_ylabel('BitOps Speed-UP')
+        # yticks = [str(abs(val)) for val in bit_ranges]
+        # ax1.set_yticks(bit_ranges, yticks)
+        ax3.legend(loc='upper center')
 
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
     else:
         plt.show()
-    plt.cla()
-
+    plt.clf()
 
 # 绘制柱状图
 ResNet18_S0_LAYER_INDEX_MAP = [
@@ -227,133 +264,243 @@ ResNet18_S1_LAYER_INDEX_MAP = [
 ]
 MBV2_S0_LAYER_INDEX_MAP = [
     ['backbone.conv1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_0'],
-    ['backbone.conv2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_1'],
-    ['backbone.layer1.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_2'],
-    ['backbone.layer1.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_3'],
-    ['backbone.layer2.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_4'],
-    ['backbone.layer2.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_5'],
-    ['backbone.layer2.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_6'],
-    ['backbone.layer2.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_7'],
-    ['backbone.layer2.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_8'],
-    ['backbone.layer2.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_9'],
-    ['backbone.layer3.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_10'],
-    ['backbone.layer3.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_11'],
-    ['backbone.layer3.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_12'],
-    ['backbone.layer3.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_13'],
-    ['backbone.layer3.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_14'],
-    ['backbone.layer3.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_15'],
-    ['backbone.layer3.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_16'],
-    ['backbone.layer3.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_17'],
-    ['backbone.layer3.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_18'],
-    ['backbone.layer4.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_19'],
-    ['backbone.layer4.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_20'],
-    ['backbone.layer4.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_21'],
-    ['backbone.layer4.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_22'],
-    ['backbone.layer4.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_23'],
-    ['backbone.layer4.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_24'],
-    ['backbone.layer4.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_25'],
-    ['backbone.layer4.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_26'],
-    ['backbone.layer4.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_27'],
-    ['backbone.layer4.3.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_28'],
-    ['backbone.layer4.3.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_29'],
-    ['backbone.layer4.3.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_30'],
-    ['backbone.layer5.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_31'],
-    ['backbone.layer5.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_32'],
-    ['backbone.layer5.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_33'],
-    ['backbone.layer5.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_34'],
-    ['backbone.layer5.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_35'],
-    ['backbone.layer5.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_36'],
-    ['backbone.layer5.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_37'],
-    ['backbone.layer5.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_38'],
-    ['backbone.layer5.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_39'],
-    ['backbone.layer6.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_40'],
-    ['backbone.layer6.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_41'],
-    ['backbone.layer6.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_42'],
-    ['backbone.layer6.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_43'],
-    ['backbone.layer6.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_44'],
-    ['backbone.layer6.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_45'],
-    ['backbone.layer6.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_46'],
-    ['backbone.layer6.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_47'],
-    ['backbone.layer6.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_48'],
-    ['backbone.layer7.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_49'],
-    ['backbone.layer7.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_50'],
-    ['backbone.layer7.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_51'],
+    ['backbone.layer1.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_1'],
+    ['backbone.layer1.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_2'],
+    ['backbone.layer2.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_3'],
+    ['backbone.layer2.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_4'],
+    ['backbone.layer2.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_5'],
+    ['backbone.layer2.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_6'],
+    ['backbone.layer2.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_7'],
+    ['backbone.layer2.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_8'],
+    ['backbone.layer3.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_9'],
+    ['backbone.layer3.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_10'],
+    ['backbone.layer3.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_11'],
+    ['backbone.layer3.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_12'],
+    ['backbone.layer3.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_13'],
+    ['backbone.layer3.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_14'],
+    ['backbone.layer3.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_15'],
+    ['backbone.layer3.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_16'],
+    ['backbone.layer3.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_17'],
+    ['backbone.layer4.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_18'],
+    ['backbone.layer4.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_19'],
+    ['backbone.layer4.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_20'],
+    ['backbone.layer4.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_21'],
+    ['backbone.layer4.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_22'],
+    ['backbone.layer4.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_23'],
+    ['backbone.layer4.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_24'],
+    ['backbone.layer4.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_25'],
+    ['backbone.layer4.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_26'],
+    ['backbone.layer4.3.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_27'],
+    ['backbone.layer4.3.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_28'],
+    ['backbone.layer4.3.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_29'],
+    ['backbone.layer5.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_30'],
+    ['backbone.layer5.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_31'],
+    ['backbone.layer5.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_32'],
+    ['backbone.layer5.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_33'],
+    ['backbone.layer5.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_34'],
+    ['backbone.layer5.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_35'],
+    ['backbone.layer5.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_36'],
+    ['backbone.layer5.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_37'],
+    ['backbone.layer5.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_38'],
+    ['backbone.layer6.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_39'],
+    ['backbone.layer6.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_40'],
+    ['backbone.layer6.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_41'],
+    ['backbone.layer6.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_42'],
+    ['backbone.layer6.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_43'],
+    ['backbone.layer6.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_44'],
+    ['backbone.layer6.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_45'],
+    ['backbone.layer6.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_46'],
+    ['backbone.layer6.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_47'],
+    ['backbone.layer7.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_48'],
+    ['backbone.layer7.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_49'],
+    ['backbone.layer7.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_50'],
+    ['backbone.conv2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_51'],
     ['head.fc.weight_fake_quant.quant_bits', 'act_quant_bits_52'],
 ]
 
 MBV2_S1_LAYER_INDEX_MAP = [
     ['backbone.conv1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_0'],
-    ['backbone.conv2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_1'],
-    ['backbone.layer1.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_2'],
-    ['backbone.layer1.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_3'],
-    ['backbone.layer2.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_4'],
-    ['backbone.layer2.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_5'],
-    ['backbone.layer2.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_6'],
-    ['backbone.layer2.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_7'],
-    ['backbone.layer2.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_8'],
-    ['backbone.layer2.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_9'],
+    ['backbone.layer1.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_1'],
+    ['backbone.layer1.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_2'],
+    ['backbone.layer2.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_3'],
+    ['backbone.layer2.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_4'],
+    ['backbone.layer2.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_5'],
+    ['backbone.layer2.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_6'],
+    ['backbone.layer2.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_7'],
+    ['backbone.layer2.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_8'],
+    ['add','act_quant_bits_9'],
     ['backbone.layer3.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_10'],
     ['backbone.layer3.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_11'],
     ['backbone.layer3.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_12'],
     ['backbone.layer3.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_13'],
     ['backbone.layer3.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_14'],
     ['backbone.layer3.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_15'],
-    ['backbone.layer3.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_16'],
-    ['backbone.layer3.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_17'],
-    ['backbone.layer3.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_18'],
-    ['backbone.layer4.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_19'],
-    ['backbone.layer4.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_20'],
-    ['backbone.layer4.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_21'],
-    ['backbone.layer4.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_22'],
-    ['backbone.layer4.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_23'],
-    ['backbone.layer4.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_24'],
-    ['backbone.layer4.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_25'],
-    ['backbone.layer4.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_26'],
-    ['backbone.layer4.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_27'],
-    ['backbone.layer4.3.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_28'],
-    ['backbone.layer4.3.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_29'],
-    ['backbone.layer4.3.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_30'],
-    ['backbone.layer5.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_31'],
-    ['backbone.layer5.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_32'],
-    ['backbone.layer5.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_33'],
-    ['backbone.layer5.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_34'],
-    ['backbone.layer5.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_35'],
-    ['backbone.layer5.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_36'],
-    ['backbone.layer5.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_37'],
-    ['backbone.layer5.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_38'],
-    ['backbone.layer5.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_39'],
-    ['backbone.layer6.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_40'],
-    ['backbone.layer6.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_41'],
-    ['backbone.layer6.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_42'],
-    ['backbone.layer6.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_43'],
-    ['backbone.layer6.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_44'],
-    ['backbone.layer6.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_45'],
-    ['backbone.layer6.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_46'],
-    ['backbone.layer6.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_47'],
-    ['backbone.layer6.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_48'],
-    ['backbone.layer7.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_49'],
-    ['backbone.layer7.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_50'],
-    ['backbone.layer7.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_51'],
-    ['head.fc.weight_fake_quant.quant_bits', 'act_quant_bits_52'],
+    ['add_1','act_quant_bits_16'],
+    ['backbone.layer3.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_17'],
+    ['backbone.layer3.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_18'],
+    ['backbone.layer3.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_19'],
+    ['add_2','act_quant_bits_20'],
+    ['backbone.layer4.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_21'],
+    ['backbone.layer4.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_22'],
+    ['backbone.layer4.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_23'],
+    ['backbone.layer4.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_24'],
+    ['backbone.layer4.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_25'],
+    ['backbone.layer4.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_26'],
+    ['add_3','act_quant_bits_27'],
+    ['backbone.layer4.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_28'],
+    ['backbone.layer4.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_29'],
+    ['backbone.layer4.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_30'],
+    ['add_4','act_quant_bits_31'],
+    ['backbone.layer4.3.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_32'],
+    ['backbone.layer4.3.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_33'],
+    ['backbone.layer4.3.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_34'],
+    ['add_5','act_quant_bits_35'],
+    ['backbone.layer5.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_36'],
+    ['backbone.layer5.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_37'],
+    ['backbone.layer5.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_38'],
+    ['backbone.layer5.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_39'],
+    ['backbone.layer5.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_40'],
+    ['backbone.layer5.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_41'],
+    ['add_6','act_quant_bits_42'],
+    ['backbone.layer5.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_43'],
+    ['backbone.layer5.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_44'],
+    ['backbone.layer5.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_45'],
+    ['add_7','act_quant_bits_46'],
+    ['backbone.layer6.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_47'],
+    ['backbone.layer6.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_48'],
+    ['backbone.layer6.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_49'],
+    ['backbone.layer6.1.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_50'],
+    ['backbone.layer6.1.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_51'],
+    ['backbone.layer6.1.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_52'],
+    ['add_8','act_quant_bits_53'],
+    ['backbone.layer6.2.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_54'],
+    ['backbone.layer6.2.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_55'],
+    ['backbone.layer6.2.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_56'],
+    ['add_9','act_quant_bits_57'],
+    ['backbone.layer7.0.conv.0.conv.weight_fake_quant.quant_bits', 'act_quant_bits_58'],
+    ['backbone.layer7.0.conv.1.conv.weight_fake_quant.quant_bits', 'act_quant_bits_59'],
+    ['backbone.layer7.0.conv.2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_60'],
+    ['backbone.conv2.conv.weight_fake_quant.quant_bits', 'act_quant_bits_61'],
+    ['neck_gap', 'act_quant_bits_62'],
+    ['head.fc.weight_fake_quant.quant_bits', 'act_quant_bits_63'],
 ]
 
-plot_bits_sensitive('/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_resnet18_search_8xb64_in1k/20240202_030948/best_fix_subnet.yaml',
-                    layer_index_map=ResNet18_S0_LAYER_INDEX_MAP,
-                    save_path='ResNet18-3bit-S0.png')
+ResNet18_S0_SPEEDUP_FILE='/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_resnet18_supernet_8xb64_in1k/20240124_132736/bitops_speedup.json'
+ResNet18_S0_Sensitive_FILE='/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_resnet18_supernet_8xb64_in1k/20240124_132736/indicators.json'
+ResNet18_S1_SPEEDUP_FILE='/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_snpe_resnet18_supernet_8xb64_in1k/20240125_061757/bitops_speedup.json'
+ResNet18_S1_Sensitive_FILE='/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_snpe_resnet18_supernet_8xb64_in1k/20240125_061757/indicators.json'
+MobileNetV2_S0_SPEEDUP_FILE='/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_mbv2_supernet_8xb64_in1k/20240129_004308/bitops_speedup.json'
+MobileNetV2_S0_Sensitive_FILE='/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_mbv2_supernet_8xb64_in1k/20240129_004308/indicators.json'
+MobileNetV2_S1_SPEEDUP_FILE='/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_snpe_mbv2_supernet_8xb64_in1k/20240218_050835/bitops_speedup.json'
+MobileNetV2_S1_Sensitive_FILE='/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_snpe_mbv2_supernet_8xb64_in1k/20240218_050835/indicators.json'
+# plot_bits_sensitive('/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_resnet18_search_8xb64_in1k/20240202_030948/best_fix_subnet.yaml',
+#                     layer_index_map=ResNet18_S0_LAYER_INDEX_MAP,
+#                     sensitive_file=ResNet18_S0_Sensitive_FILE,
+#                     speedup_file=ResNet18_S0_SPEEDUP_FILE,
+#                     save_path='ResNet18-3bit-S0.png')
 plot_bits_sensitive('/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_resnet18_search_8xb64_in1k/20240204_070053/best_fix_subnet.yaml',
                     layer_index_map=ResNet18_S0_LAYER_INDEX_MAP,
+                    sensitive_file=ResNet18_S0_Sensitive_FILE,
+                    speedup_file=ResNet18_S0_SPEEDUP_FILE,
                     save_path='ResNet18-4bit-S0.png')
-plot_bits_sensitive('/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_snpe_resnet18_search_8xb64_in1k/20240207_071927/best_fix_subnet.yaml',
-                    layer_index_map=ResNet18_S1_LAYER_INDEX_MAP,
-                    save_path='ResNet18-3bit-S1.png')                     
+# plot_bits_sensitive('/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_snpe_resnet18_search_8xb64_in1k/20240207_071927/best_fix_subnet.yaml',
+#                     layer_index_map=ResNet18_S1_LAYER_INDEX_MAP,
+#                     sensitive_file=ResNet18_S1_Sensitive_FILE,
+#                     speedup_file=ResNet18_SPEEDUP_FILE,   
+#                     save_path='ResNet18-3bit-S1.png')
 plot_bits_sensitive('/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_snpe_resnet18_search_8xb64_in1k/20240125_093155/best_fix_subnet.yaml',
                     layer_index_map=ResNet18_S1_LAYER_INDEX_MAP,
-                    save_path='ResNet18-4bit-S1.png')                    
+                    sensitive_file=ResNet18_S1_Sensitive_FILE,
+                    speedup_file=ResNet18_S1_SPEEDUP_FILE,
+                    save_path='ResNet18-4bit-S1.png')
 
 
-plot_bits_sensitive('/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_mbv2_search_8xb64_in1k/20240207_142833/best_fix_subnet.yaml',
-                    layer_index_map=MBV2_S0_LAYER_INDEX_MAP,
-                    save_path='MobileNetV2-3bit-S0.png')
+# plot_bits_sensitive('/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_mbv2_search_8xb64_in1k/20240207_142833/best_fix_subnet.yaml',
+#                     layer_index_map=MBV2_S0_LAYER_INDEX_MAP,
+#                     save_path='MobileNetV2-3bit-S0.png')
 plot_bits_sensitive('/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_mbv2_search_8xb64_in1k/20240206_132302/best_fix_subnet.yaml',
                     layer_index_map=MBV2_S0_LAYER_INDEX_MAP,
+                    sensitive_file=MobileNetV2_S0_Sensitive_FILE,
+                    speedup_file=MobileNetV2_S0_SPEEDUP_FILE,                    
                     save_path='MobileNetV2-4bit-S0.png')
+
+plot_bits_sensitive('/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_snpe_mbv2_search_8xb64_in1k/20240218_084405/best_fix_subnet.yaml',
+                    layer_index_map=MBV2_S1_LAYER_INDEX_MAP,
+                    sensitive_file=MobileNetV2_S1_Sensitive_FILE,
+                    speedup_file=MobileNetV2_S1_SPEEDUP_FILE,                    
+                    save_path='MobileNetV2-4bit-S1.png')
+
+
+def calculate_rank_correlation(matrix_files, save_path=None):
+    def get_element_position(sequence, element):
+        sorted_seq = np.sort(sequence)
+        element_position = np.where(sorted_seq == element)[0][0]
+        return element_position
+
+    matrix = []
+    for k, mf in matrix_files.items():
+        v = mmengine.load(mf)
+        sequence = np.array(list(v.values()))
+        # import pdb; pdb.set_trace()
+        sequence = [get_element_position(sequence, vv) for vv in sequence]
+        matrix.append(sequence)
+    matrix = np.array(matrix)
+    rows, _ = matrix.shape
+
+    def get_plot_corrections(ax, mode='Spearman'):
+        assert mode in ['Spearman', 'Kendall']
+        correlations = np.ones((rows, rows))
+        for i in range(rows):
+            for j in range(i + 1, rows):
+                if mode == 'Spearman':
+                    corr, _ = spearmanr(matrix[i], matrix[j])
+                else:
+                    corr, _ = kendalltau(matrix[i], matrix[j])
+                correlations[i, j] = correlations[j, i] = corr
+
+        im = ax.imshow(correlations, cmap='viridis', interpolation='nearest')
+        for i in range(correlations.shape[0]):
+            for j in range(correlations.shape[1]):
+                text = ax.text(j, i, f'{correlations[i, j]:.2f}',
+                               ha='center', va='center', color='w')
+        plt.colorbar(im, label=f'{mode} Rank Correlation')
+        ax.set_xticks([])
+        ax.set_yticks([])
+        print(f'{mode}: {correlations}')
+
+    fig, ax = plt.subplots(2, 1)
+    print(f'{save_path}')
+    # title = plt.title('Rank Correlation Matrix')
+    # title.set_position([0.1, -0.5])    
+    get_plot_corrections(ax[0], mode='Spearman')
+    get_plot_corrections(ax[1], mode='Kendall')
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+    else:
+        plt.show()
+    plt.clf()
+
+
+ResNet18_S0_matrix_files = {
+    'EP3': '/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_resnet18_supernet_8xb64_in1k/ep3_20240221_135028/indicators.json',
+    'EP5': '/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_resnet18_supernet_8xb64_in1k/20240124_132736/indicators.json',
+    'EP10': '/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_weightonly_resnet18_supernet_8xb64_in1k/ep10_20240221_154431/indicators.json'
+}
+calculate_rank_correlation(ResNet18_S0_matrix_files, save_path='ResNet18-Matrix-S0.png')
+
+ResNet18_S1_matrix_files = {
+    'ResNet18-S1-EP3': '/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_snpe_resnet18_supernet_8xb64_in1k/ep3_20240222_005805/indicators.json',
+    'ResNet18-S1-EP5': '/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_snpe_resnet18_supernet_8xb64_in1k/20240125_061757/indicators.json',
+    'ResNet18-S1-EP10': '/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_snpe_resnet18_supernet_8xb64_in1k/ep10_20240221_155358/indicators.json'
+}
+calculate_rank_correlation(ResNet18_S1_matrix_files, save_path='ResNet18-Matrix-S1.png')
+
+
+ResNet18_S2_matrix_files = {
+    'ResNet18-S2-EP3': '/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_openvinox_resnet18_supernet_8xb64_in1k/ep3_20240221_154920/indicators.json',
+    'ResNet18-S2-EP5': '/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_openvinox_resnet18_supernet_8xb64_in1k/20240204_085242/indicators.json',
+    'ResNet18-S2-EP10': '/home/wangshiguang/mnodes/NAS-MQBench/mmrazor/work_dirs/cobits_openvinox_resnet18_supernet_8xb64_in1k/ep10_20240222_001729/indicators.json'
+}
+calculate_rank_correlation(ResNet18_S2_matrix_files, save_path='ResNet18-Matrix-S2.png')
+

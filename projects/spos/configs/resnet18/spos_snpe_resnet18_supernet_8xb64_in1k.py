@@ -35,8 +35,8 @@ qmodel = dict(
             'backbone.conv1',
             'head.fc'
         ],
-        w_bits=[3,4,5,6],
-        a_bits=[3,4,5,6],
+        w_bits=[2,3,4,5,6],
+        a_bits=[2,3,4,5,6],
         global_qconfig=global_qconfig,
         tracer=dict(
             type='mmrazor.CustomTracer',
@@ -57,13 +57,13 @@ model = dict(
     type='QNAS',
     num_random_samples=2,
     architecture=qmodel,
-    use_spos=True,
+    use_spos=False,
     mutator=dict(type='mmrazor.NasMutator'))
 
 train_dataloader = dict(batch_size=64)
 optim_wrapper = dict(
     _delete_=True,
-    optimizer=dict(type='SGD', lr=0.002, momentum=0.9, weight_decay=0.0001, nesterov=True),
+    optimizer=dict(type='SGD', lr=0.001, momentum=0.9, weight_decay=0.0001, nesterov=True),
     paramwise_cfg=dict(
         bypass_duplicate=True
     ),)
@@ -74,7 +74,7 @@ model_wrapper_cfg = dict(
     find_unused_parameters=True)
 
 # learning policy
-max_epochs = 25
+max_epochs = 5
 warm_epochs = 1
 param_scheduler = [
     # warm up learning rate scheduler
@@ -105,7 +105,8 @@ train_cfg = dict(
     freeze_bn_begin=-1)
 
 # total calibrate_sample_num = 256 * 8 * 2
-val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536, quant_bits=[3,4,5,6])
+val_cfg = dict(_delete_=True, type='mmrazor.QNASValLoop', calibrate_sample_num=65536,
+               quant_bits=[2,3,4,5,6], only_quantized=True)
 # Make sure the buffer such as min_val/max_val in saved checkpoint is the same
 # among different rank.
 default_hooks = dict(sync=dict(type='SyncBuffersHook'))
