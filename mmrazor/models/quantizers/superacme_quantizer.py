@@ -49,6 +49,7 @@ from mmrazor.models.task_modules.tracer.fx.graph_utils import (_get_attrs,
 
 from mmrazor.structures.quantization import BackendConfigs
 from mmrazor.structures.quantization.backend_config.superacme import get_superacme_backend_config
+from mmrazor.utils import print_log
 from ..utils.quantization_util import post_process_nodename
 from .native_quantizer import TorchNativeQuantizer, SUPPORT_QAT_MODULES, MERGE_BN_MAPPINGS
 
@@ -71,7 +72,7 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
     def __init__(self, *args, tracer: Dict = dict(type='CustomTracer'),
                  w_bits=None, a_bits=None, quant_bits_skipped_module_names=None,
                  default_skipped_bit=8, nested_quant_bits_in_layer=False,
-                 w_skip=True, a_skip=True, **kwargs):
+                 w_skip=True, a_skip=True, use_cle=False, **kwargs):
         if 'skipped_module_classes' in tracer:
             tracer['skipped_module_classes'] = str2class(tracer['skipped_module_classes'])
         super().__init__(*args, tracer=tracer, **kwargs)
@@ -84,6 +85,7 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
         self.quant_bits_skipped_module_names = quant_bits_skipped_module_names
         self.default_skipped_bit = default_skipped_bit
         self.nested_quant_bits_in_layer = nested_quant_bits_in_layer
+        self.use_cle = use_cle
 
     def prepare(self, model, concrete_args=None):
         """prepare graph to ObservedGraphModule.
@@ -269,7 +271,13 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
     def module_prev_wo_fakequant(self):
         """Configurate the modules that their previous nodes are redundant
         fakequants."""
-        return (torch.nn.ReLU6, torch.nn.Identity)
+        mods = (torch.nn.ReLU6, torch.nn.Identity)
+        if self.use_cle:
+            mods += (torch.nn.ReLU, )
+            print_log('Remove the fakequant in front of pattern "ReLU + Conv/Linear" '
+                      'may cause error, check it carefully...',
+                      logger='current', level='warning')
+        return mods
 
     @property
     def module_next_wo_fakequant(self):

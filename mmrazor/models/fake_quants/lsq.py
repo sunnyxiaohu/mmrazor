@@ -28,6 +28,14 @@ def enable_static_estimate(mod):
     """
     if isinstance(mod, LearnableFakeQuantize):
         mod.enable_static_estimate()
+        
+def enable_static_observation(mod):
+    """Enables static observer obs, if applicable. Example usage::
+
+    # model is any PyTorch model model.apply(enable_static_observation)
+    """
+    if isinstance(mod, LearnableFakeQuantize):
+        mod.enable_static_observation()
 
 
 def enable_val(mod):
