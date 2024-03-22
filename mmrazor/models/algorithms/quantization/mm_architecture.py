@@ -70,12 +70,14 @@ class MMArchitectureQuant(BaseAlgorithm):
                  float_checkpoint: Optional[str] = None,
                  input_shapes: Tuple = (1, 3, 224, 224),
                  use_cle=False,
+                 cle_float_checkpoint: Optional[str] = None,
                  fix_subnet: Optional[Dict] = None,
                  init_cfg: Optional[Dict] = None):
 
         super().__init__(architecture, data_preprocessor, init_cfg)
         self.fix_subnet = fix_subnet
         self.use_cle = use_cle
+        self.cle_float_checkpoint = cle_float_checkpoint
         self.quantizer = MODELS.build(quantizer)
         self.input_shapes = input_shapes
         self.forward_modes = forward_modes
@@ -292,8 +294,11 @@ class MMArchitectureQuant(BaseAlgorithm):
         if self.use_cle:
             # import pdb; pdb.set_trace()
             model = model.eval()
-            from mqbench.cle_superacme.cle import apply_cross_layer_equalization
+            from mmrazor.models.algorithms.quantization.cle_superacme import apply_cross_layer_equalization
             apply_cross_layer_equalization(model=model, input_shape=self.input_shapes)
+            if self.cle_float_checkpoint is not None:
+                _ = load_checkpoint(model, self.cle_float_checkpoint)
+            model = model.train()
         rewriter_context = self._get_rewriter_context_in_mmdeploy(
             self.deploy_cfg) if self.deploy_cfg is not None else None
 
@@ -434,10 +439,10 @@ class MMArchitectureQuantDDP(MMDistributedDataParallel):
         super().__init__(device_ids=device_ids, **kwargs)
         # After moving all model parameters and buffers to the GPU
         # (`model.cuda()`), the buffers in model are different.
-        self.module.qmodels = self.module._build_qmodels(
-            self.module.architecture)
-        self.module.sync_qparams('tensor')
-        self.module.reset_observer_and_fakequant_statistics(self)
+        # self.module.qmodels = self.module._build_qmodels(
+        #     self.module.architecture)
+        # self.module.sync_qparams('tensor')
+        # self.module.reset_observer_and_fakequant_statistics(self)
 
     def calibrate_step(self, data: Union[Dict, Tuple, List]):
         """PTQ method need calibrate by cali data."""

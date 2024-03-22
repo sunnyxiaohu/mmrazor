@@ -6,6 +6,7 @@ import torch
 from mmengine.evaluator import Evaluator
 from mmengine.logging import print_log
 from mmengine.runner import EpochBasedTrainLoop, TestLoop, ValLoop
+from mmengine.dist import get_dist_info
 
 try:
     from torch.ao.quantization import (disable_observer, enable_fake_quant,
@@ -24,7 +25,8 @@ from torch.utils.data import DataLoader
 
 from mmrazor.models import register_torch_fake_quants, register_torch_observers
 from mmrazor.models.fake_quants import (enable_param_learning,
-                                        enable_static_estimate, enable_val)
+                                        enable_static_estimate, enable_val,
+                                        enable_static_observation)
 from mmrazor.registry import LOOPS
 
 TORCH_observers = register_torch_observers()
@@ -150,11 +152,13 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
             runner,
             dataloader: Union[DataLoader, Dict],
             max_epochs: int,
+            calibrate_dataloader:Union[DataLoader, Dict] = None,
             val_begin: int = 1,
             val_interval: int = 1,
             freeze_bn_begin: int = -1,
             is_first_batch: bool = True,
             calibrate_steps: int = -1,
+            calibrate_open_fakequant: bool = False,
             dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
         super().__init__(
             runner,
@@ -168,6 +172,31 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
         self._is_first_batch = is_first_batch
         self.distributed = is_distributed()
         self.calibrate_steps = calibrate_steps
+        self.calibrate_dataloader = self._build_calibrate_dataloader(calibrate_dataloader)
+        self.calibrate_open_fakequant = calibrate_open_fakequant
+        
+    def _build_calibrate_dataloader(self, dataloader):
+        if isinstance(dataloader, dict):
+            # Determine whether or not different ranks use different seed.
+            diff_rank_seed = self.runner._randomness_cfg.get(
+                'diff_rank_seed', False)
+            cali_dataloader = self.runner.build_dataloader(
+                dataloader, seed=self.runner.seed, diff_rank_seed=diff_rank_seed)
+        else:
+            cali_dataloader = self.dataloader
+        return cali_dataloader
+            
+    def export_ptq(self):
+        if self.runner.distributed:
+            rank, world_size = get_dist_info()
+            if rank==0:
+                observed_model = self.runner.model.module.get_deploy_model()
+                self.dummy_input = torch.randn(self.runner.model.module.input_shapes)
+                self.runner.model.module.quantizer.export_onnx(observed_model, self.dummy_input.cuda(), os.path.join(self.runner.work_dir,'ptq.onnx'))
+        else:
+            observed_model = self.runner.model.get_deploy_model()
+            self.dummy_input = torch.randn(self.runner.model.input_shapes)
+            self.runner.model.quantizer.export_onnx(observed_model, self.dummy_input.cuda(), os.path.join(self.runner.work_dir,'ptq.onnx'))
 
     def prepare_for_run_epoch(self):
         """Toggle the state of the observers and fake quantizers before qat
@@ -178,14 +207,16 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
 
         if self.is_first_batch and self.calibrate_steps != -1:
             # lsq observer init
-            # import pdb; pdb.set_trace()
-            # self.runner.model.eval()
-            self.runner.model.apply(enable_static_estimate)
+            # import pdb; pdb.set_trace(), TDL: whether need to turn to `eval` mode?
+            self.runner.model.eval()
+            if self.calibrate_open_fakequant:
+                self.runner.model.apply(enable_static_estimate)
+            else:
+                self.runner.model.apply(enable_static_observation)
             print_log('Start calibration...', logger='current')
-            for idx, data_batch in enumerate(self.dataloader):
+            for idx, data_batch in enumerate(self.calibrate_dataloader):
                 if idx == self.calibrate_steps:
                     break
-                # self.run_iter(idx, data_batch)
                 _ = self.runner.model.calibrate_step(data_batch)
             if self.distributed:
                 all_reduce_params(
@@ -194,10 +225,13 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
             self.runner.model.sync_qparams(src_mode='predict')
             self.runner.model.apply(enable_param_learning)
             print_log('Finish calibration!', logger='current')
-
+            self.runner.save_checkpoint(self.runner.work_dir,'ptq.pth')
+            print_log('save ptq checkpoin after calibration!')
             self.prepare_for_val()
+            self.export_ptq()
             self.runner.val_loop.run()
             self._is_first_batch = False
+            self.runner.model.train()
 
         self.runner.model.apply(enable_param_learning)
 
