@@ -97,7 +97,7 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
     def run(self):
         """Launch training."""
         self.runner.call_hook('before_train')
-        self.runner.val_loop.run()
+        # self.runner.val_loop.run()
         while self._epoch < self._max_epochs:
             self.prepare_for_run_epoch()
             self.run_epoch()

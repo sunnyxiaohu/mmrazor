@@ -561,11 +561,22 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
                     print_log(
                         f'Nested node w: {node} and a: {maybe_act}, with a_bits: {maybe_dynamic._ACT_QUANT_BITS.alias}', logger='current')
 
-    for node in new_graph.nodes:
-        for consumer_node in node.args:
-            if consumer_node in other_act_nodes:
-                maybe_dynamic = _get_attrs(prepared_model, consumer_node.target)
-                print_log(f'Other node: {node}, consume a_bits: {maybe_dynamic.mutable_attrs["quant_bits"].alias}', logger='current')
+    if nested_quant_bits_in_layer:
+        for node in new_graph.nodes:
+            for consumer_node in node.args:
+                # import pdb; pdb.set_trace()
+                def print_other(cnode):
+                    if cnode in other_act_nodes:
+                        maybe_dynamic = _get_attrs(prepared_model, cnode.target)
+                        print_log(f'Other node: {node}, consume a_bits: {maybe_dynamic.mutable_attrs["quant_bits"].alias}', logger='current')
+                if isinstance(consumer_node, dict):
+                    for k, cnode in consumer_node.items():
+                        print_other(cnode)
+                elif isinstance(consumer_node, (list, tuple)):
+                    for cnode in consumer_node:
+                        print_other(cnode)
+                else:
+                    print_other(consumer_node)
 
     for node in new_graph.nodes:
         if node in skipped_a_fake_quant:
