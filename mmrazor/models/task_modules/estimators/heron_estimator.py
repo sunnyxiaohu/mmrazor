@@ -141,7 +141,12 @@ class HERONModelWrapper:
         # sann config path load
         self.mnn_quant_json = mnn_quant_json
         # heron tool load
-        self.shape = (1, ) + next(iter(self.dataloader))['inputs'].shape[1:]
+        if isinstance(next(iter(self.dataloader))['inputs'], torch.Tensor):
+            self.inputs_is_tensor = True
+            self.shape = (1, ) + next(iter(self.dataloader))['inputs'].shape[1:]
+        else:
+            self.inputs_is_tensor = False
+            self.shape = (1, ) + next(iter(self.dataloader))['inputs'][0].shape
         self.is_quantized = is_quantized
         if self.is_quantized and get_rank() == 0:
             quant_json = load(self.mnn_quant_json)
@@ -166,7 +171,10 @@ class HERONModelWrapper:
     def import_torch(self, model):
         self.model = model
         device = next(model.parameters()).device
-        dummy_data = next(iter(self.dataloader))['inputs'][0, None].float().to(device)
+        if self.inputs_is_tensor:
+            dummy_data = next(iter(self.dataloader))['inputs'][0, None].float().to(device)
+        else:
+            dummy_data = next(iter(self.dataloader))['inputs'][0].unsqueeze(0).float().to(device)
         if self.is_quantized:
             observed_model = model.get_deploy_model()
             model.quantizer.export_onnx(observed_model, dummy_data, self.onnx_file)
@@ -251,26 +259,22 @@ class HERONModelWrapper:
             if i >= self.num_infer:
                 break
             inputs, data_samples = data['inputs'], data['data_samples']
-            if self.use_flip:
-                inputs = inputs.flip(1)
-            input_data = MNN.Tensor(self.shape, MNN.Halide_Type_Uint8,
-                inputs.reshape(self.shape).cpu().numpy().astype(np.uint8), MNN.Tensor_DimensionType_Caffe)
+            if self.inputs_is_tensor:
+                if self.use_flip:
+                    inputs = inputs.flip(1)
+                input_data = MNN.Tensor(self.shape, MNN.Halide_Type_Uint8,
+                    inputs.reshape(self.shape).cpu().numpy().astype(np.uint8), MNN.Tensor_DimensionType_Caffe)
+            else:
+                if self.use_flip:
+                    inputs[0] = inputs[0].flip(1)
+                input_data = MNN.Tensor(self.shape, MNN.Halide_Type_Uint8,
+                    inputs[0].reshape(self.shape).cpu().numpy().astype(np.uint8), MNN.Tensor_DimensionType_Caffe)
             # input_data = MNN.Tensor(self.shape, MNN.Halide_Type_Float,
             #     inputs[0].numpy().astype(np.float32), MNN.Tensor_DimensionType_Caffe)
             input_tensor.copyFrom(input_data)
             interpreter.runSession(session)
             outputs = interpreter.getSessionOutputAll(session)
-            # # Note that here different tasks may need different post-process.
-            # # Check and modify from its corresponding Head._get_predictions.
-            for k, v in outputs.items():
-                v_np = v.getNumpyData()
-                output_data = MNN.Tensor(v_np.shape, MNN.Halide_Type_Float,
-                    v_np.astype(np.float32), MNN.Tensor_DimensionType_Caffe)
-                v.copyToHostTensor(output_data)
-                cls_score = torch.from_numpy(copy.deepcopy(output_data.getNumpyData()))
-                scores = F.softmax(cls_score, dim=1)
-                labels = scores.argmax(dim=1, keepdim=True).detach()
-                data_samples[0].set_pred_score(scores.squeeze()).set_pred_label(labels.squeeze())
+            self._process_outputs(outputs, data_samples)
             self.infer_metric.process(inputs, [data_samples[0].to_dict()])
             ########################DEBUG EXAMPLE#############################
             # from mmrazor.models import LearnableFakeQuantize
@@ -329,126 +333,52 @@ class HERONModelWrapper:
         metrics = self.infer_metric.evaluate(num_samples) if self.num_infer > 0 else {}
         return metrics
 
+    def _process_outputs(self, outputs, data_samples):
+        # # Note that here different tasks may need different post-process.
+        # # Check and modify from its corresponding Head._get_predictions.
+        for k, v in outputs.items():
+            v_np = v.getNumpyData()
+            output_data = MNN.Tensor(v_np.shape, MNN.Halide_Type_Float,
+                v_np.astype(np.float32), MNN.Tensor_DimensionType_Caffe)
+            v.copyToHostTensor(output_data)
+            cls_score = torch.from_numpy(copy.deepcopy(output_data.getNumpyData()))
+            scores = F.softmax(cls_score, dim=1)
+            labels = scores.argmax(dim=1, keepdim=True).detach()
+            data_samples[0].set_pred_score(scores.squeeze()).set_pred_label(labels.squeeze())
+
 
 @TASK_UTILS.register_module()
 class HERONModelWrapperDet(HERONModelWrapper):
-    """HERON Wrapper class.
-    """
-    def __init__(self,
-                 work_dir,
-                 dataloader,
-                 num_infer=None,
-                 mnn_quant_json=None,
-                 is_quantized=False,
-                 outputs_mapping=None,
-                 use_flip=False,
-                 infer_metric=None):
-        name = f'{self.__class__.__name__}'
-        work_dir = os.path.join(work_dir, f'rank_{get_rank()}')
-        mkdir_or_exist(work_dir)
-        self.dataloader = dataloader
-        self.onnx_file = osp.join(work_dir, f'{name}.onnx')
-        self.fixed_sann_file = self.onnx_file.replace('.onnx', '_fixed.sann')
-        self.float_sann_file = self.onnx_file.replace('.onnx', '_float.sann')
-        self.hir_file = osp.join(work_dir, f'{name}.hir')
-        self.profiler_net_res = osp.join(work_dir, f'{name}_net_profiler.txt')
-        self.profiler_layer_res = osp.join(work_dir, f'{name}_layer_profiler.csv')
-        # sann config path load
-        self.mnn_quant_json = mnn_quant_json
-        # heron tool load
-        self.shape = (1, ) + next(iter(self.dataloader))['inputs'][0].shape
-        self.is_quantized = is_quantized
-        if self.is_quantized and get_rank() == 0:
-            quant_json = load(self.mnn_quant_json)
-            quant_json['qatfile'] = self.onnx_file.replace('.onnx', '_superacme_clip_ranges.json')
-            dump(quant_json, self.mnn_quant_json, indent=4)
-        self.infer_metric = infer_metric
-        if infer_metric is not None:
-            self.infer_metric = METRICS.build(infer_metric)
-            if hasattr(self.dataloader.dataset, 'metainfo'):
-                self.infer_metric.dataset_meta = self.dataloader.dataset.metainfo
-            else:
-                print_log(
-                    f'Dataset {self.dataloader.dataset.__class__.__name__} has no '
-                    'metainfo. ``dataset_meta`` in metric will be None.',
-                    logger='current',
-                    level=logging.WARNING)
-        self.num_infer = num_infer if num_infer is not None and 0 < num_infer < len(self.dataloader) else len(self.dataloader)
-        self.model = None
-        self.outputs_mapping = outputs_mapping
-        self.use_flip = use_flip
 
-    def import_torch(self, model):
-        self.model = model
-        device = next(model.parameters()).device
-        dummy_data = next(iter(self.dataloader))['inputs'][0].unsqueeze(0).float().to(device)
+    def _process_outputs(self, outputs, data_samples):
+        # # Note that here different tasks may need different post-process.
+        # # Check and modify from its corresponding Head._get_predictions.
+        from mmdet.models.dense_heads.base_dense_head import unpack_img_metas
+        cls_scores, bbox_preds, score_factors = [], [], []
+        img_metas = unpack_img_metas(data_samples)
+        for k, v in outputs.items():
+            v_np = v.getNumpyData()
+            output_data = MNN.Tensor(v_np.shape, MNN.Halide_Type_Float,
+                v_np.astype(np.float32), MNN.Tensor_DimensionType_Caffe)
+            v.copyToHostTensor(output_data)
+            out = torch.from_numpy(copy.deepcopy(output_data.getNumpyData()))
+            if self.outputs_mapping is not None:
+                k = self.outputs_mapping.get(k, k)
+            if '_cls' in k:
+                cls_scores.append(out)
+            elif '_reg' in k:
+                bbox_preds.append(out)
+            elif '_obj' in k:
+                score_factors.append(out)
+        rescale = True
         if self.is_quantized:
-            observed_model = model.get_deploy_model()
-            model.quantizer.export_onnx(observed_model, dummy_data, self.onnx_file)
-            self.observed_model = observed_model
+            predictions = self.model.architecture.bbox_head.predict_by_feat(
+                cls_scores, bbox_preds, score_factors, batch_img_metas=img_metas, rescale=rescale)
+            data_samples = self.model.architecture.add_pred_to_datasample(data_samples, predictions)
         else:
-            model = fuse_conv_bn(model)
-            torch.onnx.export(
-                model,
-                dummy_data,
-                self.onnx_file,
-                keep_initializers_as_inputs=False,
-                verbose=False,
-                opset_version=11)
-            post_process_nodename(self.onnx_file)
-
-    def fixed_inference(self):
-        """Fixed point inference."""
-        assert self.dataloader.batch_size == 1, f'HERON only support batch_size == 1'
-        interpreter = MNN.Interpreter(self.fixed_sann_file)
-        session = interpreter.createSession()
-        input_tensor = interpreter.getSessionInput(session)
-        interpreter.resizeTensor(input_tensor, self.shape)
-        interpreter.resizeSession(session)
-        # import pdb; pdb.set_trace()
-        for i, data in enumerate(self.dataloader):
-            if i >= self.num_infer:
-                break
-            inputs, data_samples = data['inputs'], data['data_samples']
-            if self.use_flip:
-                inputs[0] = inputs[0].flip(1)
-            input_data = MNN.Tensor(self.shape, MNN.Halide_Type_Uint8,
-                inputs[0].reshape(self.shape).cpu().numpy().astype(np.uint8), MNN.Tensor_DimensionType_Caffe)
-            input_tensor.copyFrom(input_data)
-            interpreter.runSession(session)
-            outputs = interpreter.getSessionOutputAll(session)
-            # # Note that here different tasks may need different post-process.
-            # # Check and modify from its corresponding Head._get_predictions.
-            from mmdet.models.dense_heads.base_dense_head import unpack_img_metas
-            cls_scores, bbox_preds, score_factors = [], [], []
-            img_metas = unpack_img_metas(data_samples)
-            for k, v in outputs.items():
-                v_np = v.getNumpyData()
-                output_data = MNN.Tensor(v_np.shape, MNN.Halide_Type_Float,
-                    v_np.astype(np.float32), MNN.Tensor_DimensionType_Caffe)
-                v.copyToHostTensor(output_data)
-                out = torch.from_numpy(copy.deepcopy(output_data.getNumpyData()))
-                if self.outputs_mapping is not None:
-                    k = self.outputs_mapping.get(k, k)
-                if '_cls' in k:
-                    cls_scores.append(out)
-                elif '_reg' in k:
-                    bbox_preds.append(out)
-                elif '_obj' in k:
-                    score_factors.append(out)
-            rescale = True
-            if self.is_quantized:
-                predictions = self.model.architecture.bbox_head.predict_by_feat(
-                    cls_scores, bbox_preds, score_factors, batch_img_metas=img_metas, rescale=rescale)
-                data_samples = self.model.architecture.add_pred_to_datasample(data_samples, predictions)
-            else:
-                predictions = self.model.bbox_head.predict_by_feat(
-                    cls_scores, bbox_preds, score_factors, batch_img_metas=img_metas, rescale=rescale)
-                data_samples = self.model.add_pred_to_datasample(data_samples, predictions)
-            self.infer_metric.process(inputs, [data_samples[0].to_dict()])
-        num_samples = min(get_world_size() * self.num_infer, len(self.dataloader.dataset))
-        metrics = self.infer_metric.evaluate(num_samples) if self.num_infer > 0 else {}
-        return metrics
+            predictions = self.model.bbox_head.predict_by_feat(
+                cls_scores, bbox_preds, score_factors, batch_img_metas=img_metas, rescale=rescale)
+            data_samples = self.model.add_pred_to_datasample(data_samples, predictions)
 
 
 def _fuse_conv_bn(conv: nn.Module, bn: nn.Module) -> nn.Module:
