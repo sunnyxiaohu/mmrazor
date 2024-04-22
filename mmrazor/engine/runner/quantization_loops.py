@@ -294,8 +294,10 @@ class QATValLoop(ValLoop):
                  runner,
                  dataloader: Union[DataLoader, Dict],
                  evaluator: Union[Evaluator, Dict, List],
-                 fp16: bool = False) -> None:
+                 fp16: bool = False,
+                 only_qat: bool = False) -> None:
         super().__init__(runner, dataloader, evaluator, fp16)
+        self.only_qat = only_qat
         if self.runner.distributed:
             assert hasattr(self.runner.model.module, 'architecture')
             # TODO: remove hard code after mmcls add data_preprocessor
@@ -329,21 +331,22 @@ class QATValLoop(ValLoop):
 
         self.runner.call_hook('after_val_epoch', metrics=qat_metrics)
 
-        self.runner.call_hook('before_val_epoch')
-        self.runner.model.eval()
-        for idx, data_batch in enumerate(self.dataloader):
-            self.run_iter(idx, data_batch, self.architecture)
+        if not self.only_qat:
+            self.runner.call_hook('before_val_epoch')
+            self.runner.model.eval()
+            for idx, data_batch in enumerate(self.dataloader):
+                self.run_iter(idx, data_batch, self.architecture)
 
-        # compute metrics
-        metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
-        qat_metrics = dict()
-        for key, value in metrics.items():
-            qat_key = 'qat.' + key
-            ori_key = 'original.' + key
-            qat_metrics[ori_key] = value
-            self.runner.message_hub.log_scalars.pop(f'val/{qat_key}', None)
+            # compute metrics
+            metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
+            qat_metrics = dict()
+            for key, value in metrics.items():
+                qat_key = 'qat.' + key
+                ori_key = 'original.' + key
+                qat_metrics[ori_key] = value
+                self.runner.message_hub.log_scalars.pop(f'val/{qat_key}', None)
 
-        self.runner.call_hook('after_val_epoch', metrics=qat_metrics)
+            self.runner.call_hook('after_val_epoch', metrics=qat_metrics)
 
         self.runner.call_hook('after_val')
         return qat_metrics
