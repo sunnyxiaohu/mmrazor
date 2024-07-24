@@ -64,6 +64,29 @@ TORCH_observers = register_torch_observers()
 TORCH_fake_quants = register_torch_fake_quants()
 
 
+class FWDSaverHook:
+    """
+    Forward hook that stores the input and output of a layer/block
+    """
+    def __init__(self):
+        self.store_input = None
+
+    def __call__(self, module, input_batch, output_batch):
+        output_batch.requires_grad_()
+        output_batch.retain_grad()
+        self.store_input = output_batch
+
+class BWDSaverHook:
+    """
+    Forward hook that stores the input and output of a layer/block
+    """
+    def __init__(self):
+        self.store_input = None
+
+    def __call__(self, module, input_batch, output_batch):
+        self.store_input = output_batch
+
+
 @contextlib.contextmanager
 def adabn_context(model):
     running_means = []
@@ -492,9 +515,9 @@ class QNASValLoop(ValLoop, CalibrateMixin):
         self.runner.call_hook('after_val_epoch', metrics=all_metrics)
         self.runner.call_hook('after_val')
         if self.show_indicator:
-            self.get_sensetive_indicators()
+            self.get_sensitive_indicators()
 
-    def get_sensetive_indicators(self):
+    def get_sensitive_indicators(self):
         indicators_results = defaultdict(int)
         prefix = 'architecture.qmodels.tensor'
         prepared_model = _get_attrs(self.model, prefix)
@@ -620,11 +643,143 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         self.export_fix_subnet = export_fix_subnet
         self.solve_mode = solve_mode
         self.w_act_alphas = w_act_alphas
-        assert solve_mode in ['evo', 'prob', 'ilp', 'evo_org']
+        assert solve_mode in ['evo', 'prob', 'ilp', 'evo_org', 'ilp_hawq_eigen', 'ilp_hawq_trace']
         auxiliary_estimator_cfg = dict(type='mmrazor.ResourceEstimator',
                                        input_shape=self.estimator.input_shape)
         # Auxiliary estimator could help estimate spec module's resources.
         self.auxiliary_estimator = TASK_UTILS.build(auxiliary_estimator_cfg)
+
+    def get_hassian_probs(self, algo='hawq_trace', maxIter=100, tol=1e-3):
+        from pyhessian import hessian_vector_product, group_product, normalization, orthnormal
+        # import pdb; pdb.set_trace()
+        # 1. get all the spec_modules.
+        spec_modules = []
+        for name, mod in self.model.named_modules():
+            if isinstance(mod, (DynamicConvMixin, DynamicLinearMixin)):
+                spec_modules.append(name)
+        # 2. forward and get it's corresponding flops / params. we use its min_choices as reference.
+        self.model.mutator.set_min_choices()
+        results = self.auxiliary_estimator.estimate_separation_modules(
+            model=self.model, flops_params_cfg=dict(spec_modules=spec_modules, seperate_return=True))
+        # filter results
+        filterd_results = {}
+        for key, val in results.items():
+            if val['flops'] != 0 or val['params'] != 0:
+                filterd_results[key] = val
+        # 3. get every FakeQaunt's qrange
+        qrange_results = defaultdict(int)
+        prefix = 'architecture.qmodels.loss'
+        prepared_model = _get_attrs(self.model, prefix)
+        prob_results = {}
+        # 3.1 fw_hook/bw_hook get all the values/grads for fakequant
+        grad_savers, value_savers = {}, {}
+        grad_dict, value_dict = {}, {}
+        hook_handles = []
+        quant_bits_to_node = {}
+        for node in prepared_model.graph.nodes:
+            if node.op == 'call_module':
+                maybe_lsq = _get_attrs(prepared_model, node.target)
+                if hasattr(maybe_lsq, 'weight_fake_quant'):
+                    # weights
+                    maybe_lsq = maybe_lsq.weight_fake_quant
+
+                if isinstance(maybe_lsq, DynamicLearnableFakeQuantize):
+                    quant_bits = maybe_lsq.mutable_attrs['quant_bits']
+                    grad_savers[quant_bits.alias] = BWDSaverHook()
+                    value_savers[quant_bits.alias] = FWDSaverHook()
+                    handle_f = maybe_lsq.register_forward_hook(value_savers[quant_bits.alias])
+                    handle_b = maybe_lsq.register_full_backward_hook(grad_savers[quant_bits.alias])
+                    hook_handles.append((handle_f, handle_b))
+                    quant_bits_to_node[quant_bits.alias] = node.target
+
+        data = next(iter(self.dataloader))
+        data = self.model.data_preprocessor(data)
+        self.model.eval()
+        self.model.apply(disable_fake_quant)
+        self.model.apply(freeze_bn_stats)
+        self.model.zero_grad()
+        losses = self.model(**data, mode='loss')
+        losses['loss'].backward(create_graph=True)
+        device = losses['loss'].device
+        grad_dict = {key: grad_savers[key].store_input[0] + 0. for key in grad_savers}
+        value_dict = {key: value_savers[key].store_input for key in value_savers}
+        for handle_f, handle_b in hook_handles:
+            handle_f.remove()
+            handle_b.remove()
+
+        # 3.2 compute sensitive via hessian
+        def compute_sensitive(algo, value, first_order_grad):
+            if algo == 'hawq_trace':
+                trace = 0.
+                trace_vhv = []
+                for i in range(maxIter):
+                    self.model.zero_grad()
+                    v = torch.randint_like(value, high=2, device=device)
+                    # generate Rademacher random variables
+                    v[v == 0] = -1
+                    v = [v]
+                    Hv = hessian_vector_product(first_order_grad, value, v)
+                    trace_vhv.append(group_product(Hv, v).cpu().item())
+                    if abs(np.mean(trace_vhv) - trace) / (abs(trace) + 1e-6) < tol:
+                        break
+                    else:
+                        trace = np.mean(trace_vhv)
+                sensitive = trace
+            elif algo == 'hawq_eigen':
+                v = [torch.randn_like(value)]
+                v = normalization(v)
+                # eigenvectors = []
+                eigenvalue = None
+                for i in range(maxIter):
+                    # v = orthnormal(v, eigenvectors)
+                    self.model.zero_grad()
+                    Hv = hessian_vector_product(first_order_grad, value, v)
+                    tmp_eigenvalue = group_product(Hv, v).cpu().item()
+                    v = normalization(Hv)
+
+                    if eigenvalue is None:
+                        eigenvalue = tmp_eigenvalue
+                    else:
+                        if abs(eigenvalue - tmp_eigenvalue) / (abs(eigenvalue) + 1e-6) < tol:
+                            break
+                        else:
+                            eigenvalue = tmp_eigenvalue
+                sensitive = eigenvalue
+            torch.cuda.empty_cache()
+            return sensitive
+
+        def get_sensitive_delta(bit_name):
+
+            def square_mean(ta, tb):
+                return torch.pow((ta - tb), 2.0).mean().detach().cpu().numpy()
+
+            lsq_name = quant_bits_to_node[bit_name]
+            maybe_lsq = _get_attrs(prepared_model, lsq_name)
+            if hasattr(maybe_lsq, 'weight_fake_quant'):
+                # weights
+                maybe_lsq = maybe_lsq.weight_fake_quant
+            sensitive_delta = {}
+            maybe_lsq.fake_quant_enabled[0] = 1
+            assert maybe_lsq.mutable_attrs['quant_bits'].alias == bit_name
+            bitwidth_list = maybe_lsq.mutable_attrs['quant_bits'].choices
+            for bits in bitwidth_list:
+                maybe_lsq.mutable_attrs['quant_bits'].current_choice = bits
+                maybe_lsq.get_dynamic_params()
+                value = value_dict[bit_name]
+                sensitive_delta[bits] = square_mean(value, maybe_lsq(value))
+            maybe_lsq.fake_quant_enabled[0] = 0
+
+            return sensitive_delta
+
+        sensitive_dict = {}
+        for name, value in value_dict.items():
+            first_order_grad = grad_dict[name]
+            sensitive = compute_sensitive(algo, value, first_order_grad)
+            delta = get_sensitive_delta(name)
+            value_size = value.numel()
+            sensitive_dict[name] = {k: v * sensitive / value_size for k, v in delta.items()}
+
+        return filterd_results, sensitive_dict
 
     def get_qrange_probs(self):
         # 1. get all the spec_modules.
@@ -1068,7 +1223,10 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
         idx = 0
         if self.solve_mode in ['evo', 'prob', 'ilp']:
             filterd_results, prob_results = self.get_qrange_probs()
-        if self.solve_mode == 'ilp':
+        if 'hawq' in self.solve_mode:
+            algo = self.solve_mode.split('ilp_')[-1]
+            filterd_results, prob_results = self.get_hassian_probs(algo=algo)
+        if 'ilp' in self.solve_mode:
             num_candidates = num_candidates - init_candidates
             if self.w_act_alphas is not None:
                 assert len(self.w_act_alphas) == num_candidates, 'Unmatched w_act_alphas'
@@ -1084,7 +1242,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
                 # we first make a random choice for all the mutables, and then use the solve_mode
                 # to modify the specific mutables (DynamicQConv, DynamicQLinear).
                 self.model.mutator.set_choices(self.model.mutator.sample_choices())
-                if self.solve_mode == 'ilp':
+                if 'ilp' in self.solve_mode:
                     if idx > len(w_act_alphas):
                         break
                     candidate = self.sample_ilp_once(
@@ -1127,6 +1285,7 @@ class QNASEvolutionSearchLoop(EvolutionSearchLoop, CalibrateMixin):
             use_predictor (bool): Whether to use predictor to get metrics.
                 Defaults to False.
         """
+        self.prepare_for_val()
         if use_predictor:
             assert self.predictor is not None
             metrics = self.predictor.predict(self.model)
