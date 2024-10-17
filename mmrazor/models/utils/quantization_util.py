@@ -45,12 +45,18 @@ def str2class(str_inputs):
         return clss[0]
 
 
-def post_process_nodename(onnx_file):
+def post_process_nodename(onnx_file, onnx_node_translate_mapping=None):
     onnx_model = onnx.load(onnx_file)
     for node in onnx_model.graph.node:
         node.name = node.name.replace('/', '~')
+        if onnx_node_translate_mapping and node.name in onnx_node_translate_mapping:
+            node.name = onnx_node_translate_mapping[node.name]
         for idx, input_name in enumerate(node.input):
             node.input[idx] = input_name.replace('/', '~')
+            if onnx_node_translate_mapping and node.input[idx] in onnx_node_translate_mapping:
+                node.input[idx]  = onnx_node_translate_mapping[node.input[idx]]
         for idx, output_name in enumerate(node.output):
             node.output[idx] = output_name.replace('/', '~')
+            if onnx_node_translate_mapping and node.output[idx] in onnx_node_translate_mapping:
+                node.output[idx]  = onnx_node_translate_mapping[node.output[idx]]
     onnx.save(onnx_model, onnx_file)

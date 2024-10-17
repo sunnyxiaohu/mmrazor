@@ -126,7 +126,9 @@ class HERONModelWrapper:
                  mnn_quant_json=None,
                  is_quantized=False,
                  outputs_mapping=None,
+                 onnx_node_translate_mapping=None,
                  use_flip=True,
+                 profiler_args='-d 1.5 -f 0.5 -L ',
                  infer_metric=None):
         name = f'{self.__class__.__name__}'
         work_dir = os.path.join(work_dir, f'rank_{get_rank()}')
@@ -167,6 +169,8 @@ class HERONModelWrapper:
         self.model = None
         self.outputs_mapping = outputs_mapping
         self.use_flip = use_flip
+        self.profiler_args = profiler_args
+        self.onnx_node_translate_mapping = onnx_node_translate_mapping
 
     def import_torch(self, model):
         self.model = model
@@ -177,7 +181,7 @@ class HERONModelWrapper:
             dummy_data = next(iter(self.dataloader))['inputs'][0].unsqueeze(0).float().to(device)
         if self.is_quantized:
             observed_model = model.get_deploy_model()
-            model.quantizer.export_onnx(observed_model, dummy_data, self.onnx_file)
+            model.quantizer.export_onnx(observed_model, dummy_data, self.onnx_file,onnx_node_translate_mapping=self.onnx_node_translate_mapping)
             self.observed_model = observed_model
         else:
             model = fuse_conv_bn(model)
@@ -188,7 +192,7 @@ class HERONModelWrapper:
                 keep_initializers_as_inputs=False,
                 verbose=False,
                 opset_version=11)
-            post_process_nodename(self.onnx_file)
+            post_process_nodename(self.onnx_file, onnx_node_translate_mapping=self.onnx_node_translate_mapping)
 
     def hir_convert(self):
         # convert and compiler
@@ -196,7 +200,7 @@ class HERONModelWrapper:
         os.system(command_line)
 
     def hir_profiler(self):
-        command_line = 'sann profiler -m '+self.hir_file+' -o '+self.profiler_layer_res+' > /dev/null'
+        command_line = 'sann profiler ' + self.profiler_args +' -m '+self.hir_file+' -o '+self.profiler_layer_res+' > /dev/null'
         os.system(command_line)
 
     def res_extract(self):
