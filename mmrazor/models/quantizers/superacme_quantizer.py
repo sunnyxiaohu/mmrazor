@@ -173,7 +173,8 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
                     args: Union[Tuple[Any, ...], torch.Tensor],
                     output_path: str,
                     opset_version: Optional[int] = 11,
-                    onnx_node_translate_mapping=None,
+                    onnx_node_tensor_translate_mapping=None,
+                    debug_mode=False,
                     **kwargs):
         """Export the onnx model that can be deployed to SuperAcme backend."""
 
@@ -184,7 +185,9 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
             symbolic_output_path,
             opset_version=opset_version,
             **kwargs)
-        post_process_nodename(symbolic_output_path, onnx_node_translate_mapping=onnx_node_translate_mapping)
+        post_process_nodename(symbolic_output_path,
+                              onnx_node_tensor_translate_mapping=onnx_node_tensor_translate_mapping,
+                              debug_mode=debug_mode)
 
         from .exporters.superacme_quantize_exporter import SuperAcmeQuantizeExportor
         exporter = SuperAcmeQuantizeExportor(symbolic_output_path, output_path)

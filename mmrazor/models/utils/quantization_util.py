@@ -45,18 +45,65 @@ def str2class(str_inputs):
         return clss[0]
 
 
-def post_process_nodename(onnx_file, onnx_node_translate_mapping=None):
+def post_process_nodename(onnx_file, onnx_node_tensor_translate_mapping=None,
+                          debug_mode=False):
+    if debug_mode:
+        return
+
     onnx_model = onnx.load(onnx_file)
+    # Note that for superacme (.hir) files, only the activation tensor name will influence it's storage size.
+    onnx_node_tensor_name_mapping = {}
+    if onnx_node_tensor_translate_mapping is None:
+        onnx_node_tensor_translate_mapping = {}
+    else:
+        # check provided node/tensor name valididation
+        node_names = [node.name for node in onnx_model.graph.node]
+        for node in onnx_model.graph.input:
+            node_names.append(node.name)
+        for node in onnx_model.graph.output:
+            node_names.append(node.name)
+        tensor_names = []
+        for node in onnx_model.graph.node:
+            tensor_names.extend([name for name in node.input] + [name for name in node.output])
+        for name in onnx_node_tensor_translate_mapping:
+            if name not in node_names + tensor_names:
+                raise ValueError(f'Provided node/tensor name: {name} not in the onnx_model: {node_names+tensor_names}')
+        onnx_node_tensor_name_mapping.update(onnx_node_tensor_translate_mapping)
+
+    def find_new_node_name(old_name, node_idx):
+        if old_name in onnx_node_tensor_name_mapping:
+            new_name = onnx_node_tensor_name_mapping[old_name]
+        else:
+            new_name = f'{node_idx}'
+            while (new_name in onnx_node_tensor_name_mapping):
+                node_idx += 1
+                new_name = f'{node_idx}'
+        next_node_idx = node_idx+1 if new_name == f'{node_idx}' else node_idx
+        return new_name, next_node_idx
+
+    node_idx = 0
     for node in onnx_model.graph.node:
-        node.name = node.name.replace('/', '~')
-        if onnx_node_translate_mapping and node.name in onnx_node_translate_mapping:
-            node.name = onnx_node_translate_mapping[node.name]
+        new_name, node_idx = find_new_node_name(node.name, node_idx)
+        onnx_node_tensor_name_mapping[node.name] = new_name
+        for input_name in node.input:
+            new_name, node_idx = find_new_node_name(input_name, node_idx)
+            onnx_node_tensor_name_mapping[input_name] = new_name
+        for output_name in node.output:
+            new_name, node_idx = find_new_node_name(output_name, node_idx)
+            onnx_node_tensor_name_mapping[output_name] = new_name
+
+    for node in onnx_model.graph.input:
+        node.name = onnx_node_tensor_name_mapping.get(node.name, node.name)
+    for node in onnx_model.graph.output:
+        node.name = onnx_node_tensor_name_mapping.get(node.name, node.name)
+    for node in onnx_model.graph.node:
+        node.name = onnx_node_tensor_name_mapping.get(node.name, node.name)
         for idx, input_name in enumerate(node.input):
-            node.input[idx] = input_name.replace('/', '~')
-            if onnx_node_translate_mapping and node.input[idx] in onnx_node_translate_mapping:
-                node.input[idx]  = onnx_node_translate_mapping[node.input[idx]]
+            node.input[idx] = onnx_node_tensor_name_mapping.get(input_name, input_name)
         for idx, output_name in enumerate(node.output):
-            node.output[idx] = output_name.replace('/', '~')
-            if onnx_node_translate_mapping and node.output[idx] in onnx_node_translate_mapping:
-                node.output[idx]  = onnx_node_translate_mapping[node.output[idx]]
+            node.output[idx] = onnx_node_tensor_name_mapping.get(output_name, output_name)
+    for initializer in onnx_model.graph.initializer:
+        initializer.name = onnx_node_tensor_name_mapping.get(initializer.name, initializer.name)
+    # TDL: graph.value_info
+    # import pdb; pdb.set_trace()
     onnx.save(onnx_model, onnx_file)

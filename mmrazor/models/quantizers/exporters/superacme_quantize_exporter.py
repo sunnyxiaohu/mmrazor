@@ -135,7 +135,8 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
                                                 'type': "biased",
                                                 }
             elif node.op_type in PERTENSOR_FAKEQUANTIZER:
-                if node.output[0] in [x.name for x in self.graph.output]:
+                if node.output[0] not in self.input2node:
+                    assert node.output[0] in [x.name for x in self.graph.output]
                     self.input2node[node.output[0]] = []
 
                 next_nodes = self.input2node[node.output[0]]
@@ -149,6 +150,10 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
                     # fake quantize for activations
                     self.deal_with_activation_fakequant(node, self.input2node)
                     tensor_name, scale, zero_point, qmin, qmax = self.parse_qparams(node)
+                    for out in self.graph.output:
+                        if out.name == node.output[0]:
+                            out.name = tensor_name
+
                 clip_ranges[tensor_name] = {'step': float(scale),
                                                 'zero_point': int(zero_point),
                                                 'min': float(scale * (qmin - zero_point)),
