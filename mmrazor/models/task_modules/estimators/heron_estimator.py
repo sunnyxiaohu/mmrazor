@@ -126,7 +126,8 @@ class HERONModelWrapper:
                  mnn_quant_json=None,
                  is_quantized=False,
                  outputs_mapping=None,
-                 onnx_node_translate_mapping=None,
+                 onnx_node_tensor_translate_mapping=None,
+                 onnx_node_debug_mode=False,
                  use_flip=True,
                  profiler_args='-d 1.5 -f 0.5 -L ',
                  infer_metric=None):
@@ -170,7 +171,8 @@ class HERONModelWrapper:
         self.outputs_mapping = outputs_mapping
         self.use_flip = use_flip
         self.profiler_args = profiler_args
-        self.onnx_node_translate_mapping = onnx_node_translate_mapping
+        self.onnx_node_tensor_translate_mapping = onnx_node_tensor_translate_mapping
+        self.onnx_node_debug_mode = onnx_node_debug_mode
 
     def import_torch(self, model):
         self.model = model
@@ -181,7 +183,9 @@ class HERONModelWrapper:
             dummy_data = next(iter(self.dataloader))['inputs'][0].unsqueeze(0).float().to(device)
         if self.is_quantized:
             observed_model = model.get_deploy_model()
-            model.quantizer.export_onnx(observed_model, dummy_data, self.onnx_file,onnx_node_translate_mapping=self.onnx_node_translate_mapping)
+            model.quantizer.export_onnx(observed_model, dummy_data, self.onnx_file,
+                                        onnx_node_tensor_translate_mapping=self.onnx_node_tensor_translate_mapping,
+                                        debug_mode=self.onnx_node_debug_mode)
             self.observed_model = observed_model
         else:
             model = fuse_conv_bn(model)
@@ -192,11 +196,12 @@ class HERONModelWrapper:
                 keep_initializers_as_inputs=False,
                 verbose=False,
                 opset_version=11)
-            post_process_nodename(self.onnx_file, onnx_node_translate_mapping=self.onnx_node_translate_mapping)
+            post_process_nodename(self.onnx_file, onnx_node_tensor_translate_mapping=self.onnx_node_tensor_translate_mapping,
+                                  debug_mode=self.onnx_node_debug_mode)
 
     def hir_convert(self):
         # convert and compiler
-        command_line = 'sann build --saveSimpleModel 0 --input '+self.onnx_file+' --output '+self.hir_file+' --config '+self.mnn_quant_json+' > '+self.profiler_net_res
+        command_line = 'sann build --saveSimpleModel 1 --input '+self.onnx_file+' --output '+self.hir_file+' --config '+self.mnn_quant_json+' > '+self.profiler_net_res
         os.system(command_line)
 
     def hir_profiler(self):
