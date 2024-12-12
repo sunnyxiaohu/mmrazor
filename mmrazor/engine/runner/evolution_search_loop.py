@@ -386,6 +386,15 @@ class EvolutionSearchLoop(EpochBasedTrainLoop, CalibrateBNMixin):
 
             self.runner.logger.info('Search finished.')
 
+        sliced_model.cuda().eval()
+        with torch.no_grad():
+            for data_batch in self.dataloader:
+                outputs = sliced_model.val_step(data_batch)
+                self.evaluator.process(
+                    data_samples=outputs, data_batch=data_batch)
+            metrics = self.evaluator.evaluate(len(self.dataloader.dataset))
+        self.runner.logger.info(f'Exported Model Metrics: {metrics}')
+
     @torch.no_grad()
     def _val_candidate(self, use_predictor: bool = False) -> Dict:
         """Run validation.
