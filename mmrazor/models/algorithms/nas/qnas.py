@@ -294,19 +294,21 @@ class QNASDDP(MMDistributedDataParallel):
         # Hackly, we rebuild qmodels and the corresonding modules based on the architecture
         # that have aleady moved to GPU, so that the buffers can be shared among qmodels
         # and the architecture.
-        self.module.architecture.qmodels = self.module.architecture._build_qmodels(
-            self.module.architecture.architecture)
-        self.module.mutator.prepare_from_supernet(self.module.architecture)
-        # self.module.qat_distiller.prepare_from_teacher(self.module.architecture.qmodels['loss'])
-        # self.module.qat_distiller.prepare_from_student(self.module.architecture.qmodels['loss'])        
-        self.module.sync_qparams('tensor')
-        self.module.architecture.reset_observer_and_fakequant_statistics(self)
+        self.has_qmodel = hasattr(self.module.architecture, '_build_qmodels')
+        if self.has_qmodel:
+            self.module.architecture.qmodels = self.module.architecture._build_qmodels(
+                self.module.architecture.architecture)
+            self.module.mutator.prepare_from_supernet(self.module.architecture)
+            # self.module.qat_distiller.prepare_from_teacher(self.module.architecture.qmodels['loss'])
+            # self.module.qat_distiller.prepare_from_student(self.module.architecture.qmodels['loss'])
+            self.module.sync_qparams('tensor')
+            self.module.architecture.reset_observer_and_fakequant_statistics(self)
 
     def train_step(self, data: List[dict],
                    optim_wrapper: OptimWrapper) -> Dict[str, torch.Tensor]:
         if self.module.current_stage == 'float':
             distiller = self.module.distiller
-            mode = 'float.loss'
+            mode = 'float.loss' if self.has_qmodel else 'loss'
         elif self.module.current_stage == 'qat':
             distiller = self.module.qat_distiller
             mode = 'loss'
