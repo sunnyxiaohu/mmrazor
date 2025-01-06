@@ -10,7 +10,6 @@ Layer groups: Groups of layers that are immediately connected and can be decompo
 from typing import Tuple, List, Union, Dict
 import numpy as np
 import torch
-import libpymo
 
 from mmrazor.models.algorithms.quantization.cle_superacme.meta import utils as utils
 from mmrazor.models.algorithms.quantization.cle_superacme.meta.connectedgraph import ConnectedGraph
@@ -248,23 +247,22 @@ class CrossLayerScaling:
         Scale a CLS set
         :param cls_set: Either a pair or regular conv layers or a triplet of depthwise separable layers
         :return: Scaling factor calculated and applied
-        """
+        """     
         if len(cls_set) == 3:
             scale_factor = CrossLayerScaling.scale_cls_set_with_depthwise_layers(cls_set)
         else:
             scale_factor = CrossLayerScaling.scale_cls_set_with_conv_layers(cls_set)
-
         return scale_factor
 
     @staticmethod
     def call_mo_scale(cls_set: Union[Tuple[torch.nn.Conv2d, torch.nn.Conv2d],
-                                     Tuple[torch.nn.ConvTranspose2d, torch.nn.ConvTranspose2d]]) \
-            -> Tuple[np.ndarray, libpymo.EqualizationParams, libpymo.EqualizationParams]:
+                                     Tuple[torch.nn.ConvTranspose2d, torch.nn.ConvTranspose2d]]):
         """
         Invokes scale API in model optimization library
         :param cls_set: Consecutive Conv layers Tuple whose weights and biases need to be equalized
         :return: Scaling factor, prev and current layer updated parameters
         """
+        import libpymo
         # Create structs for holding layer weights and bias parameters
         prev_layer_params = libpymo.EqualizationParams()
         curr_layer_params = libpymo.EqualizationParams()
@@ -301,10 +299,11 @@ class CrossLayerScaling:
             prev_layer_params.isBiasNone = True
 
         scaling_factor = libpymo.scaleLayerParams(prev_layer_params, curr_layer_params)
+    
         return scaling_factor, prev_layer_params, curr_layer_params
 
     @staticmethod
-    def scale_cls_set_with_conv_layers(cls_set: Union[Tuple[torch.nn.Conv2d, torch.nn.Conv2d],
+    def scale_cls_set_with_conv_layers_v0(cls_set: Union[Tuple[torch.nn.Conv2d, torch.nn.Conv2d],
                                                       Tuple[torch.nn.ConvTranspose2d, torch.nn.ConvTranspose2d]]) \
             -> np.ndarray:
         """
@@ -312,7 +311,6 @@ class CrossLayerScaling:
         :param cls_set: Consecutive Conv layers Tuple whose weights and biases need to be equalized
         :return: Scaling factor S_12 for each conv layer pair: numpy array
         """
-
         on_gpu = False
         for module in cls_set:
             if not isinstance(module, cls_supported_layers):
@@ -358,7 +356,65 @@ class CrossLayerScaling:
         return scaling_factor
 
     @staticmethod
-    def scale_cls_set_with_depthwise_layers(cls_set: Tuple[torch.nn.Conv2d,
+    def scale_cls_set_with_conv_layers(cls_set: Union[Tuple[torch.nn.Conv2d, torch.nn.Conv2d],
+                                                      Tuple[torch.nn.ConvTranspose2d, torch.nn.ConvTranspose2d]]) \
+            -> np.ndarray:
+        """
+        API to invoke equalize layer params (update for weights and bias is in place)
+        :param cls_set: Consecutive Conv layers Tuple whose weights and biases need to be equalized
+        :return: Scaling factor S_12 for each conv layer pair: numpy array
+        """
+        for module in cls_set:
+            if not isinstance(module, cls_supported_layers):
+                raise ValueError("Only Conv or Transposed Conv layers are supported for cross layer equalization")
+
+        weight_set_0 = cls_set[0].weight
+        # Transpose weights to C, N, H, W from N, C, H, W since axis are flipped for transposed conv
+        if isinstance(cls_set[0], torch.nn.ConvTranspose2d):
+            weight_set_0 = weight_set_0.permute(1, 0, 2, 3)
+        if isinstance(cls_set[0], torch.nn.ConvTranspose1d):
+            weight_set_0 = weight_set_0.permute(1, 0, 2)
+
+        weight_set_1 = cls_set[1].weight
+        # Transpose weights to C, N, H, W from N, C, H, W since axis are flipped for transposed conv
+        if isinstance(cls_set[1], torch.nn.ConvTranspose2d):
+            weight_set_1 = weight_set_1.permute(1, 0, 2, 3)
+        if isinstance(cls_set[1], torch.nn.ConvTranspose1d):
+            weight_set_1 = weight_set_1.permute(1, 0, 2)
+
+        prev_weight, current_weight = weight_set_0.detach(), weight_set_1.detach()
+        prev_bias = cls_set[0].bias.detach() if cls_set[0].bias is not None else None
+
+        assert(prev_weight.shape[0] == current_weight.shape[1]), 'Unsupport group convolution now'
+        signed = True
+        scale_channels = []
+        s_range = prev_weight.new_tensor([1e-8, 1e8])
+        eps = 1e-8
+        for ch in range(current_weight.shape[1]):
+            prev_weight_ch = prev_weight[ch]
+            current_weight_ch = current_weight[:, ch]
+
+            if signed:
+                range1 = torch.max(prev_weight_ch.abs())
+                range2 = torch.max(current_weight_ch.abs())
+            else:
+                range1 = torch.max(prev_weight_ch) - torch.min(prev_weight_ch)
+                range2 = torch.max(current_weight_ch) - torch.min(current_weight_ch)
+            scale_factor = (range1 + eps) / (torch.sqrt(range1 * range2) + eps)
+            scale_factor = max(s_range[0], min(scale_factor, s_range[1]))
+            prev_weight_ch.div_(scale_factor)
+            current_weight_ch.mul_(scale_factor)
+
+            if prev_bias is not None:
+                prev_bias[ch].div_(scale_factor)
+
+            scale_channels.append(scale_factor.item())
+
+        return scale_channels
+
+
+    @staticmethod
+    def scale_cls_set_with_depthwise_layers_v0(cls_set: Tuple[torch.nn.Conv2d,
                                                            torch.nn.Conv2d,
                                                            torch.nn.Conv2d]) -> [np.ndarray, np.ndarray]:
         """
@@ -466,6 +522,75 @@ class CrossLayerScaling:
         return scaling_params.scalingMatrix12, scaling_params.scalingMatrix23
 
     @staticmethod
+    def scale_cls_set_with_depthwise_layers(cls_set: Tuple[torch.nn.Conv2d,
+                                                           torch.nn.Conv2d,
+                                                           torch.nn.Conv2d]) -> [np.ndarray, np.ndarray]:
+        """
+        API to invoke equalize layer params for depth wise separable layers(update for weights and bias is in place)
+        :param cls_set: Consecutive Conv layers whose weights and biases need to be equalized.
+                        Second Conv layer is a depth-wise conv and third conv layer is point-wise conv
+        :return: Scaling factors S_12 and S_23 : numpy arrays
+        """
+        # pylint:disable=too-many-branches
+        # pylint:disable=too-many-statements
+        for module in cls_set:
+            if not isinstance(module, cls_supported_layers):
+                raise ValueError("Only conv layers are supported for cross layer equalization")
+
+        if isinstance(cls_set[0], torch.nn.ConvTranspose2d):
+            cls_set[0].weight.data = cls_set[0].weight.data.permute(1, 0, 2, 3)
+        if isinstance(cls_set[0], torch.nn.ConvTranspose1d):
+            cls_set[0].weight.data = cls_set[0].weight.data.permute(1, 0, 2)
+
+        if isinstance(cls_set[2], torch.nn.ConvTranspose2d):
+            cls_set[2].weight.data = cls_set[2].weight.data.permute(1, 0, 2, 3)
+        if isinstance(cls_set[2], torch.nn.ConvTranspose1d):
+            cls_set[2].weight.data = cls_set[2].weight.data.permute(1, 0, 2)
+
+        assert cls_set[1].groups > 1
+
+        scaling_params = libpymo.scaleDepthWiseSeparableLayer(prev_layer_params, curr_layer_params, next_layer_params)
+
+        prev_weight, current_weight, next_weight = cls_set[0].weight.detach(), cls_set[1].weight.detach(), cls_set[2].weight.detach()
+        prev_bias = cls_set[0].bias.detach() if cls_set[0].bias is not None else None
+        current_bias = cls_set[1].bias.detach() if cls_set[1].bias is not None else None
+
+        signed = True
+        scale_channels12, scale_channels23 = [], []
+        s_range = prev_weight.new_tensor([1e-8, 1e8])
+        eps = 1e-8
+        for ch in range(current_weight.shape[1]):
+            prev_weight_ch = prev_weight[ch]
+            current_weight_ch = current_weight[:, ch]
+            next_weight_ch = next_weight[:, ch]
+
+            if signed:
+                range1 = torch.max(prev_weight_ch.abs())
+                range2 = torch.max(current_weight_ch.abs())
+                range3 = torch.max(next_weight_ch.abs())
+            else:
+                range1 = torch.max(prev_weight_ch) - torch.min(prev_weight_ch)
+                range2 = torch.max(current_weight_ch) - torch.min(current_weight_ch)
+                range3 = torch.max(next_weight_ch) - torch.min(next_weight_ch)
+            scale_factor12 = (range1 + eps) / (torch.pow(range1 * range2 * range3, 1.0/3) + eps)
+            scale_factor12 = max(s_range[0], min(scale_factor12, s_range[1]))
+            scale_factor23 = (torch.pow(range1 * range2 * range3, 1.0/3) + eps) / (range3 + eps)
+            scale_factor23 = max(s_range[0], min(scale_factor23, s_range[1]))            
+            prev_weight_ch.div_(scale_factor12)
+            current_weight_ch.mul_(scale_factor12).div_(scale_factor23)
+            next_weight_ch.mul_(scale_factor23)
+
+            if prev_bias is not None:
+                prev_bias[ch].div_(scale_factor12)
+            if current_bias is not None:
+                current_bias[ch].div_(scale_factor23)                
+
+            scale_channels12.append(scale_factor12.item())
+            scale_channels23.append(scale_factor23.item())
+
+        return scale_channels12, scale_channels23
+
+    @staticmethod
     def create_cls_set_info_list(cls_sets: List[ClsSet], scale_factors: List[ScaleFactor],
                                  is_relu_activation_in_cls_sets):
         """
@@ -550,14 +675,14 @@ class HighBiasFold:
 
     @staticmethod
     def call_mo_high_bias_fold(cls_pair_info: ClsSetInfo.ClsSetLayerPairInfo,
-                               bn_layers: Dict[Union[torch.nn.Conv2d, torch.nn.ConvTranspose2d], torch.nn.BatchNorm2d])\
-            -> Tuple[libpymo.LayerParams, libpymo.LayerParams]:
+                               bn_layers: Dict[Union[torch.nn.Conv2d, torch.nn.ConvTranspose2d], torch.nn.BatchNorm2d]):
         """
         Invokes high bias fold MO API
         :param cls_pair_info: Pair of layers that were scaled using CLS and related information
         :param bn_layers: Key: Conv/Linear layer Value: Corresponding folded BN layer
         :return: Updated layer params
         """
+        import libpymo
         prev_layer_params = libpymo.LayerParams()
         curr_layer_params = libpymo.LayerParams()
         prev_layer_bn_params = libpymo.BNParamsHighBiasFold()
@@ -594,7 +719,7 @@ class HighBiasFold:
         return prev_layer_params, curr_layer_params
 
     @staticmethod
-    def bias_fold(cls_set_info_list: List[ClsSetInfo], bn_layers: Dict[Union[torch.nn.Conv2d, torch.nn.ConvTranspose2d],
+    def bias_fold_v0(cls_set_info_list: List[ClsSetInfo], bn_layers: Dict[Union[torch.nn.Conv2d, torch.nn.ConvTranspose2d],
                                                                        torch.nn.BatchNorm2d]):
         """
         Folds bias values greater than 3 * sigma to next layer's bias
@@ -629,6 +754,63 @@ class HighBiasFold:
                 cls_pair_info.layer2.bias.data = torch.from_numpy(np.reshape(curr_layer_params.bias,
                                                                              curr_layer_params.weightShape[0]))
                 cls_pair_info.layer2.bias.data = cls_pair_info.layer2.bias.data.type(torch.FloatTensor)
+
+    @staticmethod
+    def bias_fold(cls_set_info_list: List[ClsSetInfo], bn_layers: Dict[Union[torch.nn.Conv2d, torch.nn.ConvTranspose2d],
+                                                                       torch.nn.BatchNorm2d]):
+        """
+        Folds bias values greater than 3 * sigma to next layer's bias
+
+        :param cls_set_info_list: List of info elements for each cls set
+        :param bn_layers: Key: Conv/Linear layer Value: Corresponding folded BN layer
+        :return: None
+        """
+        if not bn_layers:
+            print('High Bias folding is not supported for models without BatchNorm Layers')
+            return
+
+        for cls_set_info in cls_set_info_list:
+
+            for cls_pair_info in cls_set_info.cls_pair_info_list:
+
+                if (cls_pair_info.layer1.bias is None) or (cls_pair_info.layer2.bias is None) or \
+                        (cls_pair_info.layer1 not in bn_layers):
+                    continue
+
+                scaling_parameter = cls_pair_info.scale_factor
+                # Scaling gamma and beta parameter of batch norm layer
+                gamma = bn_layers[cls_pair_info.layer1].weight.detach()
+                beta = bn_layers[cls_pair_info.layer1].bias.detach()                
+
+                if len(scaling_parameter) != len(gamma) or \
+                        len(scaling_parameter) != len(beta):
+                    raise ValueError("High Bias absorption is not supported for networks with fold-forward BatchNorms")
+                scaling_tensor = gamma.new_tensor(scaling_parameter)
+                gamma.div_(scaling_tensor)
+                beta.div_(scaling_tensor)
+
+                activationIsRelu = cls_pair_info.relu_activation_between_layers
+                prev_bias = cls_pair_info.layer1.bias.detach()
+
+                weight = cls_pair_info.layer2.weight
+                if isinstance(cls_pair_info.layer2, (torch.nn.Conv1d, torch.nn.ConvTranspose1d)):
+                    weight = torch.unsqueeze(weight, dim=-1)
+                # Transpose weights to C, N, H, W from N, C, H, W since axis are flipped for transposed conv
+                if isinstance(cls_pair_info.layer2, (torch.nn.ConvTranspose1d, torch.nn.ConvTranspose2d)) and \
+                        cls_pair_info.layer2.groups == 1:
+                    weight = weight.permute(1, 0, 2, 3)
+
+                curr_weight, curr_bias = weight.detach(), cls_pair_info.layer2.bias.detach()
+
+                if activationIsRelu:
+                    absorbBias = beta - 3 * gamma.abs()
+                    absorbBias = absorbBias.masked_fill(beta - 3 * gamma.abs() <= 0, 0)
+                else:
+                    absorbBias = beta
+                prev_bias.sub_(absorbBias)
+                reduced_weight = curr_weight.sum(dim=[-2, -1])
+                biasCorrect = torch.matmul(reduced_weight, absorbBias)
+                curr_bias.add_(biasCorrect)
 
 
 def equalize_model(model: torch.nn.Module, input_shapes: Union[Tuple, List[Tuple]]):

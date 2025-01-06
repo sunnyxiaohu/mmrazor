@@ -7,8 +7,6 @@ import numpy as np
 import torch
 import torch.nn
 
-import libpymo
-
 from mmrazor.models.algorithms.quantization.cle_superacme.common.bias_correction import ConvBnPatternHandler
 from mmrazor.models.algorithms.quantization.cle_superacme.common.graph_pattern_matcher import PatternType
 from mmrazor.models.algorithms.quantization.cle_superacme.common.graph_searcher import GraphSearcher
@@ -41,7 +39,7 @@ def _extend_weight_shape_to_4d(conv_linear: torch.nn.Module, weight_shape: np.ar
     return weight_shape
 
 
-def _revert_weight_shape_to_orig(conv_linear: torch.nn.Module, weight_tensor: libpymo.TensorParams):
+def _revert_weight_shape_to_orig(conv_linear: torch.nn.Module, weight_tensor):
     """
     Revert the weight shape to original shape
     :param conv_linear: Conv/ Linear Layer
@@ -68,6 +66,7 @@ def call_mo_batch_norm_fold(conv_linear: Union[torch.nn.Linear, torch.nn.Conv2d,
     :return: Updated bias and weight
     :return: Updated bias and weight
     """
+    import libpymo
     bn_params = libpymo.BNParams()
     bn_params.gamma = bn.weight.detach().numpy().reshape(-1)
     bn_params.beta = bn.bias.detach().numpy().reshape(-1)
@@ -133,16 +132,17 @@ def fold_given_batch_norms(model, layer_pairs: List[PairType]):
 
         list_of_bn_layers.append(bn)
 
-        bias, weight_tensor = call_mo_batch_norm_fold(conv_linear, bn, is_batch_norm_second)
-        conv_linear.bias = torch.nn.Parameter(torch.Tensor(bias))
-        conv_linear.weight.data = torch.from_numpy(np.reshape(weight_tensor.data,
-                                                              np.array(weight_tensor.shape)))
+        conv_w = conv_linear.weight
+        conv_b = conv_linear.bias if conv_linear.bias is not None else torch.zeros_like(
+            bn.running_mean)
 
-        conv_linear.weight.data = conv_linear.weight.data.type(torch.FloatTensor)
-
-        # Transpose weight back to N, C, H, W for transposed Conv2D, for non-depthwise layers
-        if isinstance(conv_linear, torch.nn.ConvTranspose2d) and conv_linear.groups == 1:
-            conv_linear.weight.data = conv_linear.weight.data.permute(1, 0, 2, 3)
+        if hasattr(conv_linear, 'transposed') and conv_linear.transposed:
+            shape = [1, -1] + [1] * (len(conv_linear.weight.shape) - 2)
+        else:
+            shape = [-1, 1] + [1] * (len(conv_linear.weight.shape) - 2)
+        factor = bn.weight / torch.sqrt(bn.running_var + bn.eps)
+        conv_linear.weight = torch.nn.Parameter(conv_w * factor.reshape(shape))
+        conv_linear.bias = torch.nn.Parameter((conv_b - bn.running_mean) * factor + bn.bias)
 
     _delete_bn_from_model(model, list_of_bn_layers)
     model.to(device)

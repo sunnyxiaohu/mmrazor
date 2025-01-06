@@ -7,7 +7,7 @@ from typing import Union, Callable, Any, Optional, Dict, List
 from decimal import Decimal
 
 from mmrazor.models.algorithms.quantization.cle_superacme.common.layer_database import Layer
-import libpymo
+# import libpymo
 
 
 # supported quantization schemes
@@ -27,12 +27,6 @@ class QuantScheme(Enum):
     """ For a Tensor, the encoding values are initialized with the post_training_tf_enhanced scheme. Then, the encodings
     are learned during training. """
     training_range_learning = 5
-
-
-MAP_QUANT_SCHEME_TO_PYMO = {QuantScheme.post_training_tf_enhanced: libpymo.QuantizationMode.QUANTIZATION_TF_ENHANCED,
-                            QuantScheme.post_training_tf: libpymo.QuantizationMode.QUANTIZATION_TF}
-MAP_ROUND_MODE_TO_PYMO = {'nearest': libpymo.RoundingMode.ROUND_NEAREST,
-                          'stochastic': libpymo.RoundingMode.ROUND_STOCHASTIC}
 
 
 class ActivationType(Enum):

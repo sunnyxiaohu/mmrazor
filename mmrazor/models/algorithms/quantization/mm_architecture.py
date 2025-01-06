@@ -90,7 +90,7 @@ class MMArchitectureQuant(BaseAlgorithm):
 
         # If we have a float_checkpoint, we load it as pretrain.
         if float_checkpoint:
-            _ = load_checkpoint(self.architecture, float_checkpoint)
+            _ = load_checkpoint(self.architecture, float_checkpoint, map_location='cpu')
             self.architecture._is_init = True
 
         self.qmodels = self._build_qmodels(self.architecture)
@@ -297,7 +297,7 @@ class MMArchitectureQuant(BaseAlgorithm):
             from mmrazor.models.algorithms.quantization.cle_superacme import apply_cross_layer_equalization
             apply_cross_layer_equalization(model=model, input_shape=self.input_shapes)
             if self.cle_float_checkpoint is not None:
-                _ = load_checkpoint(model, self.cle_float_checkpoint)
+                _ = load_checkpoint(model, self.cle_float_checkpoint, map_location='cpu')
             model = model.train()
         rewriter_context = self._get_rewriter_context_in_mmdeploy(
             self.deploy_cfg) if self.deploy_cfg is not None else None
@@ -432,7 +432,6 @@ class MMArchitectureQuantDDP(MMDistributedDataParallel):
                  *,
                  device_ids: Optional[Union[List, int, torch.device]] = None,
                  **kwargs) -> None:
-
         if device_ids is None:
             if os.environ.get('LOCAL_RANK') is not None:
                 device_ids = [int(os.environ['LOCAL_RANK'])]
