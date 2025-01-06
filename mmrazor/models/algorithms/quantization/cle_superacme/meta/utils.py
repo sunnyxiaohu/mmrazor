@@ -10,9 +10,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
 
-from mmrazor.models.algorithms.quantization.cle_superacme.common.defs import QuantScheme, QuantizationDataType, MAP_QUANT_SCHEME_TO_PYMO
-import libpymo
-
+from mmrazor.models.algorithms.quantization.cle_superacme.common.defs import QuantScheme, QuantizationDataType
 
 
 torch_dtypes_to_ignore_for_quantization = [torch.int, torch.int8, torch.int16, torch.int32, torch.int64, torch.bool]
@@ -548,12 +546,13 @@ def find_num_inout_tensors_per_module(model: torch.nn.Module, input_tensor) -> D
     return num_inout_map
 
 
-def create_encoding_from_dict(encoding_dict: dict) -> (libpymo.TfEncoding, bool):
+def create_encoding_from_dict(encoding_dict: dict):
     """
     Create encoding object from encoding dictionary
     :param encoding_dict: Dictionary containing encodings
     :return: Encoding object, is_symmetric
     """
+    import libpymo
     encoding = libpymo.TfEncoding()
     encoding.bw = encoding_dict.get('bitwidth')
     encoding.max = encoding_dict.get('max')
@@ -574,6 +573,12 @@ def compute_encoding_for_given_bitwidth(data: np.ndarray, bitwidth: int, quant_s
     :param is_symmetric: True if symmetric encodings is used, False otherwise
     :return: Encoding Dictionary
     """
+    import libpymo
+
+    MAP_QUANT_SCHEME_TO_PYMO = {QuantScheme.post_training_tf_enhanced: libpymo.QuantizationMode.QUANTIZATION_TF_ENHANCED,
+                                QuantScheme.post_training_tf: libpymo.QuantizationMode.QUANTIZATION_TF}
+    MAP_ROUND_MODE_TO_PYMO = {'nearest': libpymo.RoundingMode.ROUND_NEAREST,
+                            'stochastic': libpymo.RoundingMode.ROUND_STOCHASTIC}    
     # Create Encodings Analyzer and collect statistical data to compute encodings
     # Since the data is numpy array and on CPU memory, useCuda is False
     encoding_analyzer = libpymo.EncodingAnalyzerForPython(MAP_QUANT_SCHEME_TO_PYMO[quant_scheme])
