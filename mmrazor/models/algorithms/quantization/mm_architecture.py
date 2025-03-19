@@ -90,7 +90,7 @@ class MMArchitectureQuant(BaseAlgorithm):
 
         # If we have a float_checkpoint, we load it as pretrain.
         if float_checkpoint:
-            _ = load_checkpoint(self.architecture, float_checkpoint, map_location='cpu')
+            _ = load_checkpoint(self.architecture, float_checkpoint, map_location='cpu', revise_keys=[(r'^architecture\.', '')])
             self.architecture._is_init = True
 
         self.qmodels = self._build_qmodels(self.architecture)
@@ -297,7 +297,7 @@ class MMArchitectureQuant(BaseAlgorithm):
             from mmrazor.models.algorithms.quantization.cle_superacme import apply_cross_layer_equalization
             apply_cross_layer_equalization(model=model, input_shape=self.input_shapes)
             if self.cle_float_checkpoint is not None:
-                _ = load_checkpoint(model, self.cle_float_checkpoint, map_location='cpu')
+                _ = load_checkpoint(model, self.cle_float_checkpoint, map_location='cpu', revise_keys=[(r'^architecture\.', '')])
             model = model.train()
         rewriter_context = self._get_rewriter_context_in_mmdeploy(
             self.deploy_cfg) if self.deploy_cfg is not None else None
