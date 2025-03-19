@@ -549,8 +549,6 @@ class CrossLayerScaling:
 
         assert cls_set[1].groups > 1
 
-        scaling_params = libpymo.scaleDepthWiseSeparableLayer(prev_layer_params, curr_layer_params, next_layer_params)
-
         prev_weight, current_weight, next_weight = cls_set[0].weight.detach(), cls_set[1].weight.detach(), cls_set[2].weight.detach()
         prev_bias = cls_set[0].bias.detach() if cls_set[0].bias is not None else None
         current_bias = cls_set[1].bias.detach() if cls_set[1].bias is not None else None
@@ -784,7 +782,8 @@ class HighBiasFold:
 
                 if len(scaling_parameter) != len(gamma) or \
                         len(scaling_parameter) != len(beta):
-                    raise ValueError("High Bias absorption is not supported for networks with fold-forward BatchNorms")
+                    print("High Bias absorption is not supported for networks with fold-forward BatchNorms")
+                    continue
                 scaling_tensor = gamma.new_tensor(scaling_parameter)
                 gamma.div_(scaling_tensor)
                 beta.div_(scaling_tensor)

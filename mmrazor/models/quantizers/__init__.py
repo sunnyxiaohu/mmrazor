@@ -5,8 +5,10 @@ from .native_quantizer import TorchNativeQuantizer
 from .openvino_quantizer import OpenVINOQuantizer
 from .tensorrt_quantizer import TensorRTQuantizer
 from .superacme_quantizer import SuperAcmeQuantizer
+from .xiongmai_quantizer import XiongmaiQuantizer
 
 __all__ = [
     'BaseQuantizer', 'AcademicQuantizer', 'TorchNativeQuantizer',
-    'TensorRTQuantizer', 'OpenVINOQuantizer', 'SuperAcmeQuantizer'
+    'TensorRTQuantizer', 'OpenVINOQuantizer', 'SuperAcmeQuantizer',
+    'XiongmaiQuantizer'
 ]

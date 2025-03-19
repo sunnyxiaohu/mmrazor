@@ -15,6 +15,24 @@ except ImportError:
     Node = get_placeholder('torch>=1.13')
 
 
+def _is_broadcast_node(node, prepared_model):
+    function_pattern = (torch.cat, torch.nn.functional.relu,
+                        torch.nn.functional.relu6,
+                        torch.nn.functional.upsample)
+    module_pattern = (torch.nn.Flatten, torch.nn.Upsample, torch.nn.ReLU,
+                      torch.nn.Identity, torch.nn.ReLU6, torch.nn.MaxPool1d,
+                      torch.nn.MaxPool2d, torch.nn.MaxPool3d)
+
+    if node.op == 'call_function' and node.target in function_pattern:
+        return True
+    elif node.op == 'call_module' and isinstance(
+            _get_attrs(prepared_model, node.target), module_pattern):
+        return True
+    # elif node.op == 'call_method':
+    #     return True
+    return False
+
+
 def _get_attrs(target: torch.nn.Module, attr: str) -> Any:
     """Get the attribute from target.
 
@@ -65,13 +83,13 @@ def recursive_find_erased_nodes(node, prepared_model):
 
     nodes_to_erase = []
     for prev_node in node.args:
-        if isinstance(prev_node, Node):
+        if isinstance(prev_node, Node) and _is_broadcast_node(prev_node, prepared_model):
             nodes_to_erase.extend(
                 recursive_find_erased_nodes(prev_node, prepared_model))
-        elif isinstance(prev_node,List) or isinstance(prev_node,Tuple):
+        elif isinstance(prev_node, List) or isinstance(prev_node, Tuple):
             for sub_prev_node in prev_node:
                 nodes_to_erase.extend(
-                recursive_find_erased_nodes(sub_prev_node, prepared_model))
+                    recursive_find_erased_nodes(sub_prev_node, prepared_model))
         else:
             print_log('Currently only support prev_node type in (List,tupe),you can fix this above')
     for prev_node in node.kwargs.values():
@@ -263,6 +281,7 @@ def del_fakequant_before_function(prepared_model,
         if node.op == 'call_function' and node.target in function_patterns:
             nodes_to_erase: List[Node] = recursive_find_erased_nodes(
                 node, prepared_model)
+
             for to_erase in nodes_to_erase:
                 assert to_erase.op == 'call_module' and isinstance(
                     _get_attrs(prepared_model, to_erase.target),

@@ -9,6 +9,8 @@ from .tensorrt import (get_tensorrt_backend_config,
                        get_tensorrt_backend_config_dict)
 from .superacme import (get_superacme_backend_config,
                         get_superacme_backend_config_dict)
+from .xiongmai import (get_xiongmai_backend_config,
+                       get_xiongmai_backend_config_dict)
 
 __all__ = [
     'BackendConfigs',
@@ -21,5 +23,7 @@ __all__ = [
     'get_tensorrt_backend_config',
     'get_tensorrt_backend_config_dict',
     'get_superacme_backend_config',
-    'get_superacme_backend_config_dict'
+    'get_superacme_backend_config_dict',
+    'get_xiongmai_backend_config',
+    'get_xiongmai_backend_config_dict',
 ]

@@ -132,6 +132,7 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
             node_name_to_scope=self.tracer.node_name_to_scope,
             example_inputs=self.example_inputs,
             backend_config=self.backend_config)
+
         prepared = self.del_redundant_fakequant(prepared)
 
         prepared = del_fakequant_after_placeholder(prepared)
@@ -275,19 +276,22 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
     def module_prev_wo_fakequant(self):
         """Configurate the modules that their previous nodes are redundant
         fakequants."""
-        mods = (torch.nn.ReLU6, torch.nn.Identity)
-        if self.use_cle:
-            mods += (torch.nn.ReLU, )
-            print_log('Remove the fakequant in front of pattern "ReLU + Conv/Linear" '
-                      'may cause error, check it carefully...',
-                      logger='current', level='warning')
+        mods = (torch.nn.ReLU, torch.nn.ReLU6, torch.nn.Identity,
+                torch.nn.Upsample,
+                torch.nn.MaxPool1d, torch.nn.MaxPool2d, torch.nn.MaxPool3d)
+        # if self.use_cle:
+        #     mods += (torch.nn.ReLU, )
+        #     print_log('Remove the fakequant in front of pattern "ReLU + Conv/Linear" '
+        #               'may cause error, check it carefully...',
+        #               logger='current', level='warning')
         return mods
 
     @property
     def module_next_wo_fakequant(self):
         """Configurate the modules that their next nodes are redundant
         fakequants."""
-        return (torch.nn.MaxPool2d, torch.nn.modules.pooling.AdaptiveAvgPool2d,)
+        # return (torch.nn.MaxPool2d, torch.nn.AdaptiveAvgPool2d)
+        return ()
 
     @property
     def method_next_wo_fakequant(self):
@@ -300,11 +304,12 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
         """Configurate the OPs that their previous nodes are redundant
         fakequants."""
         return ()
+
     @property
     def function_prev_wo_fakequant(self):
         """Configurate the functions that their previous nodes are redundant
         fakequants."""
-        return (torch.cat,)
+        return (torch.cat, torch.nn.functional.upsample)
 
 
 def del_fakequant_after_placeholder(prepared_model,

@@ -40,10 +40,18 @@ def get_superacme_backend_config() -> BackendConfig:
         output_dtype=torch.qint8,
     )
 
-    cat_config = BackendPatternConfig(torch.cat) \
-        .set_observation_type(
-            ObservationType.OUTPUT_SHARE_OBSERVER_WITH_INPUT) \
-        .add_dtype_config(non_weighted_op_qint8_dtype_config)
+    share_configs = []
+    share_ops = (torch.cat, torch.nn.functional.upsample,
+                 torch.nn.Upsample,
+                 torch.nn.Identity, torch.nn.ReLU6, torch.nn.MaxPool1d,
+                 torch.nn.MaxPool2d, torch.nn.MaxPool3d)
+    for op in share_ops:
+        share_config = BackendPatternConfig(op) \
+            .set_observation_type(
+                ObservationType.OUTPUT_SHARE_OBSERVER_WITH_INPUT) \
+            .add_dtype_config(non_weighted_op_qint8_dtype_config)
+        share_configs.append(share_config)
+
     conv_dtype_configs = [
         weighted_op_qint8_dtype_config,
     ]
@@ -67,7 +75,7 @@ def get_superacme_backend_config() -> BackendConfig:
     # during fx2trt conversion and can support them after that
     return BackendConfig('superacme') \
         .set_backend_pattern_configs(_get_conv_configs(conv_dtype_configs)) \
-        .set_backend_pattern_config(cat_config) \
+        .set_backend_pattern_configs(share_configs) \
         .set_backend_pattern_configs(
             _get_linear_configs(linear_dtype_configs)) \
         .set_backend_pattern_configs(

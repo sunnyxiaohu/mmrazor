@@ -10,11 +10,11 @@ from mmengine.dist import get_dist_info
 
 try:
     from torch.ao.quantization import (disable_observer, enable_fake_quant,
-                                       enable_observer)
+                                       enable_observer, disable_fake_quant)
     from torch.nn.intrinsic.qat import freeze_bn_stats
 except ImportError:
     from mmrazor.utils import get_placeholder
-
+    disable_fake_quant = get_placeholder('torch>=1.13')
     disable_observer = get_placeholder('torch>=1.13')
     enable_fake_quant = get_placeholder('torch>=1.13')
     enable_observer = get_placeholder('torch>=1.13')
@@ -60,20 +60,89 @@ class QATEpochBasedLoop(EpochBasedTrainLoop):
             runner,
             dataloader: Union[DataLoader, Dict],
             max_epochs: int,
+            calibrate_dataloader: Union[DataLoader, Dict] = None,
             val_begin: int = 1,
             val_interval: int = 1,
             disable_observer_begin: int = -1,
             freeze_bn_begin: int = -1,
+            is_first_batch: bool = True,
+            calibrate_steps: int = -1,
+            onnx_node_tensor_translate_mapping = None,
+            onnx_node_debug_mode = False,
             dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
         super().__init__(runner, dataloader, max_epochs, val_begin,
                          val_interval, dynamic_intervals)
-
+        self._is_first_batch = is_first_batch
         self.disable_observer_begin = disable_observer_begin
         self.freeze_bn_begin = freeze_bn_begin
+        self.calibrate_steps = calibrate_steps
+        self.calibrate_dataloader = self._build_calibrate_dataloader(calibrate_dataloader)
+        self.onnx_node_tensor_translate_mapping = onnx_node_tensor_translate_mapping
+        self.onnx_node_debug_mode = onnx_node_debug_mode
+
+    def _build_calibrate_dataloader(self, dataloader):
+        if isinstance(dataloader, dict):
+            # Determine whether or not different ranks use different seed.
+            diff_rank_seed = self.runner._randomness_cfg.get(
+                'diff_rank_seed', False)
+            cali_dataloader = self.runner.build_dataloader(
+                dataloader, seed=self.runner.seed, diff_rank_seed=diff_rank_seed)
+        else:
+            cali_dataloader = self.dataloader
+        return cali_dataloader
+
+    def export_ptq(self):
+        # import pdb; pdb.set_trace()
+        if self.runner.distributed:
+            rank, world_size = get_dist_info()
+            if rank==0:
+                observed_model = self.runner.model.module.get_deploy_model()
+                self.dummy_input = torch.randn(self.runner.model.module.input_shapes)
+                self.runner.model.module.quantizer.export_onnx(
+                    observed_model, self.dummy_input.cuda(), os.path.join(self.runner.work_dir,'ptq.onnx'),
+                    onnx_node_tensor_translate_mapping=self.onnx_node_tensor_translate_mapping,
+                    debug_mode=self.onnx_node_debug_mode)
+        else:
+            observed_model = self.runner.model.get_deploy_model()
+            self.dummy_input = torch.randn(self.runner.model.input_shapes)
+            self.runner.model.quantizer.export_onnx(
+                observed_model, self.dummy_input.cuda(), os.path.join(self.runner.work_dir,'ptq.onnx'),
+                onnx_node_tensor_translate_mapping=self.onnx_node_tensor_translate_mapping,
+                debug_mode=self.onnx_node_debug_mode)
+
+    @property
+    def is_first_batch(self):
+        return self._epoch == 0 and self._is_first_batch
 
     def prepare_for_run_epoch(self):
         """Toggle the state of the observers and fake quantizers before qat
         training."""
+        if self.is_first_batch and self.calibrate_steps != -1:
+            # lsq observer init
+            # import pdb; pdb.set_trace()  #, TDL: whether need to turn to `eval` mode?
+            self.runner.model.eval()
+            self.runner.model.apply(disable_fake_quant)
+            self.runner.model.apply(enable_observer)
+            print_log('Start calibration...', logger='current')
+            for idx, data_batch in enumerate(self.calibrate_dataloader):
+                if idx == self.calibrate_steps:
+                    break
+                _ = self.runner.model.calibrate_step(data_batch)
+
+            if self.runner.distributed:
+                all_reduce_params(
+                    self.runner.model.parameters(), op='mean')
+                all_reduce_params(self.runner.model.buffers(), op='mean')
+            self.runner.model.sync_qparams(src_mode='predict')
+            print_log('Finish calibration!', logger='current')
+
+            self.runner.save_checkpoint(self.runner.work_dir, 'ptq.pth')
+            print_log('save ptq checkpoin after calibration!')
+            self.export_ptq()
+            self.prepare_for_val()
+            self.runner.val_loop.run()
+            self.runner.model.train()
+
         self.runner.model.apply(enable_fake_quant)
 
         # The initialized _epoch equals to 0 so _epoch + 1
@@ -159,6 +228,8 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
             is_first_batch: bool = True,
             calibrate_steps: int = -1,
             calibrate_open_fakequant: bool = False,
+            onnx_node_tensor_translate_mapping = None,
+            onnx_node_debug_mode = False,
             dynamic_intervals: Optional[List[Tuple[int, int]]] = None) -> None:
         super().__init__(
             runner,
@@ -174,7 +245,9 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
         self.calibrate_steps = calibrate_steps
         self.calibrate_dataloader = self._build_calibrate_dataloader(calibrate_dataloader)
         self.calibrate_open_fakequant = calibrate_open_fakequant
-        
+        self.onnx_node_tensor_translate_mapping = onnx_node_tensor_translate_mapping
+        self.onnx_node_debug_mode = onnx_node_debug_mode
+
     def _build_calibrate_dataloader(self, dataloader):
         if isinstance(dataloader, dict):
             # Determine whether or not different ranks use different seed.
@@ -185,18 +258,24 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
         else:
             cali_dataloader = self.dataloader
         return cali_dataloader
-            
+
     def export_ptq(self):
         if self.runner.distributed:
             rank, world_size = get_dist_info()
             if rank==0:
                 observed_model = self.runner.model.module.get_deploy_model()
                 self.dummy_input = torch.randn(self.runner.model.module.input_shapes)
-                self.runner.model.module.quantizer.export_onnx(observed_model, self.dummy_input.cuda(), os.path.join(self.runner.work_dir,'ptq.onnx'))
+                self.runner.model.module.quantizer.export_onnx(
+                    observed_model, self.dummy_input.cuda(), os.path.join(self.runner.work_dir,'ptq.onnx'),
+                    onnx_node_tensor_translate_mapping=self.onnx_node_tensor_translate_mapping,
+                    debug_mode=self.onnx_node_debug_mode)
         else:
             observed_model = self.runner.model.get_deploy_model()
             self.dummy_input = torch.randn(self.runner.model.input_shapes)
-            self.runner.model.quantizer.export_onnx(observed_model, self.dummy_input.cuda(), os.path.join(self.runner.work_dir,'ptq.onnx'))
+            self.runner.model.quantizer.export_onnx(
+                observed_model, self.dummy_input.cuda(), os.path.join(self.runner.work_dir,'ptq.onnx'),
+                onnx_node_tensor_translate_mapping=self.onnx_node_tensor_translate_mapping,
+                debug_mode=self.onnx_node_debug_mode)
 
     def prepare_for_run_epoch(self):
         """Toggle the state of the observers and fake quantizers before qat
