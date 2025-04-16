@@ -12,10 +12,11 @@ except ImportError:
 
 class QFakeQuantizeFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, X, maxinum, fl):
+    def forward(ctx, X, maxinum, fl, quant_min, quant_max):
         """ 量化函数，使用直通估计器（STE）保持梯度 """
 
         float_to_q = torch.floor(X * 2 ** fl + 0.5)  # 避免 round() 梯度丢失
+        float_to_q.clamp_(min=quant_min, max=quant_max)
         # assert float_to_q < 2 ** (bitwidth-1) -1
         q_to_float = float_to_q.clone()  # 避免 in-place 操作影响梯度
 
@@ -26,7 +27,7 @@ class QFakeQuantizeFunction(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         """ 直通估计器（STE），只对 X 计算梯度 """
-        return grad_output, None, None
+        return grad_output, None, None, None, None
 
 
 @MODELS.register_module()
@@ -106,7 +107,7 @@ class QNotationFakeQuantize(FakeQuantizeBase):
             self.zero_point.data.copy_(fl)
         # import pdb; pdb.set_trace()
         if self.fake_quant_enabled[0] == 1:
-            X = QFakeQuantizeFunction.apply(X, self.scale, self.zero_point)
+            X = QFakeQuantizeFunction.apply(X, self.scale, self.zero_point, self.quant_min, self.quant_max)
 
         return X
 

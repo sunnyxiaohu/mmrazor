@@ -3,6 +3,7 @@ import os
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
+import torch.nn.functional as F
 from mmengine.evaluator import Evaluator
 from mmengine.logging import print_log
 from mmengine.runner import EpochBasedTrainLoop, TestLoop, ValLoop
@@ -31,6 +32,127 @@ from mmrazor.registry import LOOPS
 
 TORCH_observers = register_torch_observers()
 TORCH_fake_quants = register_torch_fake_quants()
+
+
+class QuantizationHook:
+    """ 量化 Hook 记录每层量化前后的数据差异 """
+    def __init__(self):
+        self.diffs = {}  # 记录每个层的误差
+        self.hook_handles = {}  # 存储 hook 句柄，便于移除
+
+    def hook_fn(self, module, input, output, module_name):
+        """
+        Hook 计算量化误差
+        Args:
+            module: 当前 FakeQuantize 模块
+            input: 进入 forward 的数据 (Tuple)
+            output: forward 计算后的输出数据
+            module_name: 该层的名称
+        """
+        X = input[0].detach()  # 量化前数据
+        X_quantized = output.detach()  # 量化后数据
+
+        # 计算误差
+        l1_error = torch.abs(X - X_quantized).mean()  # L1 误差
+        l2_error = torch.norm(X - X_quantized, p=2)  # L2 误差
+        # 计算余弦相似度（Cosine Similarity）
+        cosine_sim = F.cosine_similarity(X.view(1, -1), X_quantized.view(1, -1)).mean()
+
+        # 记录误差信息
+        self.diffs[module_name] = {'L1': l1_error.item(), 'L2': l2_error.item(), 'Cosine': cosine_sim.item()}
+
+        # 打印信息
+        print(f"[Quantization Hook - {module_name}] L1: {l1_error.item():.6f}, L2: {l2_error.item():.6f}, Cosine: {cosine_sim.item():.6f}")
+
+    def attach(self, model):
+        """ 遍历 `model` 并为所有 `QNotationFakeQuantize` 层注册 Hook """
+        for name, module in model.named_modules():
+            if module.__class__.__name__ == 'QNotationFakeQuantize':
+                # 注册 Hook，并传入该层的名称
+                handle = module.register_forward_hook(
+                    lambda mod, inp, out, n=name: self.hook_fn(mod, inp, out, n)
+                )
+                self.hook_handles[name] = handle  # 记录句柄
+
+    def remove(self):
+        """ 移除所有 Hook """
+        for name, handle in self.hook_handles.items():
+            handle.remove()
+        self.hook_handles.clear()
+
+
+class ModelQuantizationEvaluator:
+    """ 计算整个模型的量化误差（L1, L2, Cosine） """
+
+    def __init__(self, model):
+        self.model = model
+        self.fp32_outputs = {}  # 存储浮点推理的每层输出
+        self.quant_outputs = {}  # 存储量化推理的每层输出
+        self.hook_handles = {}
+
+    def hook_fn(self, module, input, output, module_name, mode):
+        """
+        Hook 记录每层前向输出。
+        Args:
+            module_name: 当前层的名称
+            mode: "fp32" or "quant"
+        """
+        if mode == "fp32":
+            self.fp32_outputs[module_name] = output.detach().cpu()
+        elif mode == "quant":
+            self.quant_outputs[module_name] = output.detach().cpu()
+
+    def attach_hooks(self, mode):
+        """ 遍历 `model` 并注册 Hook """
+        for name, module in self.model.named_modules():
+            if module.__class__.__name__ == 'QNotationFakeQuantize':
+                # 注册 Hook，区分 FP32 和量化模式
+                handle = module.register_forward_hook(
+                    lambda mod, inp, out, n=name, m=mode: self.hook_fn(mod, inp, out, n, m)
+                )
+                self.hook_handles[name] = handle
+
+    def remove_hooks(self):
+        """ 移除所有 Hook """
+        for handle in self.hook_handles.values():
+            handle.remove()
+        self.hook_handles.clear()
+
+    def compare_outputs(self):
+        """ 计算每层的量化误差（L1, L2, Cosine Similarity） """
+        diffs = {}
+        for name in self.fp32_outputs.keys():
+            X_fp32 = self.fp32_outputs[name]
+            X_quant = self.quant_outputs[name]
+
+            # 计算误差
+            l1_error = torch.abs(X_fp32 - X_quant).mean()
+            l2_error = torch.norm(X_fp32 - X_quant, p=2)
+            cosine_sim = F.cosine_similarity(X_fp32.view(1, -1), X_quant.view(1, -1)).mean()
+
+            diffs[name] = {'L1': l1_error.item(), 'L2': l2_error.item(), 'Cosine': cosine_sim.item()}
+            print(f"[{name}] L1: {l1_error:.6f}, L2: {l2_error:.6f}, Cosine: {cosine_sim:.6f}")
+
+        return diffs
+
+    def evaluate(self, data_batch):
+        """ 运行完整的量化误差评估流程 """
+        # 2️⃣ 关闭量化，记录 FP32 结果
+        self.model.apply(disable_fake_quant)
+        self.attach_hooks(mode="fp32")
+        with torch.no_grad():
+            _  = self.model.val_step(data_batch)
+        self.remove_hooks()
+
+        # 3️⃣ 开启量化，记录量化结果
+        self.model.apply(enable_fake_quant)
+        self.attach_hooks(mode="quant")
+        with torch.no_grad():
+           _  = self.model.val_step(data_batch)
+        self.remove_hooks()
+
+        # 4️⃣ 计算误差
+        return self.compare_outputs()
 
 
 @LOOPS.register_module()
@@ -260,6 +382,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
         return cali_dataloader
 
     def export_ptq(self):
+        # import pdb; pdb.set_trace()
         if self.runner.distributed:
             rank, world_size = get_dist_info()
             if rank==0:
@@ -307,7 +430,7 @@ class LSQEpochBasedLoop(QATEpochBasedLoop):
             self.runner.save_checkpoint(self.runner.work_dir,'ptq.pth')
             print_log('save ptq checkpoin after calibration!')
             self.prepare_for_val()
-            self.export_ptq()
+            # self.export_ptq()
             self.runner.val_loop.run()
             self._is_first_batch = False
             self.runner.model.train()
@@ -391,18 +514,11 @@ class QATValLoop(ValLoop):
             self.architecture = self.runner.model.architecture
             self.architecture.data_preprocessor = data_preprocessor
 
-    def prepare_for_val(self):
-        """Toggle the state of the observers and fake quantizers before
-        validation."""
-        self.runner.model.apply(enable_fake_quant)
-        self.runner.model.apply(disable_observer)
-
     def run(self) -> dict:
         """Launch validation."""
         self.runner.call_hook('before_val')
         self.runner.call_hook('before_val_epoch')
         self.runner.model.eval()
-        self.prepare_for_val()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch, self.runner.model)
 
@@ -448,8 +564,16 @@ class QATValLoop(ValLoop):
         self.runner.call_hook(
             'before_val_iter', batch_idx=idx, data_batch=data_batch)
         # outputs should be sequence of BaseDataElement
-
+        # quant_hook = QuantizationHook()
+        # quant_hook.attach(self.runner.model.module.qmodels.predict)
+        # evaluator = ModelQuantizationEvaluator(model)
+        # quant_errors = evaluator.evaluate(data_batch)
+        # import pdb; pdb.set_trace()
+        # # 输出全局误差信息
+        # print(quant_errors)
         outputs = model.val_step(data_batch)
+        # print(quant_hook.diffs)
+        # quant_hook.remove()
         self.evaluator.process(data_samples=outputs, data_batch=data_batch)
         self.runner.call_hook(
             'after_val_iter',
