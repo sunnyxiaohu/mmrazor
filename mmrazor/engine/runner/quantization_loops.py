@@ -391,11 +391,18 @@ class QATValLoop(ValLoop):
             self.architecture = self.runner.model.architecture
             self.architecture.data_preprocessor = data_preprocessor
 
+    def prepare_for_val(self):
+        """Toggle the state of the observers and fake quantizers before
+        validation."""
+        self.runner.model.apply(enable_fake_quant)
+        self.runner.model.apply(disable_observer)
+
     def run(self) -> dict:
         """Launch validation."""
         self.runner.call_hook('before_val')
         self.runner.call_hook('before_val_epoch')
         self.runner.model.eval()
+        self.prepare_for_val()
         for idx, data_batch in enumerate(self.dataloader):
             self.run_iter(idx, data_batch, self.runner.model)
 

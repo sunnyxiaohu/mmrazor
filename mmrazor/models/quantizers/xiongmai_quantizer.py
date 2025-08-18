@@ -66,11 +66,12 @@ class XiongmaiQuantizer(TorchNativeQuantizer):
 )
     """
 
-    def __init__(self, *args, tracer: Dict = dict(type='CustomTracer'), use_cle=False, **kwargs):
+    def __init__(self, *args, tracer: Dict = dict(type='CustomTracer'), use_cle=False, export_ref_qfile=None, **kwargs):
         if 'skipped_module_classes' in tracer:
             tracer['skipped_module_classes'] = str2class(tracer['skipped_module_classes'])
         super().__init__(*args, tracer=tracer, **kwargs)
         self.use_cle = use_cle
+        self.export_ref_qfile = export_ref_qfile
 
     @property
     def backend(self):
@@ -100,7 +101,7 @@ class XiongmaiQuantizer(TorchNativeQuantizer):
                     float_model=None,
                     **kwargs):
         """Export the onnx model that can be deployed to Xiongmai backend."""
-
+        assert debug_mode and onnx_node_tensor_translate_mapping is None, f'node_tensor_translate_mapping is not supported yet.'
         symbolic_output_path = output_path.replace('.onnx', '_xiongmai_symbolic.onnx')
         torch.onnx.export(
             model,
@@ -117,9 +118,9 @@ class XiongmaiQuantizer(TorchNativeQuantizer):
         model_simp, check = onnxsim.simplify(onnx_model)
         assert check, "Simplified ONNX model could not be validated"
         onnx.save(model_simp, symbolic_output_path)
-
+        # import pdb; pdb.set_trace()
         from .exporters.xiongmai_quantize_exporter import XiongmaiQuantizeExportor
-        exporter = XiongmaiQuantizeExportor(symbolic_output_path, output_path)
+        exporter = XiongmaiQuantizeExportor(symbolic_output_path, output_path, export_ref_qfile=self.export_ref_qfile)
         exporter.export()
 
     def prepare(self, model, concrete_args=None):
@@ -185,7 +186,7 @@ class XiongmaiQuantizer(TorchNativeQuantizer):
                 `SUPPORT_QAT_MODULES` will be convert to normal modules, and
                 BN will be really integrated into conv layers.
         """
-
+        # import pdb; pdb.set_trace()
         def traverse(module):
             for name, child in module.named_children():
                 # Trace `SUPPORT_QAT_MODULES` recursively.
@@ -241,33 +242,47 @@ class XiongmaiQuantizer(TorchNativeQuantizer):
                 else:
                     traverse(child)
 
+        def traverse_min_max(module):
+            for name, child in module.named_children():
+                # Trace `FakeQuantizeBase` recursively.
+                if isinstance(child, FakeQuantizeBase):
+                    child.quant_max = child.activation_post_process.max_val.item()
+                    child.quant_min = child.activation_post_process.min_val.item()
+                    child.activation_post_process.quant_max = child.activation_post_process.max_val.item()
+                    child.activation_post_process.quant_min = child.activation_post_process.min_val.item()
+                else:
+                    traverse(child)
+
         observed_module.apply(enable_fake_quant)
         observed_module.apply(disable_observer)
         traverse(observed_module)
+        # traverse_min_max(observed_module)
 
     @property
     def module_prev_wo_fakequant(self):
         """Configurate the modules that their previous nodes are redundant
         fakequants."""
-        mods = (torch.nn.ReLU6, torch.nn.Identity)
-        if self.use_cle:
-            mods += (torch.nn.ReLU, )
-            print_log('Remove the fakequant in front of pattern "ReLU + Conv/Linear" '
-                      'may cause error, check it carefully...',
-                      logger='current', level='warning')
+        mods = (torch.nn.ReLU, torch.nn.ReLU6, torch.nn.Identity,
+                torch.nn.Upsample,
+                torch.nn.MaxPool1d, torch.nn.MaxPool2d, torch.nn.MaxPool3d)
+        # if self.use_cle:
+        #     mods += (torch.nn.ReLU, )
+        #     print_log('Remove the fakequant in front of pattern "ReLU + Conv/Linear" '
+        #               'may cause error, check it carefully...',
+        #               logger='current', level='warning')
         return mods
 
     @property
     def module_next_wo_fakequant(self):
         """Configurate the modules that their next nodes are redundant
         fakequants."""
-        return (torch.nn.MaxPool2d, torch.nn.modules.pooling.AdaptiveAvgPool2d,)
+        return ()
 
     @property
-    def method_next_wo_fakequant(self):
+    def method_prev_wo_fakequant(self):
         """Configurate the methods that their next nodes are redundant
         fakequants."""
-        return ()
+        return ('view', 'reshape')
 
     @property
     def op_prev_wo_fakequant(self):
@@ -279,7 +294,13 @@ class XiongmaiQuantizer(TorchNativeQuantizer):
     def function_prev_wo_fakequant(self):
         """Configurate the functions that their previous nodes are redundant
         fakequants."""
-        return (torch.cat,)
+        return (torch.cat, torch.nn.functional.upsample, torch.flatten)
+
+    @property
+    def function_next_wo_fakequant(self):
+        """Configurate the functions that their next nodes are redundant
+        fakequants."""
+        return ()
 
 
 def del_fakequant_after_placeholder(prepared_model,

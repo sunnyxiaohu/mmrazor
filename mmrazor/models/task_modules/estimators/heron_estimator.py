@@ -10,11 +10,8 @@ from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
 import MNN
-import onnx
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.modules.conv import _ConvNd
 from torch.utils.data import DataLoader
 
 from mmengine import print_log
@@ -166,7 +163,7 @@ class HERONModelWrapper:
                     'metainfo. ``dataset_meta`` in metric will be None.',
                     logger='current',
                     level=logging.WARNING)
-        self.num_infer = num_infer if num_infer is not None and 0 < num_infer < len(self.dataloader) else len(self.dataloader)
+        self.num_infer = num_infer if num_infer is not None and 0 <= num_infer < len(self.dataloader) else len(self.dataloader)
         self.model = None
         self.outputs_mapping = outputs_mapping
         self.use_flip = use_flip
@@ -188,6 +185,7 @@ class HERONModelWrapper:
                                         debug_mode=self.onnx_node_debug_mode)
             self.observed_model = observed_model
         else:
+            from mmrazor.models.utils import fuse_conv_bn
             model = fuse_conv_bn(model)
             torch.onnx.export(
                 model,
@@ -239,9 +237,7 @@ class HERONModelWrapper:
         }
         return results
 
-    def reset_model(self):        
-        self.data = None
-        self.label = None
+    def reset_model(self):
         torch.cuda.empty_cache()
 
     def torch_fixed_inference(self):
@@ -388,62 +384,3 @@ class HERONModelWrapperDet(HERONModelWrapper):
             predictions = self.model.bbox_head.predict_by_feat(
                 cls_scores, bbox_preds, score_factors, batch_img_metas=img_metas, rescale=rescale)
             data_samples = self.model.add_pred_to_datasample(data_samples, predictions)
-
-
-def _fuse_conv_bn(conv: nn.Module, bn: nn.Module) -> nn.Module:
-    """Fuse conv and bn into one module.
-
-    Args:
-        conv (nn.Module): Conv to be fused.
-        bn (nn.Module): BN to be fused.
-
-    Returns:
-        nn.Module: Fused module.
-    """
-    conv_w = conv.weight
-    conv_b = conv.bias if conv.bias is not None else torch.zeros_like(
-        bn.running_mean)
-
-    if hasattr(conv, 'transposed') and conv.transposed:
-        shape = [1, -1] + [1] * (len(conv.weight.shape) - 2)
-    else:
-        shape = [-1, 1] + [1] * (len(conv.weight.shape) - 2)
-    factor = bn.weight / torch.sqrt(bn.running_var + bn.eps)
-    conv.weight = nn.Parameter(conv_w * factor.reshape(shape))
-    conv.bias = nn.Parameter((conv_b - bn.running_mean) * factor + bn.bias)
-    return conv
-
-
-def fuse_conv_bn(module: nn.Module) -> nn.Module:
-    """Recursively fuse conv and bn in a module.
-
-    During inference, the functionary of batch norm layers is turned off
-    but only the mean and var alone channels are used, which exposes the
-    chance to fuse it with the preceding conv layers to save computations and
-    simplify network structures.
-
-    Args:
-        module (nn.Module): Module to be fused.
-
-    Returns:
-        nn.Module: Fused module.
-    """
-    last_conv = None
-    last_conv_name = None
-
-    for name, child in module.named_children():
-        if isinstance(child,
-                      (nn.modules.batchnorm._BatchNorm, nn.SyncBatchNorm)):
-            if last_conv is None:  # only fuse BN that is after Conv
-                continue
-            fused_conv = _fuse_conv_bn(last_conv, child)
-            module._modules[last_conv_name] = fused_conv
-            # To reduce changes, set BN as Identity instead of deleting it.
-            module._modules[name] = nn.Identity()
-            last_conv = None
-        elif isinstance(child, (_ConvNd, nn.Linear)):
-            last_conv = child
-            last_conv_name = name
-        else:
-            fuse_conv_bn(child)
-    return module

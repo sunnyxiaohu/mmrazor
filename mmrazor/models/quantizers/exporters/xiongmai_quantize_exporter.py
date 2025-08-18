@@ -2,7 +2,8 @@
 
 from typing import List
 import numpy as np
-import json
+import difflib
+import yaml
 import logging
 
 try:
@@ -20,11 +21,12 @@ from mmengine import print_log
 
 class XiongmaiQuantizeExportor(BaseQuantizeExportor):
 
-    def __init__(self, onnx_model, export_path) -> None:
+    def __init__(self, onnx_model, export_path, export_ref_qfile=None) -> None:
         super().__init__(onnx_model, export_path)
         # self.optimizer.replace_resize_op_with_upsample(self.onnx_model, self.output2node)
         self._remap_input_and_node()
         self._remap_output_and_node()
+        self.export_ref_qfile = export_ref_qfile
 
     def _insert_initializers_to_onnx(self, initializers: List):
         """Insert onnx initializers to the onnx graph."""
@@ -57,7 +59,7 @@ class XiongmaiQuantizeExportor(BaseQuantizeExportor):
         else:
             new_data = np.clip(data, clip_range_min, clip_range_max)
             if not np.allclose(data, new_data):
-                print_log(f'Clip weights <{tensor_name}> to range [{clip_range_min}, {clip_range_max}].', logger='current', level=logging.WARNING)
+                print_log(f'Clip weights <{tensor_name}> from range [{np.min(data)}, {np.max(data)}] to range [{clip_range_min}, {clip_range_max}].', logger='current', level=logging.WARNING)
         new_data = numpy_helper.from_array(new_data)
         named_initializer[tensor_name].raw_data = new_data.raw_data
         
@@ -116,10 +118,10 @@ class XiongmaiQuantizeExportor(BaseQuantizeExportor):
         return
             
     def clip_and_collect_params(self, symbolic_nodes: List):
-        """gen clip range jsonfile."""
+        """gen clip range yamlfile."""
         named_initializer = self.prepare_initializer(onnx_model=self.onnx_model)
         nodes_to_be_removed = []
-
+        clip_ranges = {}
         for node in symbolic_nodes:
             if 'activation_post_process_' in node.name:
 
@@ -147,8 +149,109 @@ class XiongmaiQuantizeExportor(BaseQuantizeExportor):
                 self.clip_weight(node, self.name2data, named_initializer)
                 tensor_name, scale, zero_point, qmin, qmax = self.parse_qparams(
                     node)
+            clip_ranges[tensor_name] = {'dtype': 'dynamic_fixed_point',
+                                        'method': 'layer',
+                                        'max_value': None,
+                                        'min_value': None,
+                                        'fl': [int(zero_point)],
+                                        'qtype': 'i8'
+                                        }
+        return clip_ranges, nodes_to_be_removed
 
-        return nodes_to_be_removed
+    def post_process_clip_ranges(self, clip_ranges, graph, inp2node, outp2node, name2data):
+        def find_the_closest_clip_range(node):
+            if node.input[0] in clip_ranges:
+                return node.input[0]
+            # look forward
+            ret = None
+            if node.op_type in ['Flatten', 'Resize', 'Relu', 'Clip','Concat', 'MaxPool'] and node.output[0] in inp2node:
+                ret = find_the_closest_clip_range(inp2node[node.output[0]][0][0])
+            # # Temporal plan, may not correct.
+            # if ret is not None:
+            #     return ret
+            # # look backward
+            # if node.op_type in ['Flatten', 'Resize', 'Relu', 'Clip','Concat', 'MaxPool'] and node.input[0] in outp2node:
+            #     ret = find_the_closest_clip_range(outp2node[node.input[0]])
+            return ret
+
+        for node in graph.node:
+            if node.op_type in ['Flatten', 'Resize', 'Relu','Clip', 'Concat', 'MaxPool']:
+                tensor_name = find_the_closest_clip_range(node)
+                if tensor_name:
+                    for i in range(len(node.input)):
+                        clip_ranges[node.input[i]] = clip_ranges[tensor_name]
+                        inputname = node.input[i]
+                        print_log(f'Pass <{tensor_name}> clip range to <{node.name}> input <{inputname}>.', logger='current', level=logging.DEBUG)
+
+        # 1. handle weight name and bias
+        for node in graph.node:
+            if node.op_type in ['Gemm', 'Conv']:
+                for i in range(len(node.input)):
+                    inputname = node.input[i]
+                    if '.weight' in inputname and inputname in clip_ranges:
+                        qrange = clip_ranges.pop(inputname)
+                        clip_ranges[f'{node.name}:weight'] = qrange
+                    elif '.bias' in inputname:
+                        if node.input[0] in clip_ranges:
+                            input_fl = clip_ranges[node.input[0]]['fl'][0]
+                        else:  # The first layer
+                            # import pdb; pdb.set_trace()
+                            input_fl = -1
+                        weight_fl = clip_ranges[f'{node.name}:weight']['fl'][0]
+                        fl = input_fl + weight_fl
+                        max_val_pos = np.abs(self.name2data[inputname]).max()
+                        maxinum = np.ceil(np.log2(max_val_pos) + 1)
+                        max_fl = (16 - maxinum)
+                        if fl > max_fl:
+                            print_log(f'Setting <{node.name}> bias may uncorrect. excepted fl: {fl}, max_fl: {max_fl}', logger='current', level=logging.WARNING)
+                        clip_ranges[f'{node.name}:bias'] = {'dtype': 'dynamic_fixed_point',
+                                                            'method': 'layer',
+                                                            'max_value': None,
+                                                            'min_value': None,
+                                                            'fl': [int(fl)],
+                                                            'qtype': 'i16'
+                                                            }
+        if self.export_ref_qfile is None:                                                            
+            return clip_ranges                                  
+        # 2. tensor name remapping
+        # new_clip_ranges = {}
+        # for k, v in clip_ranges.items():
+        #     new_k = '@Conv_' + k if '/Conv' in k else k
+        #     new_k = '@Relu_' + new_k if 'Relu_' in new_k else new_k
+        #     new_k = '@Reshape_' + new_k if 'Flatten_' in new_k else new_k
+        #     new_clip_ranges[new_k] = v
+        # clip_ranges = new_clip_ranges
+        ref_clip_ranges = yaml.load(open(self.export_ref_qfile, 'r', encoding='utf-8'), yaml.FullLoader)
+        names = list(clip_ranges.keys())
+        ref_names = list(ref_clip_ranges.keys())
+        new_clip_ranges = {}
+        k_refk_mapping = {}
+        refk_k_mapping = {}
+        for k in names:
+            refk = difflib.get_close_matches(k, ref_names, n=1, cutoff=0.0)[0]
+            k_refk_mapping[k] = refk
+
+        for refk in ref_names:
+            k = difflib.get_close_matches(refk, names, n=1, cutoff=0.0)[0]
+            refk_k_mapping[refk] = k
+            if k_refk_mapping[k] == refk: # double-direct match
+                # k_refk_mapping.pop(k)
+                v = clip_ranges.pop(k)
+                refv = ref_clip_ranges.pop(refk)
+                new_clip_ranges[refk] = v
+                print_log(f'Match <{k}> to <{refk}>', logger='current', level=logging.INFO)
+        # rematch the last names
+        names = list(clip_ranges.keys())
+        ref_names = list(ref_clip_ranges.keys())        
+        for k, v in clip_ranges.items():
+            refk = difflib.get_close_matches(k, ref_names, n=1, cutoff=0.0)[0]
+            new_clip_ranges[refk] = v
+            ref_clip_ranges.pop(refk)
+            print_log(f'Match <{k}> to <{refk}>', logger='current', level=logging.INFO)
+        # add the last ref_names
+        new_clip_ranges.update(ref_clip_ranges)
+
+        return new_clip_ranges
 
     def _collect_symbolic_constant_inputs(self, symbolic_nodes: List):
         """Collect these constant nodes which is the input of all the symbolic
@@ -170,7 +273,7 @@ class XiongmaiQuantizeExportor(BaseQuantizeExportor):
         onnx model ."""
         # import pdb; pdb.set_trace()
         symbolic_nodes = self.collect_symbolic_nodes(self.onnx_model)
-        nodes_to_be_removed = self.clip_and_collect_params(symbolic_nodes)
+        self.clip_ranges, nodes_to_be_removed = self.clip_and_collect_params(symbolic_nodes)
 
         symbolic_nodes.extend(nodes_to_be_removed)
 
@@ -184,8 +287,29 @@ class XiongmaiQuantizeExportor(BaseQuantizeExportor):
 
         self.optimizer.optimize(self.onnx_model)
 
+        self.clip_ranges = self.post_process_clip_ranges(
+            self.clip_ranges, self.graph, self.input2node, self.output2node, self.name2data)
+
     def export(self):
         """Export end to end onnx model."""
         self._remove_symbolic_related()
         onnx.save(self.onnx_model, self.export_path)
+
+        context_filename = self.export_path.replace('.onnx','_xiongmai_quantization.cfg')
+
+        with open(context_filename, 'w', encoding="utf-8") as f:
+            yaml.dump(self.clip_ranges, f, default_flow_style=False, allow_unicode=True, Dumper=CustomDumper)
+
+
+class CustomDumper(yaml.Dumper):
+    """ 禁止 YAML 输出时使用引用（& 和 *） """
+    def ignore_aliases(self, data):
+        return True  # 总是返回 True，确保不使用 YAML 变量引用
+
+    # """ 禁止 YAML 输出 None 值（即不写入 null） """
+    # @classmethod
+    # def represent_mapping(cls, tag, mapping, flow_style=None):
+    #     # 过滤掉所有值为 None 的键
+    #     new_mapping = {k: v for k, v in mapping.items() if v is not None}
+    #     return dumper.represent_mapping(tag, new_mapping, flow_style)
 

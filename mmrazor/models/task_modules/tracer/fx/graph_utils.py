@@ -17,19 +17,20 @@ except ImportError:
 
 def _is_broadcast_node(node, prepared_model):
     function_pattern = (torch.cat, torch.nn.functional.relu,
-                        torch.nn.functional.relu6,
+                        torch.nn.functional.relu6, torch.flatten,
                         torch.nn.functional.upsample)
-    module_pattern = (torch.nn.Flatten, torch.nn.Upsample, torch.nn.ReLU,
+    module_pattern = (FakeQuantizeBase,
+                      torch.nn.Flatten, torch.nn.Upsample, torch.nn.ReLU,
                       torch.nn.Identity, torch.nn.ReLU6, torch.nn.MaxPool1d,
                       torch.nn.MaxPool2d, torch.nn.MaxPool3d)
-
+    method_pattern = ('view', 'reshape')
     if node.op == 'call_function' and node.target in function_pattern:
         return True
     elif node.op == 'call_module' and isinstance(
             _get_attrs(prepared_model, node.target), module_pattern):
         return True
-    # elif node.op == 'call_method':
-    #     return True
+    elif node.op == 'call_method' and node.target in method_pattern:
+        return True
     return False
 
 
@@ -74,7 +75,7 @@ def recursive_find_erased_nodes(node, prepared_model):
     activation_post_process_88 | (head_fc, )
     data_samples               | (None, )
     """
-    if node is None:
+    if node is None or not isinstance(node, Node):
         return []
 
     if node.op == 'call_module' and isinstance(

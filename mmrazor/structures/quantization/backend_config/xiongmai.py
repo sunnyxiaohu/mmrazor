@@ -2,11 +2,16 @@
 import torch
 
 try:
-    from torch.ao.quantization.backend_config import BackendConfig, DTypeConfig
+    from torch.ao.quantization.backend_config import (BackendConfig,
+                                                      BackendPatternConfig,
+                                                      DTypeConfig,
+                                                      ObservationType)
 except ImportError:
     from mmrazor.utils import get_placeholder
     BackendConfig = get_placeholder('torch>=1.13')
+    BackendPatternConfig = get_placeholder('torch>=1.13')
     DTypeConfig = get_placeholder('torch>=1.13')
+    ObservationType = get_placeholder('torch>=1.13')
 
 from .common_operator_config_utils import (  # noqa: F401,F403
     _get_binary_op_configs, _get_bn_configs, _get_cat_config,
@@ -54,6 +59,21 @@ def get_xiongmai_backend_config() -> BackendConfig:
     default_op_dtype_configs = [default_op_qint8_dtype_config]
     share_qparams_op_dtype_configs = [default_op_qint8_dtype_config]
 
+    overide_adaptive_configs = []
+    adaptive_ops = (
+        torch.nn.AdaptiveAvgPool1d,
+        torch.nn.AdaptiveAvgPool2d,
+        torch.nn.AdaptiveAvgPool3d,  
+        torch.adaptive_avg_pool1d,
+        torch.nn.functional.adaptive_avg_pool2d,
+        torch.nn.functional.adaptive_avg_pool3d)
+    for op in adaptive_ops:
+        adaptive_config = BackendPatternConfig(op) \
+            .set_observation_type(
+                ObservationType.OUTPUT_USE_DIFFERENT_OBSERVER_AS_INPUT) \
+            .add_dtype_config(default_op_qint8_dtype_config)
+        overide_adaptive_configs.append(adaptive_config)
+
     return BackendConfig('xiongmai') \
         .set_backend_pattern_configs(
             _get_conv_configs(conv_dtype_configs)) \
@@ -66,7 +86,8 @@ def get_xiongmai_backend_config() -> BackendConfig:
         .set_backend_pattern_configs(
             _get_default_op_configs(default_op_dtype_configs)) \
         .set_backend_pattern_configs(
-            _get_share_qparams_op_configs(share_qparams_op_dtype_configs))
+            _get_share_qparams_op_configs(share_qparams_op_dtype_configs)) \
+        .set_backend_pattern_configs(overide_adaptive_configs)
 
 
 def get_xiongmai_backend_config_dict():
