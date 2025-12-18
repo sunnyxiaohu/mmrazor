@@ -71,19 +71,18 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
     """
     def __init__(self, *args, tracer: Dict = dict(type='CustomTracer'),
                  w_bits=None, a_bits=None, quant_bits_skipped_module_names=None,
-                 default_skipped_bit=8, nested_quant_bits_in_layer=False,
-                 w_skip=True, a_skip=True, use_cle=False, **kwargs):
+                 w_skipped_bit=8, a_skipped_bit=8, nested_quant_bits_in_layer=False,
+                 use_cle=False, **kwargs):
         if 'skipped_module_classes' in tracer:
             tracer['skipped_module_classes'] = str2class(tracer['skipped_module_classes'])
         super().__init__(*args, tracer=tracer, **kwargs)
         self.w_bits = w_bits
         self.a_bits = a_bits
-        self.w_skip = w_skip
-        self.a_skip = a_skip
+        self.w_skipped_bit = w_skipped_bit
+        self.a_skipped_bit = a_skipped_bit
         if quant_bits_skipped_module_names is None:
             quant_bits_skipped_module_names = []
         self.quant_bits_skipped_module_names = quant_bits_skipped_module_names
-        self.default_skipped_bit = default_skipped_bit
         self.nested_quant_bits_in_layer = nested_quant_bits_in_layer
         self.use_cle = use_cle
 
@@ -134,16 +133,16 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
             backend_config=self.backend_config)
 
         prepared = self.del_redundant_fakequant(prepared)
-
+        # import pdb; pdb.set_trace()
         prepared = del_fakequant_after_placeholder(prepared)
         prepared = modify_fakequant_bits(
-            prepared, tuple(self.quant_bits_skipped_module_names), w_bit=self.default_skipped_bit,
-            a_bit=self.default_skipped_bit, inplace=True)
+            prepared, tuple(self.quant_bits_skipped_module_names), w_bit=self.w_skipped_bit,
+            a_bit=self.a_skipped_bit, inplace=True)
 
         if self.w_bits or self.a_bits:
             prepared = register_mutables_for_dynamic_fakequant(
                 prepared, tuple(self.quant_bits_skipped_module_names), w_bits=self.w_bits, a_bits=self.a_bits,
-                default_skipped_bit=self.default_skipped_bit, w_skip=self.w_skip, a_skip=self.a_skip,
+                w_skipped_bit=self.w_skipped_bit, a_skipped_bit=self.a_skipped_bit,
                 inplace=True, nested_quant_bits_in_layer=self.nested_quant_bits_in_layer)
         # import pdb; pdb.set_trace()
         # prepared = wrap_depth_scope(
@@ -300,6 +299,12 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
         return ()
 
     @property
+    def method_prev_wo_fakequant(self):
+        """Configurate the methods that their previous nodes are redundant
+        fakequants."""
+        return ('split', )
+
+    @property
     def op_prev_wo_fakequant(self):
         """Configurate the OPs that their previous nodes are redundant
         fakequants."""
@@ -309,7 +314,7 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
     def function_prev_wo_fakequant(self):
         """Configurate the functions that their previous nodes are redundant
         fakequants."""
-        return (torch.cat, torch.nn.functional.upsample)
+        return (torch.cat, torch.nn.functional.upsample, torch.split)
 
 
 def del_fakequant_after_placeholder(prepared_model,

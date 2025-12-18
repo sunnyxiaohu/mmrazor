@@ -83,20 +83,16 @@ def recursive_find_erased_nodes(node, prepared_model):
         return [node]
 
     nodes_to_erase = []
-    for prev_node in node.args:
+    for prev_node in list(node.args) + list(node.kwargs.values()):
         if isinstance(prev_node, Node) and _is_broadcast_node(prev_node, prepared_model):
             nodes_to_erase.extend(
                 recursive_find_erased_nodes(prev_node, prepared_model))
         elif isinstance(prev_node, List) or isinstance(prev_node, Tuple):
             for sub_prev_node in prev_node:
-                nodes_to_erase.extend(
-                    recursive_find_erased_nodes(sub_prev_node, prepared_model))
-        else:
-            print_log('Currently only support prev_node type in (List,tupe),you can fix this above')
-    for prev_node in node.kwargs.values():
-        if isinstance(prev_node, Node):
-            nodes_to_erase.extend(
-                recursive_find_erased_nodes(prev_node, prepared_model))
+                # TODO: 接受多层嵌套结构
+                if isinstance(sub_prev_node, Node) and _is_broadcast_node(sub_prev_node, prepared_model):
+                    nodes_to_erase.extend(
+                        recursive_find_erased_nodes(sub_prev_node, prepared_model))
 
     return list(set(nodes_to_erase))
 
@@ -466,6 +462,8 @@ def modify_fakequant_bits(prepared_model,
         GraphModule: Prepared standalone module after modified.
     """
     def recursive_find_act_fakequant(prepared_model, dynamic_node):
+        if len(dynamic_node.args) == 0:
+            return None
         maybe_act = dynamic_node.args[0]
         if not (maybe_act.op == 'call_module' and isinstance(
                 _get_attrs(prepared_model, maybe_act.target), FakeQuantizeBase)):
@@ -487,7 +485,8 @@ def modify_fakequant_bits(prepared_model,
                 update_qdype_qmin_qmax(maybe_weight, w_bit)
             if a_bit is not None:
                 maybe_act = recursive_find_act_fakequant(prepared_model, node)
-                update_qdype_qmin_qmax(maybe_act, a_bit)
+                if maybe_act is not None:
+                    update_qdype_qmin_qmax(maybe_act, a_bit)
 
     new_graph.lint()
     prepared_model.graph = new_graph
@@ -498,9 +497,8 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
                                             module_patterns: Tuple,
                                             w_bits: List,
                                             a_bits: List,
-                                            default_skipped_bit = 32,
-                                            w_skip: bool = True,
-                                            a_skip: bool = True,
+                                            w_skipped_bit: int = None,
+                                            a_skipped_bit: int = None,
                                             inplace: bool = True,
                                             nested_quant_bits_in_layer = False):
     """Register mutables for dynamic fakequant. It will follow the rules bellow
@@ -515,7 +513,8 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
         target_patterns (tuple): Fakequants before and inner the modules
             whose name in `module_patterns` will be modified.
         quant_bits (List): Quant bits for building mutables.
-        default_skipped_bit (int): If matched, the default skipped bit will be registered.
+        w_skipped_bit (int): If matched, the weight default skipped bit will be registered.
+        a_skipped_bit (int): If matched, the activation default skipped bit will be registered.
         inplace (bool): Can optionally do the operation in-place.
             Defaults to True.
         nested_quant_bits_in_layer: Nested quant_bits of  Activations(input) to the
@@ -550,9 +549,9 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
                 maybe_dynamicw = maybe_dynamic.weight_fake_quant
                 this_bits = w_bits
                 if node.target in module_patterns:
-                    if w_skip:
-                        this_bits = [default_skipped_bit]
-                    if a_skip:
+                    if w_skipped_bit:
+                        this_bits = [w_skipped_bit]
+                    if a_skipped_bit:
                         maybe_act = recursive_find_act_fakequant(prepared_model, node)
                         if maybe_act is not None:
                             skipped_a_fake_quant.add(maybe_act)
@@ -574,8 +573,8 @@ def register_mutables_for_dynamic_fakequant(prepared_model,
     for node in new_graph.nodes:
         if node in skipped_a_fake_quant:
             maybe_dynamic = _get_attrs(prepared_model, node.target)
-            maybe_dynamic.mutable_attrs['quant_bits']._value_list = [default_skipped_bit]
-            maybe_dynamic.mutable_attrs['quant_bits'].current_choice = default_skipped_bit
+            maybe_dynamic.mutable_attrs['quant_bits']._value_list = [a_skipped_bit]
+            maybe_dynamic.mutable_attrs['quant_bits'].current_choice = a_skipped_bit
 
     new_graph.lint()
     prepared_model.graph = new_graph
