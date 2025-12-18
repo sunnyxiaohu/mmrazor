@@ -182,7 +182,7 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
                 return node.input[0]
             # look forward
             ret = None
-            if node.op_type in ['Flatten', 'Resize', 'Relu', 'Clip','Concat', 'MaxPool'] and node.output[0] in inp2node:
+            if node.op_type in ['Flatten', 'Resize', 'Relu', 'Clip','Concat', 'MaxPool', 'Split'] and node.output[0] in inp2node:
                 ret = find_the_closest_clip_range(inp2node[node.output[0]][0][0])
             # Temporal plan, may not correct.
             # if ret is not None:
@@ -193,7 +193,7 @@ class SuperAcmeQuantizeExportor(BaseQuantizeExportor):
             return ret
 
         for node in graph.node:
-            if node.op_type in ['Flatten', 'Resize', 'Relu','Clip', 'Concat', 'MaxPool']:
+            if node.op_type in ['Flatten', 'Resize', 'Relu','Clip', 'Concat', 'MaxPool', 'Split']:
                 tensor_name = find_the_closest_clip_range(node)
                 if tensor_name:
                     for i in range(len(node.input)):

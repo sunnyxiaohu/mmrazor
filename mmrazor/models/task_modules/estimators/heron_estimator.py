@@ -96,6 +96,7 @@ class HERONResourceEstimator(ResourceEstimator):
 
         resource_metrics = dict()
         self.heronmodel.import_torch(model)
+        # import pdb; pdb.set_trace()
         self.heronmodel.hir_convert()
         self.heronmodel.hir_profiler()
         if self.heronmodel.infer_metric is not None:
@@ -126,6 +127,7 @@ class HERONModelWrapper:
                  onnx_node_tensor_translate_mapping=None,
                  onnx_node_debug_mode=False,
                  use_flip=True,
+                 build_args='--saveSimpleModel 1 ',
                  profiler_args='-d 1.5 -f 0.5 -L ',
                  infer_metric=None):
         name = f'{self.__class__.__name__}'
@@ -167,6 +169,7 @@ class HERONModelWrapper:
         self.model = None
         self.outputs_mapping = outputs_mapping
         self.use_flip = use_flip
+        self.build_args = build_args
         self.profiler_args = profiler_args
         self.onnx_node_tensor_translate_mapping = onnx_node_tensor_translate_mapping
         self.onnx_node_debug_mode = onnx_node_debug_mode
@@ -199,7 +202,7 @@ class HERONModelWrapper:
 
     def hir_convert(self):
         # convert and compiler
-        command_line = 'sann build --saveSimpleModel 1 --input '+self.onnx_file+' --output '+self.hir_file+' --config '+self.mnn_quant_json+' > '+self.profiler_net_res
+        command_line = 'sann build ' + self.build_args + ' --input '+self.onnx_file+' --output '+self.hir_file+' --config '+self.mnn_quant_json+' > '+self.profiler_net_res
         os.system(command_line)
 
     def hir_profiler(self):
