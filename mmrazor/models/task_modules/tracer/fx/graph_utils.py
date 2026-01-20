@@ -445,8 +445,8 @@ def update_qdype_qmin_qmax(fake_quant, bit=8, quant_min=None, quant_max=None, qd
 
 def modify_fakequant_bits(prepared_model,
                           module_patterns: Tuple,
-                          w_bit: int = 8,
-                          a_bit: int = 8,
+                        #   w_bit: int = 8,
+                        #   a_bit: int = 8,
                           inplace: bool = True):
     """Delete useless fakequant before modules whose type are in
     `module_patterns`.
@@ -457,6 +457,11 @@ def modify_fakequant_bits(prepared_model,
             whose name in `module_patterns` will be modified.
         inplace (bool): Can optionally do the operation in-place.
             Defaults to True.
+        module_patterns: 
+        [
+            ['call_module', 'backbone.stem.conv.conv', [4], [8],
+            ['call_function', 'sigmoid', [4], [4],
+        ]
 
     Returns:
         GraphModule: Prepared standalone module after modified.
@@ -475,18 +480,33 @@ def modify_fakequant_bits(prepared_model,
 
     new_graph = copy.deepcopy(prepared_model.graph)
     for node in new_graph.nodes:
-        if node.op == 'call_module' and node.target in module_patterns:
-            maybe_weight = _get_attrs(prepared_model, node.target)
-            if not (hasattr(maybe_weight, 'weight_fake_quant') and isinstance(
-                    maybe_weight.weight_fake_quant, FakeQuantizeBase)):
+        for pattern in module_patterns:
+            if node.op != pattern[0]:
                 continue
-            if w_bit is not None:
-                maybe_weight = maybe_weight.weight_fake_quant
-                update_qdype_qmin_qmax(maybe_weight, w_bit)
+            if node.op == 'call_module':
+                if node.target != pattern[1]:
+                    continue
+            elif node.op == 'call_function':
+                if node.name != pattern[1]:
+                    continue
+            w_bit, a_bit = pattern[2], pattern[3]
             if a_bit is not None:
-                maybe_act = recursive_find_act_fakequant(prepared_model, node)
-                if maybe_act is not None:
-                    update_qdype_qmin_qmax(maybe_act, a_bit)
+                # maybe_act = recursive_find_act_fakequant(prepared_model, node)
+                act_nodes = recursive_find_erased_nodes(node, prepared_model)
+                assert len(a_bit) == len(act_nodes), f'length of a_bit must equals to acts, {len(a_bit)} vs. {len(act_nodes)}'
+                for ab, actn in zip(a_bit, act_nodes):
+                    act = _get_attrs(prepared_model, actn.target)
+                    update_qdype_qmin_qmax(act, ab)
+            if w_bit is not None:
+                assert len(w_bit) == 1, 'Only support one weight now.'
+                assert node.op == 'call_module', 'pattern must be call_module, when w_bit is not None'
+                maybe_weight = _get_attrs(prepared_model, node.target)
+                if not (hasattr(maybe_weight, 'weight_fake_quant') and isinstance(
+                        maybe_weight.weight_fake_quant, FakeQuantizeBase)):
+                    continue
+                maybe_weight = maybe_weight.weight_fake_quant
+                update_qdype_qmin_qmax(maybe_weight, w_bit[0])
+
 
     new_graph.lint()
     prepared_model.graph = new_graph

@@ -136,8 +136,7 @@ class SuperAcmeQuantizer(TorchNativeQuantizer):
         # import pdb; pdb.set_trace()
         prepared = del_fakequant_after_placeholder(prepared)
         prepared = modify_fakequant_bits(
-            prepared, tuple(self.quant_bits_skipped_module_names), w_bit=self.w_skipped_bit,
-            a_bit=self.a_skipped_bit, inplace=True)
+            prepared, tuple(self.quant_bits_skipped_module_names), inplace=True)
 
         if self.w_bits or self.a_bits:
             prepared = register_mutables_for_dynamic_fakequant(
